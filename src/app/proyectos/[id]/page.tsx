@@ -2,21 +2,26 @@
 
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { 
-  ArrowLeft, 
-  DollarSign, 
-  TrendingUp, 
-  TrendingDown, 
-  Wallet, 
-  Plus, 
+import {
+  ArrowLeft,
+  DollarSign,
+  TrendingUp,
+  TrendingDown,
+  Wallet,
+  Plus,
   Calendar,
   FileText,
   Printer,
   Users,
-  ClipboardList
+  ClipboardList,
+  CheckCircle,
+  X,
+  Archive,
+  Edit3
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { handleMoneyInput, parseCurrency, formatOnBlur } from '@/lib/formatters';
+import { useUser } from '@/lib/UserContext';
 
 interface Project {
   id: string;
@@ -28,6 +33,7 @@ interface Project {
   end_date: string;
   proposal_number?: number;
   clients?: { name: string };
+  archived_at: string | null;
 }
 
 interface Payment {
@@ -45,6 +51,8 @@ interface Cost {
   quantity: number;
   unit_price_usd: number;
   total_usd: number;
+  provider?: string;
+  date?: string;
 }
 
 interface ProjectExtra {
@@ -59,6 +67,17 @@ export default function ProjectDashboard() {
   const router = useRouter();
   const projectId = params.id as string;
 
+  function handleBack() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const from = urlParams.get('from');
+    const clientId = urlParams.get('clientId');
+    if (from === 'client' && clientId) {
+      router.push(`/clientes/${clientId}`);
+    } else {
+      router.push('/proyectos');
+    }
+  }
+
   const [project, setProject] = useState<Project | null>(null);
   const [payments, setPayments] = useState<Payment[]>([]);
   const [costs, setCosts] = useState<Cost[]>([]);
@@ -67,6 +86,10 @@ export default function ProjectDashboard() {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'payments' | 'costs' | 'details' | 'advances'>('payments');
 
+  // Permisos
+  const { role } = useUser();
+  const isViewer = role === 'viewer';
+  const canEdit = !isViewer;
 
   // Modals state
   const [showPaymentModal, setShowPaymentModal] = useState(false);
@@ -81,6 +104,12 @@ export default function ProjectDashboard() {
   const [extraForm, setExtraForm] = useState({ description: '', amount_usd: '' });
   const [advanceForm, setAdvanceForm] = useState({ partner_name: 'Henry Peraza', amount_usd: '', description: '', date: new Date().toISOString().split('T')[0] });
 
+  // Estado para cerrar/archivar proyecto
+  const [showCloseConfirm, setShowCloseConfirm] = useState(false);
+  const [showArchiveConfirm, setShowArchiveConfirm] = useState(false);
+
+  // Estado para edición de gastos
+  const [editingCost, setEditingCost] = useState<Cost | null>(null);
 
   useEffect(() => {
     if (projectId) {
@@ -136,6 +165,16 @@ export default function ProjectDashboard() {
   const estimatedProfit = totalBudget - totalCosts;
   const netProfit = estimatedProfit - totalAdvances;
 
+  // Partner advances calculation
+  const partnerAdvances: { [key: string]: number } = {};
+  advances.forEach(a => {
+    const partner = a.partner_name;
+    if (!partnerAdvances[partner]) partnerAdvances[partner] = 0;
+    partnerAdvances[partner] += Number(a.amount_usd);
+  });
+  const profitPerPartner = estimatedProfit / 2;
+  const partners = ['Henry Peraza', 'Losbers Perez'];
+
   // Handlers
   async function handleAddPayment(e: React.FormEvent) {
     e.preventDefault();
@@ -156,8 +195,7 @@ export default function ProjectDashboard() {
 
   async function handleAddCost(e: React.FormEvent) {
     e.preventDefault();
-    const { error } = await supabase.from('project_costs').insert([{
-      project_id: projectId,
+    const data = {
       description: costForm.description,
       provider: costForm.provider,
       category: costForm.category,
@@ -165,15 +203,40 @@ export default function ProjectDashboard() {
       unit_price_usd: parseCurrency(String(costForm.unit_price_usd)),
       total_usd: costForm.quantity * parseCurrency(String(costForm.unit_price_usd)),
       date: costForm.date
-    }]);
+    };
+
+    const { error } = editingCost
+      ? await supabase.from('project_costs').update(data).eq('id', editingCost.id)
+      : await supabase.from('project_costs').insert([{ project_id: projectId, ...data }]);
 
     if (error) {
-      alert(`Error al registrar gasto: ${error.message}`);
+      alert(`Error al guardar gasto: ${error.message}`);
     } else {
       setShowCostModal(false);
+      setEditingCost(null);
       setCostForm({ description: '', provider: '', category: 'materials', quantity: 1, unit_price_usd: '', date: new Date().toISOString().split('T')[0] });
       fetchProjectData();
     }
+  }
+
+  function openEditCost(c: Cost) {
+    setEditingCost(c);
+    setCostForm({
+      description: c.description,
+      provider: c.provider || '',
+      category: c.category,
+      quantity: c.quantity,
+      unit_price_usd: c.unit_price_usd.toString(),
+      date: c.date || new Date().toISOString().split('T')[0]
+    });
+    setShowCostModal(true);
+  }
+
+  async function handleDeleteCost(id: string) {
+    if (!confirm('¿Eliminar este gasto? Esta acción no se puede deshacer.')) return;
+    const { error } = await supabase.from('project_costs').delete().eq('id', id);
+    if (error) alert('Error al eliminar gasto: ' + error.message);
+    else fetchProjectData();
   }
 
   async function handleAddExtra(e: React.FormEvent) {
@@ -211,6 +274,42 @@ export default function ProjectDashboard() {
     }
   }
 
+  async function handleCloseProject() {
+    setLoading(true);
+    try {
+      const { error } = await supabase
+        .from('projects')
+        .update({ status: 'completed' })
+        .eq('id', projectId);
+
+      if (error) throw error;
+      setShowCloseConfirm(false);
+      fetchProjectData();
+    } catch (error: any) {
+      alert('Error al cerrar proyecto: ' + error.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleArchiveProject() {
+    setLoading(true);
+    try {
+      const { error } = await supabase
+        .from('projects')
+        .update({ archived_at: new Date().toISOString() })
+        .eq('id', projectId);
+
+      if (error) throw error;
+      setShowArchiveConfirm(false);
+      handleBack();
+    } catch (error: any) {
+      alert('Error al archivar proyecto: ' + error.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   if (loading) {
     return (
       <div className="animate-fade" style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
@@ -235,13 +334,17 @@ export default function ProjectDashboard() {
     return <div style={{ padding: '3rem', textAlign: 'center' }}>Proyecto no encontrado.</div>;
   }
 
+  // DEBUG
+  console.log('DEBUG - project:', { status: project.status, archived_at: project.archived_at, canEdit, role });
+  console.log('Button conditions - canEdit:', canEdit, 'isViewer:', isViewer, 'role:', role);
+
   return (
     <>
       <div className="animate-fade" style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
         
       <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem' }}>
-          <button className="btn-secondary" style={{ padding: '0.75rem' }} onClick={() => router.push('/proyectos')}>
+          <button className="btn-secondary" style={{ padding: '0.75rem' }} onClick={handleBack}>
             <ArrowLeft size={20} />
           </button>
 
@@ -254,23 +357,50 @@ export default function ProjectDashboard() {
             </span>
             <span>•</span>
             <span className={`badge ${
-              project.status === 'in_progress' ? 'badge-success' : 
+              project.status === 'in_progress' ? 'badge-success' :
               project.status === 'completed' ? 'badge-active' : ''
             }`}>
-              {project.status === 'in_progress' ? 'En Ejecución' : project.status}
+              {project.status === 'in_progress' ? 'En Ejecución' : 'Completado'}
             </span>
+            {project.archived_at && (
+              <span className="badge" style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)', fontSize: '0.7rem' }}>
+                Archivado {new Date(project.archived_at).toLocaleDateString()}
+              </span>
+            )}
           </div>
         </div>
         </div>
         
-        <button 
-          className="btn-secondary" 
-          onClick={() => router.push(`/proyectos?print=${project.id}`)}
-          title="Imprimir Propuesta Original"
-          style={{ padding: '0.75rem 1.5rem', display: 'flex', gap: '0.5rem', alignItems: 'center', background: 'var(--card-bg)' }}
-        >
-          <Printer size={18} /> Reimprimir Propuesta
-        </button>
+        <div style={{ display: 'flex', gap: '1rem' }}>
+          <button
+            className="btn-secondary"
+            onClick={() => router.push(`/proyectos?print=${project.id}`)}
+            title="Imprimir Propuesta Original"
+            style={{ padding: '0.75rem 1.5rem', display: 'flex', gap: '0.5rem', alignItems: 'center', background: 'var(--card-bg)' }}
+          >
+            <Printer size={18} /> Reimprimir Propuesta
+          </button>
+          {project.status === 'in_progress' && (
+            <button
+              className="btn-primary"
+              onClick={() => setShowCloseConfirm(true)}
+              title="Cerrar proyecto"
+              style={{ padding: '0.75rem 1.5rem', display: 'flex', gap: '0.5rem', alignItems: 'center', background: 'var(--success)', borderColor: 'var(--success)' }}
+            >
+              <CheckCircle size={18} /> Cerrar Proyecto
+            </button>
+          )}
+          {project.status === 'completed' && !project.archived_at && (
+            <button
+              className="btn-secondary"
+              onClick={() => setShowArchiveConfirm(true)}
+              title="Archivar proyecto"
+              style={{ padding: '0.75rem 1.5rem', display: 'flex', gap: '0.5rem', alignItems: 'center' }}
+            >
+              <Archive size={18} /> Archivar
+            </button>
+          )}
+        </div>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1.5rem' }}>
@@ -349,7 +479,7 @@ export default function ProjectDashboard() {
             style={{ flex: 1, padding: '0.5rem 1rem', background: activeTab === 'advances' ? '#8b5cf6' : 'transparent', border: 'none', borderBottom: activeTab === 'advances' ? '2px solid #8b5cf6' : 'none', color: activeTab === 'advances' ? 'white' : 'var(--text-muted)' }}
             onClick={() => setActiveTab('advances')}
           >
-            Adelantos Socios
+            Retiro de Socios
           </button>
         </div>
 
@@ -410,11 +540,12 @@ export default function ProjectDashboard() {
                     <th style={{ textAlign: 'center', padding: '1rem' }}>CANT.</th>
                     <th style={{ textAlign: 'right', padding: '1rem' }}>P. UNITARIO</th>
                     <th style={{ textAlign: 'right', padding: '1rem' }}>TOTAL</th>
+                    {canEdit && <th style={{ textAlign: 'right', padding: '1rem' }}>ACCIONES</th>}
                   </tr>
                 </thead>
                 <tbody>
                   {costs.length === 0 ? (
-                    <tr><td colSpan={5} style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>Aún no hay gastos registrados.</td></tr>
+                    <tr><td colSpan={canEdit ? 6 : 5} style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>Aún no hay gastos registrados.</td></tr>
                   ) : (
                     costs.map(c => (
                       <tr key={c.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
@@ -427,6 +558,28 @@ export default function ProjectDashboard() {
                         <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold', color: 'var(--danger)' }}>
                           ${Number(c.total_usd).toLocaleString('es-VE', { minimumFractionDigits: 2 })}
                         </td>
+                        {canEdit && (
+                          <td style={{ padding: '1rem', textAlign: 'right' }}>
+                            <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                              <button
+                                className="btn-secondary"
+                                style={{ padding: '0.4rem 0.7rem', fontSize: '0.8rem' }}
+                                title="Editar gasto"
+                                onClick={() => openEditCost(c)}
+                              >
+                                <Edit3 size={13} />
+                              </button>
+                              <button
+                                className="btn-secondary"
+                                style={{ padding: '0.4rem 0.7rem', fontSize: '0.8rem', color: 'var(--danger)', borderColor: 'rgba(239,68,68,0.2)' }}
+                                title="Eliminar gasto"
+                                onClick={() => handleDeleteCost(c.id)}
+                              >
+                                <X size={13} />
+                              </button>
+                            </div>
+                          </td>
+                        )}
                       </tr>
                     ))
                   )}
@@ -454,7 +607,7 @@ export default function ProjectDashboard() {
                       <Printer size={16} /> Imprimir Propuesta
                     </button>
                     <button className="btn-secondary" onClick={() => setShowAdvanceModal(true)} style={{ padding: '0.6rem 1rem', display: 'flex', alignItems: 'center', gap: '0.4rem', borderColor: '#8b5cf6', color: '#8b5cf6' }}>
-                      <Users size={16} /> Adelanto Socio
+                      <Users size={16} /> Retiro de Socio
                     </button>
                     <button className="btn-secondary" onClick={() => setShowExtraModal(true)} style={{ padding: '0.6rem 1rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                       <Plus size={16} /> Trabajo Adicional
@@ -495,13 +648,50 @@ export default function ProjectDashboard() {
                   </div>
                 </div>
               </div>
+
+              {/* DISTRIBUCIÓN DE GANANCIAS POR SOCIO - PARA IMPRESIÓN */}
+              <div style={{ marginTop: '3rem', paddingTop: '2rem', borderTop: '2px solid var(--border-color)' }}>
+                <h3 style={{ marginBottom: '1.5rem', fontSize: '1.1rem' }}>Distribución de Ganancias por Socio</h3>
+                <div style={{ background: 'rgba(0,0,0,0.2)', borderRadius: '8px', border: '1px solid var(--border-color)', overflow: 'hidden' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '0.8rem', background: 'rgba(0,0,0,0.3)' }}>
+                        <th style={{ textAlign: 'left', padding: '0.75rem 1rem' }}>SOCIO</th>
+                        <th style={{ textAlign: 'right', padding: '0.75rem 1rem' }}>GANANCIA CORRESPONDIENTE</th>
+                        <th style={{ textAlign: 'right', padding: '0.75rem 1rem' }}>RETIROS REALIZADOS</th>
+                        <th style={{ textAlign: 'right', padding: '0.75rem 1rem' }}>SALDO DISPONIBLE</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {partners.map((partner, idx) => {
+                        const totalRetired = partnerAdvances[partner] || 0;
+                        const availableBalance = profitPerPartner - totalRetired;
+                        return (
+                          <tr key={idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+                            <td style={{ padding: '1rem', fontWeight: '600' }}>{partner}</td>
+                            <td style={{ padding: '1rem', textAlign: 'right', fontWeight: '500', color: 'var(--success)' }}>
+                              ${profitPerPartner.toLocaleString('es-VE', { minimumFractionDigits: 2 })}
+                            </td>
+                            <td style={{ padding: '1rem', textAlign: 'right', fontWeight: '500', color: '#a78bfa' }}>
+                              ${totalRetired.toLocaleString('es-VE', { minimumFractionDigits: 2 })}
+                            </td>
+                            <td style={{ padding: '1rem', textAlign: 'right', fontWeight: '600', color: availableBalance < 0 ? 'var(--danger)' : 'var(--success)' }}>
+                              {availableBalance < 0 ? '-' : ''}${Math.abs(availableBalance).toLocaleString('es-VE', { minimumFractionDigits: 2 })}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
             </div>
           )}
 
           {activeTab === 'advances' && (
             <div>
               {advances.length === 0 ? (
-                <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>No hay adelantos registrados para este proyecto.</div>
+                <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>No hay retiros registrados para este proyecto.</div>
               ) : (
                 <div style={{ overflowX: 'auto' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -578,7 +768,7 @@ export default function ProjectDashboard() {
       {showCostModal && (
          <div className="modal-overlay">
          <div className="card modal-content animate-fade" style={{ maxWidth: '500px', width: '90%' }}>
-           <h2 style={{ marginBottom: '1.5rem', color: 'white' }}>Registrar Gasto</h2>
+           <h2 style={{ marginBottom: '1.5rem', color: 'white' }}>{editingCost ? 'Editar Gasto' : 'Registrar Gasto'}</h2>
            <form onSubmit={handleAddCost} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
              <div>
                <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Fecha del Gasto</label>
@@ -623,8 +813,8 @@ export default function ProjectDashboard() {
                 Total: ${(costForm.quantity * parseCurrency(String(costForm.unit_price_usd))).toLocaleString('es-VE', {minimumFractionDigits:2})}
              </div>
              <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
-               <button type="button" className="btn-secondary" style={{ flex: 1 }} onClick={() => setShowCostModal(false)}>Cancelar</button>
-               <button type="submit" className="btn-primary" style={{ flex: 1, justifyContent: 'center' }}>Guardar Gasto</button>
+               <button type="button" className="btn-secondary" style={{ flex: 1 }} onClick={() => { setShowCostModal(false); setEditingCost(null); setCostForm({ description: '', provider: '', category: 'materials', quantity: 1, unit_price_usd: '', date: new Date().toISOString().split('T')[0] }); }}>Cancelar</button>
+               <button type="submit" className="btn-primary" style={{ flex: 1, justifyContent: 'center' }}>{editingCost ? 'Guardar Cambios' : 'Guardar Gasto'}</button>
              </div>
            </form>
          </div>
@@ -664,7 +854,7 @@ export default function ProjectDashboard() {
       {showAdvanceModal && (
         <div className="modal-overlay hide-on-print">
           <div className="card modal-content animate-fade" style={{ maxWidth: '500px', width: '90%' }}>
-            <h2 style={{ marginBottom: '1.5rem', color: 'white' }}>Registrar Adelanto Socio</h2>
+            <h2 style={{ marginBottom: '1.5rem', color: 'white' }}>Registrar Retiro de Socio</h2>
             <form onSubmit={handleAddAdvance} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               <div>
                 <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Socio</label>
@@ -687,9 +877,70 @@ export default function ProjectDashboard() {
               </div>
               <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
                 <button type="button" className="btn-secondary" style={{ flex: 1 }} onClick={() => setShowAdvanceModal(false)}>Cancelar</button>
-                <button type="submit" className="btn-primary" style={{ flex: 1, justifyContent: 'center' }}>Guardar Adelanto</button>
+                <button type="submit" className="btn-primary" style={{ flex: 1, justifyContent: 'center' }}>Guardar Retiro</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Confirmación para Archivar Proyecto */}
+      {showArchiveConfirm && (
+        <div className="modal-overlay">
+          <div className="card modal-content animate-fade" style={{ maxWidth: '500px', width: '90%', textAlign: 'center' }}>
+            <div style={{ color: 'var(--text-muted)', marginBottom: '1.5rem' }}>
+              <Archive size={48} style={{ margin: '0 auto' }} />
+            </div>
+            <h2 style={{ marginBottom: '0.5rem', color: 'white' }}>Archivar Proyecto</h2>
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginBottom: '1.5rem' }}>
+              El proyecto pasará al Historial y dejará de aparecer en las listas activas. Podrás consultarlo en cualquier momento desde la pestaña Historial. Esta acción no elimina ningún dato.
+            </p>
+            <div style={{ display: 'flex', gap: '1rem' }}>
+              <button className="btn-secondary" style={{ flex: 1 }} onClick={() => setShowArchiveConfirm(false)}>
+                Cancelar
+              </button>
+              <button
+                className="btn-primary"
+                style={{ flex: 1, justifyContent: 'center' }}
+                onClick={handleArchiveProject}
+                disabled={loading}
+              >
+                {loading ? 'Archivando...' : 'Confirmar Archivo'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Confirmación para Cerrar Proyecto */}
+      {showCloseConfirm && (
+        <div className="modal-overlay">
+          <div className="card modal-content animate-fade" style={{ maxWidth: '500px', width: '90%', textAlign: 'center' }}>
+            <div style={{ color: 'var(--success)', marginBottom: '1.5rem' }}>
+              <CheckCircle size={48} style={{ margin: '0 auto' }} />
+            </div>
+            <h2 style={{ marginBottom: '0.5rem', color: 'white' }}>Cerrar Proyecto</h2>
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginBottom: '1.5rem' }}>
+              ¿Está seguro que desea cerrar este proyecto? Una vez cerrado, no podrá agregar más registros de pagos, gastos o compromisos.
+            </p>
+
+            <div style={{ display: 'flex', gap: '1rem' }}>
+              <button
+                className="btn-secondary"
+                style={{ flex: 1 }}
+                onClick={() => setShowCloseConfirm(false)}
+              >
+                Cancelar
+              </button>
+              <button
+                className="btn-primary"
+                style={{ flex: 1, background: 'var(--success)', borderColor: 'var(--success)', justifyContent: 'center' }}
+                onClick={handleCloseProject}
+                disabled={loading}
+              >
+                {loading ? 'Cerrando...' : 'Confirmar Cierre'}
+              </button>
+            </div>
           </div>
         </div>
       )}

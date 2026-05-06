@@ -35,13 +35,22 @@ interface ProjectAdmin {
   project_payments: { amount_usd: number }[];
   project_costs: { quantity: number; unit_price_usd: number }[];
   project_extras: { amount_usd: number }[];
+  archived_at: string | null;
+}
+
+interface PartnerSummary {
+  name: string;
+  totalProfit: number;
+  totalAdvances: number;
+  availableBalance: number;
 }
 
 export default function AdministracionDashboard() {
   const { canCreate, canEdit, canDelete, isObserver } = useAdminAction();
   const [projects, setProjects] = useState<ProjectAdmin[]>([]);
+  const [partnerSummaries, setPartnerSummaries] = useState<PartnerSummary[]>([]);
   const [loading, setLoading] = useState(true);
-  
+
   // Notas Globales
   const [globalNotes, setGlobalNotes] = useState('');
   const [savingNotes, setSavingNotes] = useState(false);
@@ -147,25 +156,69 @@ export default function AdministracionDashboard() {
 
   async function fetchAdminData() {
     try {
-      const { data, error } = await supabase
-        .from('projects')
-        .select(`
-          id, title, status, budget_usd, proposal_number,
-          clients(name),
-          project_payments(amount_usd),
-          project_costs(quantity, unit_price_usd),
-          project_extras(amount_usd)
-        `)
-        .in('status', ['in_progress', 'completed'])
-        .order('created_at', { ascending: false });
+      const [projectsRes, advancesRes] = await Promise.all([
+        supabase
+          .from('projects')
+          .select(`
+            id, title, status, budget_usd, proposal_number,
+            clients(name),
+            project_payments(amount_usd),
+            project_costs(quantity, unit_price_usd),
+            project_extras(amount_usd)
+          `)
+          .in('status', ['in_progress', 'completed'])
+          .is('archived_at', null)
+          .order('created_at', { ascending: false }),
+        supabase
+          .from('partner_advances')
+          .select('partner_name, amount_usd, project_id')
+      ]);
 
-      if (error) {
-        console.error('❌ Error fetching admin data:', error.message, error.details);
-        alert(`Error al cargar datos de administración:\n${error.message}`);
-        throw error;
+      if (projectsRes.error) {
+        console.error('❌ Error fetching admin data:', projectsRes.error.message, projectsRes.error.details);
+        alert(`Error al cargar datos de administración:\n${projectsRes.error.message}`);
+        throw projectsRes.error;
       }
-      console.log(`✅ Admin data loaded: ${data?.length || 0} projects`);
-      setProjects(data as any);
+      if (advancesRes.error) throw advancesRes.error;
+
+      console.log(`✅ Admin data loaded: ${projectsRes.data?.length || 0} projects`);
+      setProjects(projectsRes.data as any);
+
+      // Calculate partner summaries
+      const projectsData = projectsRes.data || [];
+      const advancesData = advancesRes.data || [];
+
+      // Calculate total profit per project and gather advances by partner
+      const advancesByPartner: { [key: string]: number } = {};
+      let totalProjectProfit = 0;
+
+      projectsData.forEach(p => {
+        const extras = p.project_extras?.reduce((acc, e) => acc + Number(e.amount_usd), 0) || 0;
+        const totalBudget = Number(p.budget_usd) + extras;
+        const totalCosts = p.project_costs?.reduce((acc, cost) => acc + (Number(cost.quantity) * Number(cost.unit_price_usd)), 0) || 0;
+        const profit = totalBudget - totalCosts;
+        totalProjectProfit += profit;
+      });
+
+      // Group advances by partner
+      advancesData.forEach(a => {
+        const partner = a.partner_name;
+        if (!advancesByPartner[partner]) advancesByPartner[partner] = 0;
+        advancesByPartner[partner] += Number(a.amount_usd);
+      });
+
+      // Calculate partner summaries (assuming equal distribution of profits)
+      const partners = ['Henry Peraza', 'Losbers Perez'];
+      const profitPerPartner = totalProjectProfit / 2;
+
+      const summaries: PartnerSummary[] = partners.map(partner => ({
+        name: partner,
+        totalProfit: profitPerPartner,
+        totalAdvances: advancesByPartner[partner] || 0,
+        availableBalance: profitPerPartner - (advancesByPartner[partner] || 0)
+      }));
+
+      setPartnerSummaries(summaries);
     } catch (error) {
       console.error('Admin fetch error:', error);
     } finally {
@@ -189,6 +242,41 @@ export default function AdministracionDashboard() {
       if (error.code !== 'PGRST116') {
         console.error('Error fetching global notes:', error);
       }
+    }
+  }
+
+  async function handleRenumberProjects() {
+    if (!confirm('¿Asignar números secuenciales a todos los proyectos que no tienen número? Esto ordenará por fecha de creación.')) return;
+    try {
+      // Obtener todos los proyectos ordenados por fecha, con o sin número
+      const { data: allProjects, error } = await supabase
+        .from('projects')
+        .select('id, proposal_number, created_at')
+        .order('created_at', { ascending: true });
+      if (error) throw error;
+
+      // Determinar el máximo actual
+      const maxExisting = allProjects
+        ?.filter(p => p.proposal_number != null)
+        .reduce((max, p) => Math.max(max, p.proposal_number), 0) || 0;
+
+      // Proyectos sin número, en orden cronológico
+      const unnumbered = allProjects?.filter(p => p.proposal_number == null) || [];
+      if (unnumbered.length === 0) {
+        alert('Todos los proyectos ya tienen número asignado.');
+        return;
+      }
+
+      let counter = maxExisting + 1;
+      for (const p of unnumbered) {
+        await supabase.from('projects').update({ proposal_number: counter }).eq('id', p.id);
+        counter++;
+      }
+
+      alert(`✅ Se numeraron ${unnumbered.length} proyecto(s) correctamente.`);
+      fetchAdminData();
+    } catch (e: any) {
+      alert(`Error al numerar: ${e.message}`);
     }
   }
 
@@ -266,6 +354,14 @@ export default function AdministracionDashboard() {
             Estado de Cuentas Global y Análisis de Rentabilidad
           </p>
         </div>
+        <button
+          className="btn-secondary"
+          onClick={handleRenumberProjects}
+          style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.82rem', padding: '0.5rem 1rem' }}
+          title="Asigna números a proyectos que no tienen, ordenado por fecha de creación"
+        >
+          <RefreshCcw size={14} /> Numerar proyectos sin #
+        </button>
       </div>
 
       {/* TAB SELECTOR */}
@@ -399,6 +495,54 @@ export default function AdministracionDashboard() {
           </div>
         </div>
 
+      </div>
+
+      {/* DISTRIBUCIÓN DE GANANCIAS POR SOCIO */}
+      <h3 style={{ fontSize: '1.2rem', margin: '1rem 0 -1rem 0', display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-muted)' }}>
+        <Users size={20} /> Distribución de Ganancias por Socio
+      </h3>
+      <div className="card" style={{ padding: '1.5rem', overflow: 'hidden' }}>
+        {partnerSummaries.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>
+            No hay datos de socios disponibles.
+          </div>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ background: 'rgba(0,0,0,0.2)', color: 'var(--text-muted)', fontSize: '0.85rem', borderBottom: '1px solid var(--border-color)' }}>
+                  <th style={{ textAlign: 'left', padding: '1rem 1.5rem' }}>SOCIO</th>
+                  <th style={{ textAlign: 'right', padding: '1rem 1.5rem' }}>GANANCIA CORRESPONDIENTE</th>
+                  <th style={{ textAlign: 'right', padding: '1rem 1.5rem' }}>RETIROS REALIZADOS</th>
+                  <th style={{ textAlign: 'right', padding: '1rem 1.5rem' }}>SALDO DISPONIBLE</th>
+                </tr>
+              </thead>
+              <tbody>
+                {partnerSummaries.map((partner, idx) => {
+                  const isNegative = partner.availableBalance < 0;
+                  return (
+                    <tr key={idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)', transition: 'background 0.2s' }} className="hover-row">
+                      <td style={{ padding: '1.25rem 1.5rem', fontWeight: '600', color: 'white' }}>
+                        {partner.name}
+                      </td>
+                      <td style={{ padding: '1.25rem 1.5rem', textAlign: 'right', fontWeight: '500', color: 'var(--success)' }}>
+                        ${formatCurrency(partner.totalProfit)}
+                      </td>
+                      <td style={{ padding: '1.25rem 1.5rem', textAlign: 'right', fontWeight: '500', color: '#a78bfa' }}>
+                        ${formatCurrency(partner.totalAdvances)}
+                      </td>
+                      <td style={{ padding: '1.25rem 1.5rem', textAlign: 'right' }}>
+                        <div style={{ fontWeight: 'bold', color: isNegative ? 'var(--danger)' : 'var(--success)', fontSize: '1.1rem' }}>
+                          {isNegative ? '-' : ''}${formatCurrency(Math.abs(partner.availableBalance))}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* NOTAS GLOBALES & TABLA */}

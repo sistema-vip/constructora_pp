@@ -96,7 +96,7 @@ export default function ClienteDashboard() {
   const isViewer = role === 'viewer';
   
   // Tabs State
-  const [activeTab, setActiveTab] = useState<'proyectos' | 'pagos' | 'gastos' | 'adicionales' | 'compromisos' | 'adelantos' | 'propuestas'>('proyectos');
+  const [activeTab, setActiveTab] = useState<'proyectos' | 'pagos' | 'gastos' | 'adicionales' | 'compromisos' | 'retiros' | 'propuestas'>('proyectos');
 
   // Modals state
   const [showPaymentModal, setShowPaymentModal] = useState(false);
@@ -112,6 +112,15 @@ export default function ClienteDashboard() {
   const [showAdvanceModal, setShowAdvanceModal] = useState(false);
   const [advanceForm, setAdvanceForm] = useState({ project_id: '', partner_name: 'Henry Peraza', amount_usd: '', description: '', date: new Date().toISOString().split('T')[0] });
 
+  // Estados para edición de items
+  const [showEditItemModal, setShowEditItemModal] = useState(false);
+  const [editingItem, setEditingItem] = useState<any>(null);
+  const [editItemType, setEditItemType] = useState<'payment' | 'cost' | 'commitment' | null>(null);
+  const [editItemForm, setEditItemForm] = useState<any>({});
+
+  // Estado del modal de selección de impresión
+  const [showPrintModal, setShowPrintModal] = useState(false);
+  const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (clientId) {
@@ -357,10 +366,73 @@ export default function ClienteDashboard() {
     } else alert(`Error: ${error.message}`);
   }
 
+  const initiateEditItem = (item: any, type: 'payment' | 'cost' | 'commitment') => {
+    if (isViewer) return;
+    setEditingItem(item);
+    setEditItemType(type);
+    setEditItemForm({ ...item });
+    setShowEditItemModal(true);
+  };
+
+  const handleSaveEditItem = async () => {
+    if (!editingItem || !editItemType) return;
+    setLoading(true);
+    try {
+      let table = '';
+      let updateData: any = {};
+
+      if (editItemType === 'payment') {
+        table = 'project_payments';
+        updateData = {
+          project_id: editItemForm.project_id,
+          amount_usd: parseCurrency(editItemForm.amount_usd),
+          date: editItemForm.date,
+          reference: editItemForm.reference,
+          description: editItemForm.description
+        };
+      } else if (editItemType === 'cost') {
+        table = 'project_costs';
+        updateData = {
+          project_id: editItemForm.project_id,
+          description: editItemForm.description,
+          provider: editItemForm.provider,
+          category: editItemForm.category,
+          quantity: editItemForm.quantity,
+          unit_price_usd: parseCurrency(editItemForm.unit_price_usd),
+          date: editItemForm.date
+        };
+      } else if (editItemType === 'commitment') {
+        table = 'project_commitments';
+        updateData = {
+          project_id: editItemForm.project_id,
+          description: editItemForm.description,
+          provider: editItemForm.provider,
+          category: editItemForm.category,
+          quantity: editItemForm.quantity,
+          unit_price_usd: parseCurrency(editItemForm.unit_price_usd),
+          amount_usd: editItemForm.quantity * parseCurrency(String(editItemForm.unit_price_usd)),
+          date: editItemForm.date
+        };
+      }
+
+      const { error } = await supabase.from(table).update(updateData).eq('id', editingItem.id);
+      if (error) throw error;
+
+      setShowEditItemModal(false);
+      setEditingItem(null);
+      setEditItemType(null);
+      fetchClientData();
+    } catch (error: any) {
+      alert('Error al guardar: ' + error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   async function handleAddAdvance(e: React.FormEvent) {
     e.preventDefault();
     if (!advanceForm.project_id) return alert('Seleccione un proyecto relacionado.');
-    
+
     const { error } = await supabase.from('partner_advances').insert([{
       project_id: advanceForm.project_id,
       partner_name: advanceForm.partner_name,
@@ -410,6 +482,24 @@ export default function ClienteDashboard() {
   const netProfit = estimatedProfit - totalAdvances;
   const estimatedMargin = totalContracted > 0 ? (estimatedProfit / totalContracted) * 100 : 0;
 
+  // Variables de impresión filtradas por selección del usuario
+  const printProjects = selectedProjectIds.size > 0
+    ? activeProjects.filter(p => selectedProjectIds.has(p.id))
+    : activeProjects;
+  const printPayments = printProjects.flatMap(p => p.project_payments.map((x: any) => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })));
+  const printCosts = printProjects.flatMap(p => p.project_costs.map((x: any) => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })));
+  const printExtras = printProjects.flatMap(p => p.project_extras.map((x: any) => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })));
+  const printCommitments = printProjects.flatMap(p => p.project_commitments.map((x: any) => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })));
+  const printAdvances = printProjects.flatMap(p => p.partner_advances.map((x: any) => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })));
+  const printTotalContracted = printProjects.reduce((s: number, p: any) => s + Number(p.budget_usd), 0) + printExtras.reduce((s: number, e: any) => s + Number(e.amount_usd), 0);
+  const printTotalPaid = printPayments.reduce((s: number, p: any) => s + Number(p.amount_usd), 0);
+  const printTotalCostsValue = printCosts.reduce((s: number, c: any) => s + (Number(c.quantity) * Number(c.unit_price_usd)), 0);
+  const printTotalCommitted = printCommitments.reduce((s: number, c: any) => s + Number(c.amount_usd), 0);
+  const printTotalAdvances = printAdvances.reduce((s: number, a: any) => s + Number(a.amount_usd), 0);
+  const printBalanceDue = printTotalContracted - printTotalPaid;
+  const printEstimatedProfit = printTotalContracted - printTotalCostsValue - printTotalCommitted;
+  const printNetProfit = printEstimatedProfit - printTotalAdvances;
+
   return (
     <>
       <div className="animate-fade hide-on-print" style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
@@ -433,7 +523,7 @@ export default function ClienteDashboard() {
           </div>
           
           <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-start' }}>
-            <button className="btn-secondary" onClick={() => window.print()} style={{ padding: '0.7rem 1.2rem', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600, background: 'rgba(255,255,255,0.03)' }}>
+            <button className="btn-secondary" onClick={() => { setSelectedProjectIds(new Set(activeProjects.map((p: any) => p.id))); setShowPrintModal(true); }} style={{ padding: '0.7rem 1.2rem', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600, background: 'rgba(255,255,255,0.03)' }}>
               <Printer size={18} /> Imprimir Reporte
             </button>
           </div>
@@ -450,7 +540,7 @@ export default function ClienteDashboard() {
             <BriefcaseIcon size={15} /> Registrar Pago
           </button>
           <button className="btn-secondary" onClick={() => setShowAdvanceModal(true)} style={{ height: '38px', padding: '0 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', borderColor: '#8b5cf6', color: '#8b5cf6' }}>
-            <Users size={15} /> Adelanto Socio
+            <Users size={15} /> Retiro de Socio
           </button>
           <button className="btn-secondary" onClick={() => setShowCommitmentModal(true)} style={{ height: '38px', padding: '0 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', borderColor: 'var(--primary-color)', color: 'var(--primary-color)' }}>
             <ClipboardList size={15} /> Registrar Compromiso
@@ -612,12 +702,12 @@ export default function ClienteDashboard() {
             >
               Compromisos
             </button>
-            <button 
-              className={`btn-secondary ${activeTab === 'adelantos' ? 'btn-primary' : ''}`}
-              style={{ padding: '0.5rem 1rem', background: activeTab === 'adelantos' ? '#8b5cf6' : 'transparent', border: 'none', whiteSpace: 'nowrap' }}
-              onClick={() => setActiveTab('adelantos')}
+            <button
+              className={`btn-secondary ${activeTab === 'retiros' ? 'btn-primary' : ''}`}
+              style={{ padding: '0.5rem 1rem', background: activeTab === 'retiros' ? '#8b5cf6' : 'transparent', border: 'none', whiteSpace: 'nowrap' }}
+              onClick={() => setActiveTab('retiros')}
             >
-              Adelantos Socios
+              Retiro de Socios
             </button>
           </div>
 
@@ -715,12 +805,15 @@ export default function ClienteDashboard() {
                               </div>
                             </td>
                             <td style={{ padding: '1rem', textAlign: 'right' }}>
-                              <button className="btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem' }} onClick={() => router.push(`/proyectos?print=${project.id}`)}>
+                              <button className="btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', marginRight: '0.5rem' }} onClick={() => router.push(`/proyectos/${project.id}?from=client&clientId=${clientId}`)}>
+                                <FileText size={14} /> Ver
+                              </button>
+                              <button className="btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', marginRight: '0.5rem' }} onClick={() => router.push(`/proyectos?print=${project.id}`)}>
                                 <Printer size={14} /> Imprimir
                               </button>
-                              <button 
-                                className="btn-secondary" 
-                                style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--danger)', borderColor: 'rgba(239, 68, 68, 0.2)' }} 
+                              <button
+                                className="btn-secondary"
+                                style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--danger)', borderColor: 'rgba(239, 68, 68, 0.2)' }}
                                 onClick={() => initiateDelete(project.id, 'project')}
                               >
                                 <Trash2 size={14} />
@@ -760,10 +853,20 @@ export default function ClienteDashboard() {
                         <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>{c.provider || 'N/A'}</td>
                         <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>{c.proposal_number ? `#${c.proposal_number} - ` : ''}{c.project_title}</td>
                         <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold', color: 'var(--primary-color)' }}>- ${formatCurrency(c.amount_usd || (c.quantity * c.unit_price_usd))}</td>
-                        <td style={{ padding: '1rem', textAlign: 'right' }}>
-                          <button 
-                            className="btn-secondary" 
-                            style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--danger)', borderColor: 'rgba(239, 68, 68, 0.2)' }} 
+                        <td style={{ padding: '1rem', textAlign: 'right', display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                          {!isViewer && (
+                            <button
+                              className="btn-secondary"
+                              style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--primary-color)', borderColor: 'rgba(59, 130, 246, 0.2)' }}
+                              onClick={() => initiateEditItem(c, 'commitment')}
+                              title="Editar compromiso"
+                            >
+                              <Edit3 size={14} />
+                            </button>
+                          )}
+                          <button
+                            className="btn-secondary"
+                            style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--danger)', borderColor: 'rgba(239, 68, 68, 0.2)' }}
                             onClick={() => initiateDelete(c.id, 'commitment')}
                           >
                             <Trash2 size={14} />
@@ -799,10 +902,20 @@ export default function ClienteDashboard() {
                         <td style={{ padding: '1rem' }}>{p.description} <br/><span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Ref: {p.reference || 'N/A'}</span></td>
                         <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>{p.proposal_number ? `#${p.proposal_number} - ` : ''}{p.project_title}</td>
                         <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold', color: 'var(--success)' }}>+ ${formatCurrency(p.amount_usd)}</td>
-                        <td style={{ padding: '1rem', textAlign: 'right' }}>
-                          <button 
-                            className="btn-secondary" 
-                            style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--danger)', borderColor: 'rgba(239, 68, 68, 0.2)' }} 
+                        <td style={{ padding: '1rem', textAlign: 'right', display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                          {!isViewer && (
+                            <button
+                              className="btn-secondary"
+                              style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--primary-color)', borderColor: 'rgba(59, 130, 246, 0.2)' }}
+                              onClick={() => initiateEditItem(p, 'payment')}
+                              title="Editar pago"
+                            >
+                              <Edit3 size={14} />
+                            </button>
+                          )}
+                          <button
+                            className="btn-secondary"
+                            style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--danger)', borderColor: 'rgba(239, 68, 68, 0.2)' }}
                             onClick={() => initiateDelete(p.id, 'payment')}
                           >
                             <Trash2 size={14} />
@@ -840,10 +953,20 @@ export default function ClienteDashboard() {
                         <td style={{ padding: '1rem' }}>{c.category === 'materials' ? 'Materiales' : c.category === 'labor' ? 'Mano de Obra' : c.category === 'equipment' ? 'Equipos' : c.category === 'permits' ? 'Permisos' : 'Otros'}</td>
                         <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>{c.proposal_number ? `#${c.proposal_number} - ` : ''}{c.project_title}</td>
                         <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold', color: 'var(--danger)' }}>- ${formatCurrency(c.quantity * c.unit_price_usd)}</td>
-                        <td style={{ padding: '1rem', textAlign: 'right' }}>
-                          <button 
-                            className="btn-secondary" 
-                            style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--danger)', borderColor: 'rgba(239, 68, 68, 0.2)' }} 
+                        <td style={{ padding: '1rem', textAlign: 'right', display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                          {!isViewer && (
+                            <button
+                              className="btn-secondary"
+                              style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--primary-color)', borderColor: 'rgba(59, 130, 246, 0.2)' }}
+                              onClick={() => initiateEditItem(c, 'cost')}
+                              title="Editar gasto"
+                            >
+                              <Edit3 size={14} />
+                            </button>
+                          )}
+                          <button
+                            className="btn-secondary"
+                            style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--danger)', borderColor: 'rgba(239, 68, 68, 0.2)' }}
                             onClick={() => initiateDelete(c.id, 'cost')}
                           >
                             <Trash2 size={14} />
@@ -894,7 +1017,7 @@ export default function ClienteDashboard() {
             </div>
           )}
 
-          {activeTab === 'adelantos' && (
+          {activeTab === 'retiros' && (
             <div>
               {(() => {
                 const share = estimatedProfit / 2;
@@ -921,7 +1044,7 @@ export default function ClienteDashboard() {
                             <span style={{ fontWeight: 700, color: '#a78bfa' }}>${formatCurrency(share)}</span>
                           </div>
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.6rem 0.8rem', background: 'rgba(239,68,68,0.06)', borderRadius: '8px' }}>
-                            <span style={{ fontSize: '0.8rem', color: 'var(--danger)' }}>Adelantos tomados</span>
+                            <span style={{ fontSize: '0.8rem', color: 'var(--danger)' }}>Retiros realizados</span>
                             <span style={{ fontWeight: 700, color: 'var(--danger)' }}>−${formatCurrency(partner.advances)}</span>
                           </div>
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.7rem 0.8rem', background: partner.saldo >= 0 ? 'rgba(16,185,129,0.08)' : 'rgba(239,68,68,0.08)', borderRadius: '8px', border: `1px solid ${partner.saldo >= 0 ? 'rgba(16,185,129,0.2)' : 'rgba(239,68,68,0.2)'}` }}>
@@ -935,7 +1058,7 @@ export default function ClienteDashboard() {
                 );
               })()}
               {allAdvances.length === 0 ? (
-                <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>No hay adelantos a socios registrados.</div>
+                <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>No hay retiros de socios registrados.</div>
               ) : (
                 <div>
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -1180,7 +1303,7 @@ export default function ClienteDashboard() {
       {showAdvanceModal && (
         <div className="modal-overlay hide-on-print">
           <div className="card modal-content animate-fade" style={{ maxWidth: '500px', width: '90%' }}>
-            <h2 style={{ marginBottom: '1.5rem', color: 'white' }}>Registrar Adelanto Socio</h2>
+            <h2 style={{ marginBottom: '1.5rem', color: 'white' }}>Registrar Retiro de Socio</h2>
             <form onSubmit={handleAddAdvance} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               <div>
                 <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Socio</label>
@@ -1218,9 +1341,148 @@ export default function ClienteDashboard() {
               </div>
               <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
                 <button type="button" className="btn-secondary" style={{ flex: 1 }} onClick={() => setShowAdvanceModal(false)}>Cancelar</button>
-                <button type="submit" className="btn-primary" style={{ flex: 1, justifyContent: 'center' }}>Guardar Adelanto</button>
+                <button type="submit" className="btn-primary" style={{ flex: 1, justifyContent: 'center' }}>Guardar Retiro</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de selección de proyectos para imprimir */}
+      {showPrintModal && (
+        <div className="modal-overlay" style={{ zIndex: 3000 }}>
+          <div className="card modal-content animate-fade" style={{ maxWidth: '600px', width: '95%', maxHeight: '90vh', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.2rem' }}>
+              <h2 style={{ margin: 0, color: 'white', display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1.1rem' }}>
+                <Printer size={18} /> Seleccionar Proyectos a Imprimir
+              </h2>
+              <button onClick={() => setShowPrintModal(false)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '0.25rem' }}>
+                <X size={22} />
+              </button>
+            </div>
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.83rem', marginBottom: '1.2rem', marginTop: 0 }}>
+              Seleccione los proyectos a incluir en el reporte. Los totales se recalculan según la selección.
+            </p>
+
+            {/* Proyectos activos/completados */}
+            {activeProjects.length > 0 && (
+              <div style={{ marginBottom: '1.2rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.6rem' }}>
+                  <span style={{ fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)', fontWeight: 700 }}>
+                    Proyectos ({activeProjects.length})
+                  </span>
+                  <button
+                    className="btn-secondary"
+                    style={{ padding: '0.2rem 0.6rem', fontSize: '0.73rem' }}
+                    onClick={() => {
+                      const allIds = activeProjects.map((p: any) => p.id);
+                      const allChecked = allIds.every((id: string) => selectedProjectIds.has(id));
+                      setSelectedProjectIds(() => {
+                        const next = new Set(selectedProjectIds);
+                        if (allChecked) { allIds.forEach((id: string) => next.delete(id)); }
+                        else { allIds.forEach((id: string) => next.add(id)); }
+                        return next;
+                      });
+                    }}
+                  >
+                    {activeProjects.every((p: any) => selectedProjectIds.has(p.id)) ? 'Deseleccionar todos' : 'Seleccionar todos'}
+                  </button>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                  {activeProjects.map((p: any) => {
+                    const isChecked = selectedProjectIds.has(p.id);
+                    const pExtras = p.project_extras?.reduce((s: number, e: any) => s + Number(e.amount_usd), 0) || 0;
+                    const pTotal = Number(p.budget_usd) + pExtras;
+                    const statusLabel = p.status === 'in_progress' ? 'En Curso' : p.status === 'completed' ? 'Completado' : 'Cancelado';
+                    const statusClass = p.status === 'completed' ? 'badge-success' : p.status === 'cancelled' ? 'badge-danger' : 'badge-warning';
+                    return (
+                      <label
+                        key={p.id}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.65rem 0.9rem',
+                          borderRadius: '8px', cursor: 'pointer', transition: 'all 0.15s ease',
+                          border: `1px solid ${isChecked ? 'rgba(56,189,248,0.4)' : 'rgba(255,255,255,0.07)'}`,
+                          background: isChecked ? 'rgba(56,189,248,0.06)' : 'rgba(255,255,255,0.02)',
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={() => {
+                            setSelectedProjectIds(() => {
+                              const next = new Set(selectedProjectIds);
+                              if (next.has(p.id)) next.delete(p.id); else next.add(p.id);
+                              return next;
+                            });
+                          }}
+                          style={{ width: '15px', height: '15px', accentColor: 'var(--accent-blue)', flexShrink: 0 }}
+                        />
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontWeight: 600, color: 'white', fontSize: '0.87rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {p.proposal_number ? `#${p.proposal_number} – ` : ''}{p.title}
+                          </div>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                            {new Date(p.created_at).toLocaleDateString('es-VE')} · {p.project_payments?.length || 0} pagos · {p.project_costs?.length || 0} gastos
+                          </div>
+                        </div>
+                        <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                          <div style={{ fontWeight: 700, color: 'white', fontSize: '0.87rem' }}>${formatCurrency(pTotal)}</div>
+                          <span className={`badge ${statusClass}`} style={{ fontSize: '0.67rem' }}>{statusLabel}</span>
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Propuestas pendientes (informativo) */}
+            {pendingProposals.length > 0 && (
+              <div style={{ marginBottom: '1.2rem', padding: '0.8rem 1rem', borderRadius: '8px', border: '1px dashed rgba(245,158,11,0.3)', background: 'rgba(245,158,11,0.03)' }}>
+                <span style={{ fontSize: '0.73rem', color: 'var(--primary-color)', fontWeight: 700, display: 'block', marginBottom: '0.4rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  Propuestas Pendientes — solo informativo, sin datos financieros
+                </span>
+                {pendingProposals.map((p: any) => (
+                  <div key={p.id} style={{ fontSize: '0.8rem', color: 'var(--text-muted)', padding: '0.15rem 0' }}>
+                    {p.proposal_number ? `#${p.proposal_number} – ` : ''}{p.title} · ${formatCurrency(p.budget_usd)}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Vista previa de totales */}
+            {(() => {
+              const previewProjects = activeProjects.filter((p: any) => selectedProjectIds.has(p.id));
+              const previewExtras = previewProjects.flatMap((p: any) => p.project_extras || []);
+              const previewContracted = previewProjects.reduce((s: number, p: any) => s + Number(p.budget_usd), 0) + previewExtras.reduce((s: number, e: any) => s + Number(e.amount_usd), 0);
+              const previewPaid = previewProjects.flatMap((p: any) => p.project_payments || []).reduce((s: number, pmt: any) => s + Number(pmt.amount_usd), 0);
+              return (
+                <div style={{ padding: '0.75rem 1rem', borderRadius: '8px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)', marginBottom: '1.2rem', fontSize: '0.83rem' }}>
+                  <div style={{ color: 'var(--text-muted)', marginBottom: '0.4rem', fontWeight: 700, fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    Vista previa — {previewProjects.length} proyecto{previewProjects.length !== 1 ? 's' : ''} seleccionado{previewProjects.length !== 1 ? 's' : ''}
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.3rem' }}>
+                    <span style={{ color: 'var(--text-muted)' }}>Total Contratado:</span>
+                    <span style={{ color: 'white', fontWeight: 600, textAlign: 'right' }}>${formatCurrency(previewContracted)}</span>
+                    <span style={{ color: 'var(--text-muted)' }}>Total Abonado:</span>
+                    <span style={{ color: 'var(--success)', fontWeight: 600, textAlign: 'right' }}>${formatCurrency(previewPaid)}</span>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Botones */}
+            <div style={{ display: 'flex', gap: '0.75rem' }}>
+              <button className="btn-secondary" style={{ flex: 1 }} onClick={() => setShowPrintModal(false)}>Cancelar</button>
+              <button
+                className="btn-primary"
+                style={{ flex: 2, justifyContent: 'center', display: 'flex', alignItems: 'center', gap: '0.5rem', opacity: selectedProjectIds.size === 0 ? 0.5 : 1, cursor: selectedProjectIds.size === 0 ? 'not-allowed' : 'pointer' }}
+                disabled={selectedProjectIds.size === 0}
+                onClick={() => { setShowPrintModal(false); setTimeout(() => window.print(), 100); }}
+              >
+                <Printer size={15} /> Imprimir ({selectedProjectIds.size} proyecto{selectedProjectIds.size !== 1 ? 's' : ''})
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -1238,6 +1500,7 @@ export default function ClienteDashboard() {
           <div style={{ textAlign: 'right' }}>
             <h2 style={{ margin: 0, fontSize: '20px', color: '#000' }}>ESTADO DE CUENTA GLOBAL</h2>
             <p style={{ margin: 0, fontSize: '12px', color: '#555' }}>Fecha de Emisión: {new Date().toLocaleDateString('es-VE')}</p>
+            <p style={{ margin: 0, fontSize: '12px', color: '#555' }}>Proyectos incluidos: {printProjects.length} de {activeProjects.length}</p>
           </div>
         </div>
 
@@ -1257,28 +1520,36 @@ export default function ClienteDashboard() {
         <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '2rem', fontSize: '14px' }}>
           <tbody>
             <tr>
-              <td style={{ padding: '0.5rem', border: '1px solid #ccc', background: '#f8f9fa', width: '25%' }}><strong>Total Contratado:</strong></td>
-              <td style={{ padding: '0.5rem', border: '1px solid #ccc', width: '25%', textAlign: 'right' }}>${formatCurrency(totalContracted)}</td>
-              <td style={{ padding: '0.5rem', border: '1px solid #ccc', background: '#f8f9fa', width: '25%' }}><strong>Total Abonado:</strong></td>
-              <td style={{ padding: '0.5rem', border: '1px solid #ccc', width: '25%', textAlign: 'right' }}>${formatCurrency(totalPaid)}</td>
+              <td style={{ padding: '0.5rem', border: '1px solid #ccc', background: '#f8f9fa', width: '50%' }}><strong>Total Contratado:</strong></td>
+              <td style={{ padding: '0.5rem', border: '1px solid #ccc', width: '50%', textAlign: 'right' }}>${formatCurrency(printTotalContracted)}</td>
+            </tr>
+            <tr>
+              <td style={{ padding: '0.5rem', border: '1px solid #ccc', background: '#f8f9fa' }}><strong>Total Abonado:</strong></td>
+              <td style={{ padding: '0.5rem', border: '1px solid #ccc', textAlign: 'right' }}>${formatCurrency(printTotalPaid)}</td>
+            </tr>
+            <tr>
+              <td style={{ padding: '0.5rem', border: '1px solid #ccc', background: '#f8f9fa' }}><strong>Saldo Pendiente:</strong></td>
+              <td style={{ padding: '0.5rem', border: '1px solid #ccc', textAlign: 'right', color: printBalanceDue > 0 ? '#ff9800' : '#28a745' }}>${formatCurrency(printBalanceDue)}</td>
             </tr>
             <tr>
               <td style={{ padding: '0.5rem', border: '1px solid #ccc', background: '#f8f9fa' }}><strong>Gastos Ejecutados:</strong></td>
-              <td style={{ padding: '0.5rem', border: '1px solid #ccc', textAlign: 'right', color: '#d32f2f' }}>${formatCurrency(totalCostsValue)}</td>
-              <td style={{ padding: '0.5rem', border: '1px solid #ccc', background: '#f8f9fa' }}><strong>Saldo Pendiente:</strong></td>
-              <td style={{ padding: '0.5rem', border: '1px solid #ccc', textAlign: 'right' }}>${formatCurrency(balanceDue)}</td>
+              <td style={{ padding: '0.5rem', border: '1px solid #ccc', textAlign: 'right', color: '#d32f2f' }}>${formatCurrency(printTotalCostsValue)}</td>
             </tr>
             <tr>
               <td style={{ padding: '0.5rem', border: '1px solid #ccc', background: '#f8f9fa' }}><strong>Compromisos Pendientes:</strong></td>
-              <td style={{ padding: '0.5rem', border: '1px solid #ccc', textAlign: 'right', color: '#d32f2f' }}>${formatCurrency(totalCommitted)}</td>
-              <td style={{ padding: '0.5rem', border: '1px solid #ccc', background: '#f8f9fa' }}><strong>Ganancia Estimada:</strong></td>
-              <td style={{ padding: '0.5rem', border: '1px solid #ccc', textAlign: 'right' }}>${formatCurrency(estimatedProfit)}</td>
+              <td style={{ padding: '0.5rem', border: '1px solid #ccc', textAlign: 'right', color: '#d32f2f' }}>${formatCurrency(printTotalCommitted)}</td>
             </tr>
             <tr>
-              <td style={{ padding: '0.5rem', border: '1px solid #ccc', background: '#f8f9fa' }}><strong>Total Adelantos Socios:</strong></td>
-              <td style={{ padding: '0.5rem', border: '1px solid #ccc', textAlign: 'right', color: '#d32f2f' }}>${formatCurrency(totalAdvances)}</td>
-              <td style={{ padding: '0.5rem', border: '1px solid #ccc', background: '#e8f5e9' }}><strong>GANANCIA NETA DISPONIBLE:</strong></td>
-              <td style={{ padding: '0.5rem', border: '1px solid #ccc', textAlign: 'right', fontWeight: 'bold', background: '#e8f5e9' }}>${formatCurrency(netProfit)}</td>
+              <td style={{ padding: '0.5rem', border: '1px solid #ccc', background: '#f8f9fa' }}><strong>Ganancia Estimada:</strong></td>
+              <td style={{ padding: '0.5rem', border: '1px solid #ccc', textAlign: 'right', color: '#28a745' }}>${formatCurrency(printEstimatedProfit)}</td>
+            </tr>
+            <tr>
+              <td style={{ padding: '0.5rem', border: '1px solid #ccc', background: '#f8f9fa' }}><strong>Total Retiro de Socios:</strong></td>
+              <td style={{ padding: '0.5rem', border: '1px solid #ccc', textAlign: 'right', color: '#d32f2f' }}>${formatCurrency(printTotalAdvances)}</td>
+            </tr>
+            <tr style={{ background: '#e8f5e9' }}>
+              <td style={{ padding: '0.7rem', border: '2px solid #28a745', fontWeight: 'bold' }}><strong>GANANCIA NETA POR RETIRAR:</strong></td>
+              <td style={{ padding: '0.7rem', border: '2px solid #28a745', textAlign: 'right', fontWeight: 'bold', color: '#1b5e20', fontSize: '15px' }}>${formatCurrency(printNetProfit)}</td>
             </tr>
           </tbody>
         </table>
@@ -1296,7 +1567,7 @@ export default function ClienteDashboard() {
             </tr>
           </thead>
           <tbody>
-            {activeProjects.map(p => {
+            {printProjects.map((p: any) => {
               const pExtras = p.project_extras?.reduce((acc: number, e: any) => acc + Number(e.amount_usd), 0) || 0;
               const pTotal = Number(p.budget_usd) + pExtras;
               return (
@@ -1309,20 +1580,18 @@ export default function ClienteDashboard() {
                 </tr>
               );
             })}
-          </tbody>
-          <tfoot>
             <tr style={{ background: '#f8f9fa', fontWeight: 'bold' }}>
               <td colSpan={2} style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>TOTALES GLOBALES:</td>
-              <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>${formatCurrency(activeProjects.reduce((s, p) => s + Number(p.budget_usd), 0))}</td>
-              <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>${formatCurrency(allExtras.reduce((s, e) => s + Number(e.amount_usd), 0))}</td>
-              <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>${formatCurrency(totalContracted)}</td>
+              <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>${formatCurrency(printProjects.reduce((s: number, p: any) => s + Number(p.budget_usd), 0))}</td>
+              <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>${formatCurrency(printExtras.reduce((s: number, e: any) => s + Number(e.amount_usd), 0))}</td>
+              <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>${formatCurrency(printTotalContracted)}</td>
             </tr>
-          </tfoot>
+          </tbody>
         </table>
 
         {/* Detalle de Pagos */}
         <h3 style={{ fontSize: '16px', borderBottom: '1px solid #ccc', paddingBottom: '0.5rem', marginBottom: '1rem' }}>2. HISTORIAL DE PAGOS RECIBIDOS</h3>
-        {allPayments.length === 0 ? (
+        {printPayments.length === 0 ? (
            <p style={{ fontSize: '12px', color: '#555', marginBottom: '2rem' }}>No hay pagos registrados.</p>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '2rem', fontSize: '12px' }}>
@@ -1335,7 +1604,7 @@ export default function ClienteDashboard() {
               </tr>
             </thead>
             <tbody>
-              {allPayments.map(p => (
+              {printPayments.map((p: any) => (
                 <tr key={p.id}>
                   <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{p.date}</td>
                   <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{p.description} {p.reference ? `(Ref: ${p.reference})` : ''}</td>
@@ -1343,19 +1612,17 @@ export default function ClienteDashboard() {
                   <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>${formatCurrency(p.amount_usd)}</td>
                 </tr>
               ))}
-            </tbody>
-            <tfoot>
-              <tr>
-                <td colSpan={3} style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right', fontWeight: 'bold' }}>Total Cobrado:</td>
-                <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right', fontWeight: 'bold' }}>${formatCurrency(totalPaid)}</td>
+              <tr style={{ background: '#f8f9fa', fontWeight: 'bold' }}>
+                <td colSpan={3} style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>Total Cobrado:</td>
+                <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>${formatCurrency(printTotalPaid)}</td>
               </tr>
-            </tfoot>
+            </tbody>
           </table>
         )}
 
         {/* Detalle de Gastos */}
         <h3 style={{ fontSize: '16px', borderBottom: '1px solid #ccc', paddingBottom: '0.5rem', marginBottom: '1rem' }}>3. RELACIÓN DE GASTOS EJECUTADOS</h3>
-        {allCosts.length === 0 ? (
+        {printCosts.length === 0 ? (
            <p style={{ fontSize: '12px', color: '#555', marginBottom: '2rem' }}>No hay gastos registrados.</p>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '2rem', fontSize: '12px' }}>
@@ -1370,7 +1637,7 @@ export default function ClienteDashboard() {
               </tr>
             </thead>
             <tbody>
-              {allCosts.map(c => (
+              {printCosts.map((c: any) => (
                 <tr key={c.id}>
                   <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{c.date || new Date(c.created_at).toISOString().split('T')[0]}</td>
                   <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{c.provider || 'N/A'}</td>
@@ -1380,19 +1647,17 @@ export default function ClienteDashboard() {
                   <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>${formatCurrency(c.quantity * c.unit_price_usd)}</td>
                 </tr>
               ))}
-            </tbody>
-            <tfoot>
-              <tr>
-                <td colSpan={5} style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right', fontWeight: 'bold' }}>Total Gastado:</td>
-                <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right', fontWeight: 'bold', color: '#d32f2f' }}>${formatCurrency(totalCostsValue)}</td>
+              <tr style={{ background: '#f8f9fa', fontWeight: 'bold' }}>
+                <td colSpan={5} style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>Total Gastado:</td>
+                <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right', color: '#d32f2f' }}>${formatCurrency(printTotalCostsValue)}</td>
               </tr>
-            </tfoot>
+            </tbody>
           </table>
         )}
 
         {/* Detalle de Compromisos */}
         <h3 style={{ fontSize: '16px', borderBottom: '1px solid #ccc', paddingBottom: '0.5rem', marginBottom: '1rem' }}>4. COMPROMISOS (GASTOS POR EJECUTAR)</h3>
-        {allCommitments.length === 0 ? (
+        {printCommitments.length === 0 ? (
            <p style={{ fontSize: '12px', color: '#555', marginBottom: '2rem' }}>No hay compromisos registrados.</p>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '2rem', fontSize: '12px' }}>
@@ -1405,7 +1670,7 @@ export default function ClienteDashboard() {
               </tr>
             </thead>
             <tbody>
-              {allCommitments.map(c => {
+              {printCommitments.map((c: any) => {
                 const cTotal = c.amount_usd || (c.quantity * c.unit_price_usd);
                 return (
                   <tr key={c.id}>
@@ -1416,20 +1681,18 @@ export default function ClienteDashboard() {
                   </tr>
                 );
               })}
-            </tbody>
-            <tfoot>
-              <tr>
-                <td colSpan={3} style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right', fontWeight: 'bold' }}>Total Compromisos:</td>
-                <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right', fontWeight: 'bold', color: '#d32f2f' }}>${formatCurrency(totalCommitted)}</td>
+              <tr style={{ background: '#f8f9fa', fontWeight: 'bold' }}>
+                <td colSpan={3} style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>Total Compromisos:</td>
+                <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right', color: '#d32f2f' }}>${formatCurrency(printTotalCommitted)}</td>
               </tr>
-            </tfoot>
+            </tbody>
           </table>
         )}
 
-        {/* Detalle de Adelantos */}
-        <h3 style={{ fontSize: '16px', borderBottom: '1px solid #ccc', paddingBottom: '0.5rem', marginBottom: '1rem' }}>5. ADELANTOS A SOCIOS (RETIROS DE GANANCIA)</h3>
-        {allAdvances.length === 0 ? (
-           <p style={{ fontSize: '12px', color: '#555', marginBottom: '2rem' }}>No hay adelantos registrados.</p>
+        {/* Detalle de Retiros */}
+        <h3 style={{ fontSize: '16px', borderBottom: '1px solid #ccc', paddingBottom: '0.5rem', marginBottom: '1rem' }}>5. RETIRO DE SOCIOS</h3>
+        {printAdvances.length === 0 ? (
+           <p style={{ fontSize: '12px', color: '#555', marginBottom: '2rem' }}>No hay retiros registrados.</p>
         ) : (
           <div>
             <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '2rem', fontSize: '12px' }}>
@@ -1442,7 +1705,7 @@ export default function ClienteDashboard() {
                 </tr>
               </thead>
               <tbody>
-                {allAdvances.map(a => (
+                {printAdvances.map((a: any) => (
                   <tr key={a.id}>
                     <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{a.date}</td>
                     <td style={{ border: '1px solid #ccc', padding: '0.5rem', fontWeight: 'bold' }}>{a.partner_name}</td>
@@ -1450,21 +1713,19 @@ export default function ClienteDashboard() {
                     <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>${formatCurrency(a.amount_usd)}</td>
                   </tr>
                 ))}
+                <tr style={{ background: '#f8f9fa', fontWeight: 'bold' }}>
+                  <td colSpan={3} style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>Total Retiros Henry Peraza:</td>
+                  <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>${formatCurrency(printAdvances.filter((a: any) => a.partner_name === 'Henry Peraza').reduce((s: number, a: any) => s + Number(a.amount_usd), 0))}</td>
+                </tr>
+                <tr style={{ background: '#f8f9fa', fontWeight: 'bold' }}>
+                  <td colSpan={3} style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>Total Retiros Losbers Perez:</td>
+                  <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>${formatCurrency(printAdvances.filter((a: any) => a.partner_name === 'Losbers Perez').reduce((s: number, a: any) => s + Number(a.amount_usd), 0))}</td>
+                </tr>
+                <tr style={{ background: '#fff3cd', fontWeight: 'bold' }}>
+                  <td colSpan={3} style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>TOTAL RETIRADO:</td>
+                  <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right', color: '#d32f2f' }}>${formatCurrency(printTotalAdvances)}</td>
+                </tr>
               </tbody>
-              <tfoot>
-                <tr>
-                  <td colSpan={3} style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right', fontWeight: 'bold' }}>Total Retiros Henry Peraza:</td>
-                  <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right', fontWeight: 'bold' }}>${formatCurrency(allAdvances.filter(a => a.partner_name === 'Henry Peraza').reduce((s, a) => s + Number(a.amount_usd), 0))}</td>
-                </tr>
-                <tr>
-                  <td colSpan={3} style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right', fontWeight: 'bold' }}>Total Retiros Losbers Perez:</td>
-                  <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right', fontWeight: 'bold' }}>${formatCurrency(allAdvances.filter(a => a.partner_name === 'Losbers Perez').reduce((s, a) => s + Number(a.amount_usd), 0))}</td>
-                </tr>
-                <tr style={{ background: '#f8f9fa' }}>
-                  <td colSpan={3} style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right', fontWeight: 'bold' }}>TOTAL RETIRADO:</td>
-                  <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right', fontWeight: 'bold', color: '#d32f2f' }}>${formatCurrency(totalAdvances)}</td>
-                </tr>
-              </tfoot>
             </table>
           </div>
         )}
@@ -1639,6 +1900,251 @@ export default function ClienteDashboard() {
             <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end' }}>
               <button className="btn-secondary" onClick={() => setShowEditProjectModal(false)}>Cancelar</button>
               <button className="btn-primary" onClick={handleSaveEdit} disabled={loading}>
+                {loading ? 'Guardando...' : 'Guardar Cambios'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Edición de Items (Pagos, Gastos, Compromisos) */}
+      {showEditItemModal && editingItem && editItemType && (
+        <div className="modal-overlay">
+          <div className="card modal-content animate-fade" style={{ maxWidth: '700px', width: '95%', maxHeight: '90vh', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+              <h2 style={{ margin: 0, color: 'white', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Edit3 size={20} /> Editar {editItemType === 'payment' ? 'Pago' : editItemType === 'cost' ? 'Gasto' : 'Compromiso'}
+              </h2>
+              <button onClick={() => { setShowEditItemModal(false); setEditingItem(null); }} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>
+                <X size={24} />
+              </button>
+            </div>
+
+            {editItemType === 'payment' && (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.5rem' }}>
+                <div>
+                  <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.85rem' }}>Proyecto</label>
+                  <select
+                    className="input-field"
+                    value={editItemForm.project_id || ''}
+                    onChange={e => setEditItemForm({ ...editItemForm, project_id: e.target.value })}
+                  >
+                    <option value="">Seleccione proyecto</option>
+                    {activeProjects.map(p => (
+                      <option key={p.id} value={p.id}>
+                        {p.proposal_number ? `#${p.proposal_number} - ` : ''}{p.title}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.85rem' }}>Fecha</label>
+                  <input
+                    type="date"
+                    className="input-field"
+                    value={editItemForm.date || ''}
+                    onChange={e => setEditItemForm({ ...editItemForm, date: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.85rem' }}>Monto (USD)</label>
+                  <input
+                    type="text"
+                    className="input-field"
+                    value={editItemForm.amount_usd || ''}
+                    onChange={e => setEditItemForm({ ...editItemForm, amount_usd: handleMoneyInput(e.target.value) })}
+                    onBlur={e => setEditItemForm({ ...editItemForm, amount_usd: formatOnBlur(e.target.value) })}
+                  />
+                </div>
+                <div>
+                  <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.85rem' }}>Referencia</label>
+                  <input
+                    type="text"
+                    className="input-field"
+                    placeholder="Cheque, transferencia, etc."
+                    value={editItemForm.reference || ''}
+                    onChange={e => setEditItemForm({ ...editItemForm, reference: e.target.value })}
+                  />
+                </div>
+                <div style={{ gridColumn: 'span 2' }}>
+                  <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.85rem' }}>Descripción</label>
+                  <input
+                    type="text"
+                    className="input-field"
+                    value={editItemForm.description || ''}
+                    onChange={e => setEditItemForm({ ...editItemForm, description: e.target.value })}
+                  />
+                </div>
+              </div>
+            )}
+
+            {editItemType === 'cost' && (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.5rem' }}>
+                <div>
+                  <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.85rem' }}>Proyecto</label>
+                  <select
+                    className="input-field"
+                    value={editItemForm.project_id || ''}
+                    onChange={e => setEditItemForm({ ...editItemForm, project_id: e.target.value })}
+                  >
+                    <option value="">Seleccione proyecto</option>
+                    {activeProjects.map(p => (
+                      <option key={p.id} value={p.id}>
+                        {p.proposal_number ? `#${p.proposal_number} - ` : ''}{p.title}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.85rem' }}>Fecha</label>
+                  <input
+                    type="date"
+                    className="input-field"
+                    value={editItemForm.date || ''}
+                    onChange={e => setEditItemForm({ ...editItemForm, date: e.target.value })}
+                  />
+                </div>
+                <div style={{ gridColumn: 'span 2' }}>
+                  <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.85rem' }}>Descripción</label>
+                  <input
+                    type="text"
+                    className="input-field"
+                    value={editItemForm.description || ''}
+                    onChange={e => setEditItemForm({ ...editItemForm, description: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.85rem' }}>Proveedor</label>
+                  <input
+                    type="text"
+                    className="input-field"
+                    value={editItemForm.provider || ''}
+                    onChange={e => setEditItemForm({ ...editItemForm, provider: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.85rem' }}>Categoría</label>
+                  <select
+                    className="input-field"
+                    value={editItemForm.category || 'materials'}
+                    onChange={e => setEditItemForm({ ...editItemForm, category: e.target.value })}
+                  >
+                    <option value="materials">Materiales</option>
+                    <option value="labor">Mano de Obra</option>
+                    <option value="equipment">Equipos</option>
+                    <option value="permits">Permisos</option>
+                    <option value="other">Otros</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.85rem' }}>Cantidad</label>
+                  <input
+                    type="number"
+                    className="input-field"
+                    value={editItemForm.quantity || 1}
+                    onChange={e => setEditItemForm({ ...editItemForm, quantity: parseFloat(e.target.value) || 1 })}
+                    min="0.01"
+                    step="0.01"
+                  />
+                </div>
+                <div>
+                  <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.85rem' }}>Precio Unitario (USD)</label>
+                  <input
+                    type="text"
+                    className="input-field"
+                    value={editItemForm.unit_price_usd || ''}
+                    onChange={e => setEditItemForm({ ...editItemForm, unit_price_usd: handleMoneyInput(e.target.value) })}
+                    onBlur={e => setEditItemForm({ ...editItemForm, unit_price_usd: formatOnBlur(e.target.value) })}
+                  />
+                </div>
+              </div>
+            )}
+
+            {editItemType === 'commitment' && (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.5rem' }}>
+                <div>
+                  <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.85rem' }}>Proyecto</label>
+                  <select
+                    className="input-field"
+                    value={editItemForm.project_id || ''}
+                    onChange={e => setEditItemForm({ ...editItemForm, project_id: e.target.value })}
+                  >
+                    <option value="">Seleccione proyecto</option>
+                    {activeProjects.map(p => (
+                      <option key={p.id} value={p.id}>
+                        {p.proposal_number ? `#${p.proposal_number} - ` : ''}{p.title}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.85rem' }}>Fecha</label>
+                  <input
+                    type="date"
+                    className="input-field"
+                    value={editItemForm.date || ''}
+                    onChange={e => setEditItemForm({ ...editItemForm, date: e.target.value })}
+                  />
+                </div>
+                <div style={{ gridColumn: 'span 2' }}>
+                  <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.85rem' }}>Descripción</label>
+                  <input
+                    type="text"
+                    className="input-field"
+                    value={editItemForm.description || ''}
+                    onChange={e => setEditItemForm({ ...editItemForm, description: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.85rem' }}>Proveedor</label>
+                  <input
+                    type="text"
+                    className="input-field"
+                    value={editItemForm.provider || ''}
+                    onChange={e => setEditItemForm({ ...editItemForm, provider: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.85rem' }}>Categoría</label>
+                  <select
+                    className="input-field"
+                    value={editItemForm.category || 'materials'}
+                    onChange={e => setEditItemForm({ ...editItemForm, category: e.target.value })}
+                  >
+                    <option value="materials">Materiales</option>
+                    <option value="labor">Mano de Obra</option>
+                    <option value="equipment">Equipos</option>
+                    <option value="permits">Permisos</option>
+                    <option value="other">Otros</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.85rem' }}>Cantidad</label>
+                  <input
+                    type="number"
+                    className="input-field"
+                    value={editItemForm.quantity || 1}
+                    onChange={e => setEditItemForm({ ...editItemForm, quantity: parseFloat(e.target.value) || 1 })}
+                    min="0.01"
+                    step="0.01"
+                  />
+                </div>
+                <div>
+                  <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.85rem' }}>Precio Unitario (USD)</label>
+                  <input
+                    type="text"
+                    className="input-field"
+                    value={editItemForm.unit_price_usd || ''}
+                    onChange={e => setEditItemForm({ ...editItemForm, unit_price_usd: handleMoneyInput(e.target.value) })}
+                    onBlur={e => setEditItemForm({ ...editItemForm, unit_price_usd: formatOnBlur(e.target.value) })}
+                  />
+                </div>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end' }}>
+              <button className="btn-secondary" onClick={() => { setShowEditItemModal(false); setEditingItem(null); }}>Cancelar</button>
+              <button className="btn-primary" onClick={handleSaveEditItem} disabled={loading}>
                 {loading ? 'Guardando...' : 'Guardar Cambios'}
               </button>
             </div>

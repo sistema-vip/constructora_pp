@@ -17,7 +17,9 @@ import {
   Save,
   X,
   Sparkles,
-  Lock
+  Lock,
+  Archive,
+  HardHat
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { handleMoneyInput, parseCurrency, formatCurrency, formatOnBlur } from '@/lib/formatters';
@@ -35,6 +37,7 @@ interface Project {
   created_at: string;
   proposal_number?: number;
   clients?: { name: string };
+  archived_at: string | null;
 }
 
 export default function ProyectosPage() {
@@ -48,19 +51,18 @@ export default function ProyectosPage() {
   const [editContent, setEditContent] = useState('');
   const [editBudget, setEditBudget] = useState<string>('0');
   const [saving, setSaving] = useState(false);
+  const [view, setView] = useState<'active' | 'archived'>('active');
 
   const [aiInstruction, setAiInstruction] = useState('');
   const [isModifyingAi, setIsModifyingAi] = useState(false);
 
   useEffect(() => {
     fetchProjects();
-    
-    // Si venimos del módulo de clientes, pre-filtrar
+
     const urlParams = new URLSearchParams(window.location.search);
     const clientSearch = urlParams.get('client');
-    if (clientSearch) {
-      setSearchTerm(clientSearch);
-    }
+    if (clientSearch) setSearchTerm(clientSearch);
+    if (urlParams.get('view') === 'archived') setView('archived');
   }, []);
 
   async function fetchProjects() {
@@ -179,8 +181,10 @@ export default function ProyectosPage() {
     window.print();
   };
 
-  const filteredProjects = projects.filter(p => 
-    p.title?.toLowerCase().includes(searchTerm.toLowerCase()) || 
+  const activeProjects = projects.filter(p => p.archived_at === null || p.archived_at === undefined);
+  const archivedProjects = projects.filter(p => p.archived_at !== null && p.archived_at !== undefined);
+  const filteredProjects = (view === 'active' ? activeProjects : archivedProjects).filter(p =>
+    p.title?.toLowerCase().includes(searchTerm.toLowerCase()) ||
     p.clients?.name?.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
@@ -201,7 +205,27 @@ export default function ProyectosPage() {
           </div>
         </div>
 
-        <div className="card hide-on-print" style={{ padding: 0, overflow: 'hidden' }}>
+        {/* Tab switcher: Activos / Historial */}
+        <div className="hide-on-print" style={{ display: 'flex', borderBottom: '1px solid var(--border-color)', marginBottom: '0', background: 'var(--surface-color)', borderRadius: '16px 16px 0 0', overflow: 'hidden' }}>
+          <button
+            onClick={() => setView('active')}
+            style={{ padding: '0.9rem 1.5rem', background: 'none', border: 'none', borderBottom: view === 'active' ? '2px solid var(--primary-color)' : '2px solid transparent', color: view === 'active' ? 'var(--primary-color)' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem', transition: 'all 0.2s' }}
+          >
+            <HardHat size={16} /> Activos
+            <span style={{ background: 'rgba(255,255,255,0.07)', borderRadius: '99px', padding: '0.1rem 0.5rem', fontSize: '0.75rem' }}>{activeProjects.length}</span>
+          </button>
+          <button
+            onClick={() => setView('archived')}
+            style={{ padding: '0.9rem 1.5rem', background: 'none', border: 'none', borderBottom: view === 'archived' ? '2px solid var(--primary-color)' : '2px solid transparent', color: view === 'archived' ? 'var(--primary-color)' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem', transition: 'all 0.2s' }}
+          >
+            <Archive size={16} /> Historial
+            {archivedProjects.length > 0 && (
+              <span style={{ background: 'rgba(255,255,255,0.07)', borderRadius: '99px', padding: '0.1rem 0.5rem', fontSize: '0.75rem' }}>{archivedProjects.length}</span>
+            )}
+          </button>
+        </div>
+
+        <div className="card hide-on-print" style={{ padding: 0, overflow: 'hidden', borderRadius: '0 0 16px 16px', marginTop: 0, borderTop: 'none' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr style={{ background: 'rgba(255, 255, 255, 0.02)', borderBottom: '1px solid var(--border-color)' }}>
@@ -249,9 +273,18 @@ export default function ProyectosPage() {
                   </td>
                   <td style={{ padding: '1.25rem 1.5rem' }}>
                     <div style={{ display: 'flex', gap: '0.5rem' }}>
-                      {project.status === 'in_progress' || project.status === 'completed' ? (
-                          <button 
-                            className="btn-primary" 
+                      {view === 'archived' ? (
+                        <>
+                          <button
+                            className="btn-secondary"
+                            style={{ padding: '0.5rem', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                            title="Ver detalles"
+                            onClick={() => { router.push(`/proyectos/${project.id}`); }}
+                          >
+                            <FileText size={14} /> Ver
+                          </button>
+                          <button
+                            className="btn-secondary"
                             style={{ padding: '0.5rem', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
                             title="Imprimir Propuesta"
                             onClick={() => {
@@ -260,81 +293,109 @@ export default function ProyectosPage() {
                               setTimeout(() => window.print(), 300);
                             }}
                           >
-                            <Printer size={14} /> Imprimir
-                          </button>
-                      ) : (
-                        <div style={{ display: 'flex', gap: '0.5rem' }}>
-                          <button 
-                            className="btn-secondary" 
-                            style={{ padding: '0.5rem', fontSize: '0.8rem', color: 'var(--primary-color)' }}
-                            title="Editar Presupuesto y Texto"
-                            onClick={() => {
-                              setSelectedProject(project);
-                              setEditContent(project.description);
-                              setEditBudget(formatCurrency(project.budget_usd));
-                              setIsEditing(true);
-                            }}
-                          >
-                            <Edit3 size={14} /> Editar
-                          </button>
-                          <button 
-                            className="btn-secondary" 
-                            style={{ padding: '0.5rem', fontSize: '0.8rem' }}
-                            title="Ver detalles"
-                            onClick={() => {
-                              setSelectedProject(project);
-                              setEditContent(project.description);
-                              setEditBudget(String(project.budget_usd));
-                              setIsEditing(false);
-                            }}
-                          >
-                            <FileText size={14} />
-                          </button>
-                          <button 
-                            className="btn-secondary" 
-                            style={{ padding: '0.5rem', fontSize: '0.8rem' }}
-                            title="Imprimir Propuesta"
-                            onClick={() => {
-                              setSelectedProject(project);
-                              setEditContent(project.description);
-                              setIsEditing(false);
-                              setTimeout(() => window.print(), 300);
-                            }}
-                          >
                             <Printer size={14} />
                           </button>
-                        </div>
-                      )}
-
-                      {project.status === 'proposal' && (
+                        </>
+                      ) : (
                         <>
-                          <button 
-                            className="btn-primary" 
-                            style={{ padding: '0.5rem', background: 'var(--success)', borderColor: 'var(--success)' }}
-                            title="Aprobar Propuesta"
-                            onClick={() => handleStatusUpdate(project.id, 'in_progress')}
+                          {project.status === 'in_progress' || project.status === 'completed' ? (
+                            <>
+                              <button
+                                className="btn-secondary"
+                                style={{ padding: '0.5rem', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                                title="Ver detalles del proyecto"
+                                onClick={() => router.push(`/proyectos/${project.id}`)}
+                              >
+                                <FileText size={14} /> Ver
+                              </button>
+                              <button
+                                className="btn-primary"
+                                style={{ padding: '0.5rem', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                                title="Imprimir Propuesta"
+                                onClick={() => {
+                                  setSelectedProject(project);
+                                  setIsEditing(false);
+                                  setTimeout(() => window.print(), 300);
+                                }}
+                              >
+                                <Printer size={14} /> Imprimir
+                              </button>
+                            </>
+                          ) : (
+                            <div style={{ display: 'flex', gap: '0.5rem' }}>
+                              <button
+                                className="btn-secondary"
+                                style={{ padding: '0.5rem', fontSize: '0.8rem', color: 'var(--primary-color)' }}
+                                title="Editar Presupuesto y Texto"
+                                onClick={() => {
+                                  setSelectedProject(project);
+                                  setEditContent(project.description);
+                                  setEditBudget(formatCurrency(project.budget_usd));
+                                  setIsEditing(true);
+                                }}
+                              >
+                                <Edit3 size={14} /> Editar
+                              </button>
+                              <button
+                                className="btn-secondary"
+                                style={{ padding: '0.5rem', fontSize: '0.8rem' }}
+                                title="Ver detalles"
+                                onClick={() => {
+                                  setSelectedProject(project);
+                                  setEditContent(project.description);
+                                  setEditBudget(String(project.budget_usd));
+                                  setIsEditing(false);
+                                }}
+                              >
+                                <FileText size={14} />
+                              </button>
+                              <button
+                                className="btn-secondary"
+                                style={{ padding: '0.5rem', fontSize: '0.8rem' }}
+                                title="Imprimir Propuesta"
+                                onClick={() => {
+                                  setSelectedProject(project);
+                                  setEditContent(project.description);
+                                  setIsEditing(false);
+                                  setTimeout(() => window.print(), 300);
+                                }}
+                              >
+                                <Printer size={14} />
+                              </button>
+                            </div>
+                          )}
+
+                          {project.status === 'proposal' && (
+                            <>
+                              <button
+                                className="btn-primary"
+                                style={{ padding: '0.5rem', background: 'var(--success)', borderColor: 'var(--success)' }}
+                                title="Aprobar Propuesta"
+                                onClick={() => handleStatusUpdate(project.id, 'in_progress')}
+                              >
+                                <Check size={14} />
+                              </button>
+                              <button
+                                className="btn-secondary"
+                                style={{ padding: '0.5rem', color: '#ffcc00' }}
+                                title="Rechazar Propuesta"
+                                onClick={() => handleStatusUpdate(project.id, 'cancelled')}
+                              >
+                                <Ban size={14} />
+                              </button>
+                            </>
+                          )}
+
+                          <button
+                            className="btn-secondary"
+                            style={{ padding: '0.5rem', color: '#ff4444' }}
+                            title="Eliminar Permanente"
+                            onClick={() => handleDelete(project.id)}
                           >
-                            <Check size={14} />
-                          </button>
-                          <button 
-                            className="btn-secondary" 
-                            style={{ padding: '0.5rem', color: '#ffcc00' }}
-                            title="Rechazar Propuesta"
-                            onClick={() => handleStatusUpdate(project.id, 'cancelled')}
-                          >
-                            <Ban size={14} />
+                            <Trash2 size={14} />
                           </button>
                         </>
                       )}
-
-                      <button 
-                        className="btn-secondary" 
-                        style={{ padding: '0.5rem', color: '#ff4444' }}
-                        title="Eliminar Permanente"
-                        onClick={() => handleDelete(project.id)}
-                      >
-                        <Trash2 size={14} />
-                      </button>
                     </div>
                   </td>
                 </tr>

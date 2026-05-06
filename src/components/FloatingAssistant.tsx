@@ -95,7 +95,17 @@ export default function FloatingAssistant({ onProposalSaved }: { onProposalSaved
     try {
       const amountStr = String(proposal.investmentAmount ?? '');
       const amount = parseFloat(amountStr.replace(/[^0-9.]/g, '')) || 0;
-      const { error: err } = await supabase.from('projects').insert([{ client_id: linkedClientId || null, title: proposal.title, description: editableText, status: 'proposal', budget_usd: amount }]);
+      let proposalNumber = 1;
+      const { data: maxRow } = await supabase
+        .from('projects')
+        .select('proposal_number')
+        .not('proposal_number', 'is', null)
+        .order('proposal_number', { ascending: false })
+        .limit(1);
+      if (maxRow && maxRow.length > 0) {
+        proposalNumber = (maxRow[0].proposal_number || 0) + 1;
+      }
+      const { error: err } = await supabase.from('projects').insert([{ client_id: linkedClientId || null, title: proposal.title, description: editableText, status: 'proposal', budget_usd: amount, proposal_number: proposalNumber }]);
       if (err) throw new Error(err.message);
       setSaved(true); onProposalSaved?.();
     } catch (e: any) { setError(e.message); }
