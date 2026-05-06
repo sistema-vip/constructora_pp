@@ -9,6 +9,7 @@ import {
   TrendingDown,
   Wallet,
   Plus,
+  PlusCircle,
   Calendar,
   FileText,
   Printer,
@@ -17,7 +18,10 @@ import {
   CheckCircle,
   X,
   Archive,
-  Edit3
+  Edit3,
+  AlertCircle,
+  Briefcase as BriefcaseIcon,
+  DollarSign as DollarIcon
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { handleMoneyInput, parseCurrency, formatOnBlur } from '@/lib/formatters';
@@ -62,6 +66,17 @@ interface ProjectExtra {
   created_at: string;
 }
 
+interface Commitment {
+  id: string;
+  description: string;
+  provider?: string;
+  category: string;
+  quantity: number;
+  unit_price_usd: number;
+  amount_usd: number;
+  date: string;
+}
+
 export default function ProjectDashboard() {
   const params = useParams();
   const router = useRouter();
@@ -82,9 +97,10 @@ export default function ProjectDashboard() {
   const [payments, setPayments] = useState<Payment[]>([]);
   const [costs, setCosts] = useState<Cost[]>([]);
   const [extras, setExtras] = useState<ProjectExtra[]>([]);
+  const [commitments, setCommitments] = useState<Commitment[]>([]);
   const [advances, setAdvances] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'payments' | 'costs' | 'details' | 'advances'>('payments');
+  const [activeTab, setActiveTab] = useState<'payments' | 'costs' | 'details' | 'advances' | 'commitments'>('payments');
 
   // Permisos
   const { role } = useUser();
@@ -96,6 +112,7 @@ export default function ProjectDashboard() {
   const [showCostModal, setShowCostModal] = useState(false);
   const [showExtraModal, setShowExtraModal] = useState(false);
   const [showAdvanceModal, setShowAdvanceModal] = useState(false);
+  const [showCommitmentModal, setShowCommitmentModal] = useState(false);
 
 
   // Forms state
@@ -103,6 +120,7 @@ export default function ProjectDashboard() {
   const [costForm, setCostForm] = useState({ description: '', provider: '', category: 'materials', quantity: 1, unit_price_usd: '', date: new Date().toISOString().split('T')[0] });
   const [extraForm, setExtraForm] = useState({ description: '', amount_usd: '' });
   const [advanceForm, setAdvanceForm] = useState({ partner_name: 'Henry Peraza', amount_usd: '', description: '', date: new Date().toISOString().split('T')[0] });
+  const [commitmentForm, setCommitmentForm] = useState({ description: '', provider: '', category: 'materials', quantity: 1, unit_price_usd: '', date: new Date().toISOString().split('T')[0] });
 
   // Estado para cerrar/archivar proyecto
   const [showCloseConfirm, setShowCloseConfirm] = useState(false);
@@ -125,13 +143,15 @@ export default function ProjectDashboard() {
         paymentsRes,
         costsRes,
         extrasRes,
-        advancesRes
+        advancesRes,
+        commitmentsRes
       ] = await Promise.all([
         supabase.from('projects').select('*, clients(name)').eq('id', projectId).single(),
         supabase.from('project_payments').select('*').eq('project_id', projectId).order('date', { ascending: false }),
         supabase.from('project_costs').select('*').eq('project_id', projectId).order('created_at', { ascending: false }),
         supabase.from('project_extras').select('*').eq('project_id', projectId).order('created_at', { ascending: true }),
-        supabase.from('partner_advances').select('*').eq('project_id', projectId).order('date', { ascending: false })
+        supabase.from('partner_advances').select('*').eq('project_id', projectId).order('date', { ascending: false }),
+        supabase.from('project_commitments').select('*').eq('project_id', projectId).order('date', { ascending: false })
       ]);
 
       if (projectRes.error) throw projectRes.error;
@@ -139,12 +159,14 @@ export default function ProjectDashboard() {
       if (costsRes.error) throw costsRes.error;
       if (extrasRes.error) throw extrasRes.error;
       if (advancesRes.error) throw advancesRes.error;
+      if (commitmentsRes.error) throw commitmentsRes.error;
 
       setProject(projectRes.data);
       setPayments(paymentsRes.data || []);
       setCosts(costsRes.data || []);
       setExtras(extrasRes.data || []);
       setAdvances(advancesRes.data || []);
+      setCommitments(commitmentsRes.data || []);
 
     } catch (error: any) {
       console.error("Error fetching data:", error);
@@ -158,11 +180,12 @@ export default function ProjectDashboard() {
   const baseBudget = project?.budget_usd || 0;
   const totalExtra = extras.reduce((sum, e) => sum + Number(e.amount_usd), 0);
   const totalAdvances = advances.reduce((sum, a) => sum + Number(a.amount_usd), 0);
+  const totalCommitments = commitments.reduce((sum, c) => sum + Number(c.amount_usd), 0);
   const totalBudget = Number(project?.budget_usd || 0) + totalExtra;
   const totalPaid = payments.reduce((sum, p) => sum + Number(p.amount_usd), 0);
   const balanceDue = totalBudget - totalPaid;
   const totalCosts = costs.reduce((sum, c) => sum + Number(c.total_usd), 0);
-  const estimatedProfit = totalBudget - totalCosts;
+  const estimatedProfit = totalBudget - totalCosts - totalCommitments;
   const netProfit = estimatedProfit - totalAdvances;
 
   // Partner advances calculation
@@ -271,6 +294,28 @@ export default function ProjectDashboard() {
       setShowAdvanceModal(false);
       setAdvanceForm({ ...advanceForm, amount_usd: '', description: '', date: new Date().toISOString().split('T')[0] });
       fetchProjectData();
+    }
+  }
+
+  async function handleAddCommitment(e: React.FormEvent) {
+    e.preventDefault();
+    const { error } = await supabase.from('project_commitments').insert([{
+      project_id: projectId,
+      description: commitmentForm.description,
+      provider: commitmentForm.provider,
+      category: commitmentForm.category,
+      quantity: commitmentForm.quantity,
+      unit_price_usd: parseCurrency(String(commitmentForm.unit_price_usd)),
+      amount_usd: commitmentForm.quantity * parseCurrency(String(commitmentForm.unit_price_usd)),
+      date: commitmentForm.date
+    }]);
+
+    if (!error) {
+      setShowCommitmentModal(false);
+      setCommitmentForm({ description: '', provider: '', category: 'materials', quantity: 1, unit_price_usd: '', date: new Date().toISOString().split('T')[0] });
+      fetchProjectData();
+    } else {
+      alert(`Error al registrar compromiso: ${error.message}`);
     }
   }
 
@@ -403,6 +448,27 @@ export default function ProjectDashboard() {
         </div>
       </div>
 
+      {/* ACTION BAR */}
+      {!isViewer && (
+        <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'nowrap', overflowX: 'auto', justifyContent: 'flex-start', alignItems: 'center', background: 'rgba(255,255,255,0.02)', padding: '0.75rem', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.05)' }}>
+          <button className="btn-primary" onClick={() => setShowPaymentModal(true)} style={{ height: '38px', padding: '0 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', background: 'var(--success)', borderColor: 'var(--success)', boxShadow: '0 4px 12px rgba(16,185,129,0.15)' }}>
+            <BriefcaseIcon size={15} /> Registrar Pago
+          </button>
+          <button className="btn-secondary" onClick={() => setShowAdvanceModal(true)} style={{ height: '38px', padding: '0 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', borderColor: '#8b5cf6', color: '#8b5cf6' }}>
+            <Users size={15} /> Retiro de Socio
+          </button>
+          <button className="btn-secondary" onClick={() => setShowCommitmentModal(true)} style={{ height: '38px', padding: '0 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', borderColor: 'var(--primary-color)', color: 'var(--primary-color)' }}>
+            <ClipboardList size={15} /> Registrar Compromiso
+          </button>
+          <button className="btn-secondary" onClick={() => setShowExtraModal(true)} style={{ height: '38px', padding: '0 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+            <Plus size={15} /> Servicio Adicional
+          </button>
+          <button className="btn-secondary" onClick={() => setShowCostModal(true)} style={{ height: '38px', padding: '0 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', borderColor: 'var(--danger)', color: 'var(--danger)' }}>
+            <DollarIcon size={15} /> Registrar Gasto
+          </button>
+        </div>
+      )}
+
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1.5rem' }}>
         <div className="card" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-muted)' }}>
@@ -443,6 +509,15 @@ export default function ProjectDashboard() {
           </div>
         </div>
 
+        <div className="card" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.5rem', borderColor: 'rgba(245, 158, 11, 0.4)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--primary-color)' }}>
+            <AlertCircle size={18} /> <span>Compromisos</span>
+          </div>
+          <div style={{ fontSize: '1.8rem', fontWeight: 'bold', color: 'white' }}>
+            ${totalCommitments.toLocaleString('es-VE', { minimumFractionDigits: 2 })}
+          </div>
+        </div>
+
         <div className="card" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.5rem', borderColor: 'rgba(239, 68, 68, 0.3)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--danger)' }}>
             <TrendingDown size={18} /> <span>Costos Totales</span>
@@ -473,6 +548,13 @@ export default function ProjectDashboard() {
             onClick={() => setActiveTab('details')}
           >
             Detalles
+          </button>
+          <button 
+            className={`btn-secondary ${activeTab === 'commitments' ? 'btn-primary' : ''}`}
+            style={{ flex: 1, padding: '0.5rem 1rem', background: activeTab === 'commitments' ? 'var(--primary-color)' : 'transparent', border: 'none', borderBottom: activeTab === 'commitments' ? '2px solid var(--primary-color)' : 'none', color: activeTab === 'commitments' ? 'white' : 'var(--text-muted)' }}
+            onClick={() => setActiveTab('commitments')}
+          >
+            Compromisos
           </button>
           <button 
             className={`btn-secondary ${activeTab === 'advances' ? 'btn-primary' : ''}`}
@@ -724,6 +806,48 @@ export default function ProjectDashboard() {
               )}
             </div>
           )}
+
+          {activeTab === 'commitments' && (
+            <div className="animate-fade">
+               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
+                <h3 style={{ margin: 0 }}>Compromisos (Gastos por Ejecutar)</h3>
+                <button className="btn-primary" onClick={() => setShowCommitmentModal(true)}>
+                  <Plus size={16} /> Registrar Compromiso
+                </button>
+              </div>
+              
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                    <th style={{ textAlign: 'left', padding: '1rem' }}>FECHA</th>
+                    <th style={{ textAlign: 'left', padding: '1rem' }}>CONCEPTO</th>
+                    <th style={{ textAlign: 'left', padding: '1rem' }}>PROVEEDOR</th>
+                    <th style={{ textAlign: 'center', padding: '1rem' }}>CANT.</th>
+                    <th style={{ textAlign: 'right', padding: '1rem' }}>P. UNITARIO</th>
+                    <th style={{ textAlign: 'right', padding: '1rem' }}>TOTAL</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {commitments.length === 0 ? (
+                    <tr><td colSpan={6} style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>Aún no hay compromisos registrados.</td></tr>
+                  ) : (
+                    commitments.map(c => (
+                      <tr key={c.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                        <td style={{ padding: '1rem' }}>{new Date(c.date).toLocaleDateString()}</td>
+                        <td style={{ padding: '1rem' }}>{c.description}</td>
+                        <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>{c.provider || 'N/A'}</td>
+                        <td style={{ padding: '1rem', textAlign: 'center' }}>{c.quantity}</td>
+                        <td style={{ padding: '1rem', textAlign: 'right', color: 'var(--text-muted)' }}>${Number(c.unit_price_usd).toLocaleString('es-VE', { minimumFractionDigits: 2 })}</td>
+                        <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold', color: 'var(--primary-color)' }}>
+                          ${Number(c.amount_usd).toLocaleString('es-VE', { minimumFractionDigits: 2 })}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -878,6 +1002,62 @@ export default function ProjectDashboard() {
               <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
                 <button type="button" className="btn-secondary" style={{ flex: 1 }} onClick={() => setShowAdvanceModal(false)}>Cancelar</button>
                 <button type="submit" className="btn-primary" style={{ flex: 1, justifyContent: 'center' }}>Guardar Retiro</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showCommitmentModal && (
+        <div className="modal-overlay">
+          <div className="card modal-content animate-fade" style={{ maxWidth: '500px', width: '90%' }}>
+            <h2 style={{ marginBottom: '1.5rem', color: 'white' }}>Registrar Compromiso</h2>
+            <form onSubmit={handleAddCommitment} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div>
+                <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Fecha del Compromiso</label>
+                <input type="date" required className="input-field" value={commitmentForm.date} onChange={e => setCommitmentForm({...commitmentForm, date: e.target.value})} />
+              </div>
+              <div>
+                <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Proveedor / Trabajador</label>
+                <input type="text" required placeholder="Ej. Ferretería EPA / Juan Pérez" className="input-field" value={commitmentForm.provider} onChange={e => setCommitmentForm({...commitmentForm, provider: e.target.value})} />
+              </div>
+              <div>
+                <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Descripción</label>
+                <input type="text" required placeholder="Ej. Cemento Portland" className="input-field" value={commitmentForm.description} onChange={e => setCommitmentForm({...commitmentForm, description: e.target.value})} />
+              </div>
+              <div>
+                <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Categoría</label>
+                <select className="input-field" value={commitmentForm.category} onChange={e => setCommitmentForm({...commitmentForm, category: e.target.value})}>
+                  <option value="materials">Materiales</option>
+                  <option value="labor">Mano de Obra</option>
+                  <option value="equipment">Equipos</option>
+                  <option value="permits">Permisos</option>
+                  <option value="other">Otros</option>
+                </select>
+              </div>
+              <div style={{ display: 'flex', gap: '1rem' }}>
+                 <div style={{ flex: 1 }}>
+                   <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Cantidad</label>
+                   <input type="number" step="0.01" required className="input-field" value={commitmentForm.quantity} onChange={e => setCommitmentForm({...commitmentForm, quantity: parseFloat(e.target.value) || 0})} />
+                 </div>
+                 <div style={{ flex: 1 }}>
+                   <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Precio Unitario (USD)</label>
+                   <input 
+                     type="text" 
+                     required 
+                     className="input-field" 
+                     value={commitmentForm.unit_price_usd} 
+                     onChange={e => setCommitmentForm({...commitmentForm, unit_price_usd: handleMoneyInput(e.target.value)})} 
+                     onBlur={e => setCommitmentForm({...commitmentForm, unit_price_usd: formatOnBlur(e.target.value)})}
+                   />
+                 </div>
+              </div>
+              <div style={{ marginTop: '0.5rem', textAlign: 'right', fontWeight: 'bold' }}>
+                 Total: ${(commitmentForm.quantity * parseCurrency(String(commitmentForm.unit_price_usd))).toLocaleString('es-VE', {minimumFractionDigits:2})}
+              </div>
+              <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
+                <button type="button" className="btn-secondary" style={{ flex: 1 }} onClick={() => setShowCommitmentModal(false)}>Cancelar</button>
+                <button type="submit" className="btn-primary" style={{ flex: 1, justifyContent: 'center' }}>Guardar Compromiso</button>
               </div>
             </form>
           </div>
