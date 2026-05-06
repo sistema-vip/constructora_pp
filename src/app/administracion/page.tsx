@@ -22,7 +22,14 @@ import {
   UserPlus,
   X,
   Eye,
-  Lock
+  Lock,
+  Bell,
+  ClipboardList,
+  Clock,
+  CheckCircle,
+  XCircle,
+  Copy,
+  Send
 } from 'lucide-react';
 
 interface ProjectAdmin {
@@ -55,7 +62,7 @@ export default function AdministracionDashboard() {
   const [globalNotes, setGlobalNotes] = useState('');
   const [savingNotes, setSavingNotes] = useState(false);
   const [notesSaved, setNotesSaved] = useState(false);
-  const [activeTab, setActiveTab] = useState<'finanzas' | 'usuarios'>('finanzas');
+  const [activeTab, setActiveTab] = useState<'finanzas' | 'usuarios' | 'solicitudes'>('finanzas');
   const [users, setUsers] = useState<any[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [currentUser, setCurrentUser] = useState<any>(null);
@@ -67,16 +74,95 @@ export default function AdministracionDashboard() {
   const [createUserError, setCreateUserError] = useState<string | null>(null);
   const [createUserSuccess, setCreateUserSuccess] = useState(false);
 
+  // Access requests state
+  const [accessRequests, setAccessRequests] = useState<any[]>([]);
+  const [loadingRequests, setLoadingRequests] = useState(false);
+  const [approvingId, setApprovingId] = useState<string | null>(null);
+  const [rejectingId, setRejectingId] = useState<string | null>(null);
+  const [showApproveModal, setShowApproveModal] = useState(false);
+  const [selectedRequest, setSelectedRequest] = useState<any | null>(null);
+  const [approveRole, setApproveRole] = useState<'viewer' | 'admin'>('viewer');
+  const [tempPassword, setTempPassword] = useState<string | null>(null);
+  const [approveError, setApproveError] = useState<string | null>(null);
+  const [copiedPassword, setCopiedPassword] = useState(false);
+
+  const pendingCount = accessRequests.filter(r => r.status === 'pending').length;
+
   useEffect(() => {
     fetchAdminData();
     fetchGlobalNotes();
     fetchUsers();
     fetchCurrentUser();
+    fetchAccessRequests();
   }, []);
 
   async function fetchCurrentUser() {
     const { data: { session } } = await supabase.auth.getSession();
     if (session) setCurrentUser(session.user);
+  }
+
+  async function fetchAccessRequests() {
+    setLoadingRequests(true);
+    try {
+      const { data, error } = await supabase
+        .from('access_requests')
+        .select('*')
+        .order('requested_at', { ascending: false });
+      if (error) throw error;
+      setAccessRequests(data || []);
+    } catch (err) {
+      console.error('Error fetching access requests:', err);
+    } finally {
+      setLoadingRequests(false);
+    }
+  }
+
+  async function handleApproveRequest() {
+    if (!selectedRequest) return;
+    setApprovingId(selectedRequest.id);
+    setApproveError(null);
+    try {
+      const res = await fetch('/api/admin/approve-request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requestId: selectedRequest.id, role: approveRole }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || `Error ${res.status}`);
+      setTempPassword(json.tempPassword || null);
+      await fetchAccessRequests();
+      await fetchUsers();
+    } catch (err: any) {
+      setApproveError(err.message);
+    } finally {
+      setApprovingId(null);
+    }
+  }
+
+  async function handleRejectRequest(requestId: string) {
+    if (!confirm('¿Rechazar esta solicitud de acceso?')) return;
+    setRejectingId(requestId);
+    try {
+      const res = await fetch('/api/admin/reject-request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requestId }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || `Error ${res.status}`);
+      await fetchAccessRequests();
+    } catch (err: any) {
+      alert('Error al rechazar: ' + err.message);
+    } finally {
+      setRejectingId(null);
+    }
+  }
+
+  function copyToClipboard(text: string) {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopiedPassword(true);
+      setTimeout(() => setCopiedPassword(false), 2000);
+    });
   }
 
   async function fetchUsers() {
@@ -399,6 +485,39 @@ export default function AdministracionDashboard() {
           }}
         >
           <Users size={18} /> Gestión de Usuarios
+        </button>
+        <button 
+          onClick={() => setActiveTab('solicitudes')}
+          style={{ 
+            padding: '1rem 1.5rem', 
+            background: 'none', 
+            border: 'none', 
+            borderBottom: activeTab === 'solicitudes' ? '2px solid var(--primary-color)' : '2px solid transparent',
+            color: activeTab === 'solicitudes' ? 'var(--primary-color)' : 'var(--text-muted)',
+            cursor: 'pointer',
+            fontWeight: 600,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.5rem',
+            position: 'relative'
+          }}
+        >
+          <ClipboardList size={18} /> Solicitudes de Acceso
+          {pendingCount > 0 && (
+            <span style={{
+              background: 'var(--primary-color)',
+              color: '#000',
+              borderRadius: '999px',
+              fontSize: '0.7rem',
+              fontWeight: 700,
+              padding: '1px 7px',
+              minWidth: '20px',
+              textAlign: 'center',
+              lineHeight: '18px',
+            }}>
+              {pendingCount}
+            </span>
+          )}
         </button>
       </div>
 
@@ -730,7 +849,209 @@ export default function AdministracionDashboard() {
           </div>
         </div>
       )}
+
+      {/* ── TAB: SOLICITUDES DE ACCESO ── */}
+      {activeTab === 'solicitudes' && (
+        <div className="animate-fade">
+          <div className="card" style={{ padding: '0', overflow: 'hidden' }}>
+            <div style={{ padding: '1.5rem', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.01)' }}>
+              <div>
+                <h2 style={{ fontSize: '1.2rem', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <ClipboardList size={20} color="var(--primary-color)" /> Solicitudes de Acceso al Sistema
+                </h2>
+                <p className="text-muted" style={{ margin: '0.25rem 0 0 0', fontSize: '0.85rem' }}>
+                  Revisa y aprueba las solicitudes de usuarios que desean ingresar al sistema.
+                </p>
+              </div>
+              <button className="btn-secondary" style={{ padding: '0.5rem 1rem' }} onClick={fetchAccessRequests}>
+                <RefreshCcw size={16} className={loadingRequests ? 'animate-spin' : ''} />
+              </button>
+            </div>
+
+            {loadingRequests ? (
+              <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-muted)' }}>Cargando solicitudes...</div>
+            ) : accessRequests.length === 0 ? (
+              <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+                <ClipboardList size={40} style={{ opacity: 0.3, marginBottom: '1rem', display: 'block', margin: '0 auto 1rem' }} />
+                No hay solicitudes de acceso registradas.
+              </div>
+            ) : (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ background: 'rgba(0,0,0,0.2)', color: 'var(--text-muted)', fontSize: '0.85rem', borderBottom: '1px solid var(--border-color)' }}>
+                      <th style={{ textAlign: 'left', padding: '1rem 1.5rem' }}>SOLICITANTE</th>
+                      <th style={{ textAlign: 'left', padding: '1rem 1.5rem' }}>MENSAJE</th>
+                      <th style={{ textAlign: 'center', padding: '1rem 1.5rem' }}>ESTADO</th>
+                      <th style={{ textAlign: 'right', padding: '1rem 1.5rem' }}>ACCIONES</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {accessRequests.map(req => (
+                      <tr key={req.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+                        <td style={{ padding: '1.25rem 1.5rem' }}>
+                          <div style={{ fontWeight: 600, color: 'white', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            <User size={15} style={{ opacity: 0.5 }} /> {req.name}
+                          </div>
+                          <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>{req.email}</div>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.1rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                            <Clock size={11} /> {new Date(req.requested_at).toLocaleDateString('es-VE', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                          </div>
+                        </td>
+                        <td style={{ padding: '1.25rem 1.5rem', maxWidth: '260px' }}>
+                          <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontStyle: req.message ? 'normal' : 'italic' }}>
+                            {req.message || '—'}
+                          </span>
+                        </td>
+                        <td style={{ padding: '1.25rem 1.5rem', textAlign: 'center' }}>
+                          {req.status === 'pending' && (
+                            <span className="badge" style={{ background: 'rgba(245,158,11,0.15)', color: 'var(--primary-color)', display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
+                              <Clock size={12} /> Pendiente
+                            </span>
+                          )}
+                          {req.status === 'approved' && (
+                            <span className="badge badge-active" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
+                              <CheckCircle size={12} /> Aprobado
+                            </span>
+                          )}
+                          {req.status === 'rejected' && (
+                            <span className="badge" style={{ background: 'rgba(239,68,68,0.1)', color: 'var(--danger)', display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
+                              <XCircle size={12} /> Rechazado
+                            </span>
+                          )}
+                        </td>
+                        <td style={{ padding: '1.25rem 1.5rem', textAlign: 'right' }}>
+                          {req.status === 'pending' && canCreate && (
+                            <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                              <button
+                                className="btn-secondary"
+                                style={{ fontSize: '0.8rem', padding: '0.4rem 0.8rem', borderColor: 'rgba(239,68,68,0.3)', color: 'var(--danger)' }}
+                                onClick={() => handleRejectRequest(req.id)}
+                                disabled={rejectingId === req.id}
+                              >
+                                {rejectingId === req.id ? '...' : <><XCircle size={14} /> Rechazar</>}
+                              </button>
+                              <button
+                                className="btn-primary"
+                                style={{ fontSize: '0.8rem', padding: '0.4rem 0.9rem' }}
+                                onClick={() => { setSelectedRequest(req); setApproveRole('viewer'); setTempPassword(null); setApproveError(null); setShowApproveModal(true); }}
+                              >
+                                <CheckCircle size={14} /> Aprobar
+                              </button>
+                            </div>
+                          )}
+                          {req.status !== 'pending' && (
+                            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                              {req.reviewed_at ? new Date(req.reviewed_at).toLocaleDateString('es-VE') : '—'}
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
+
+    {/* MODAL: APROBAR SOLICITUD */}
+    {showApproveModal && selectedRequest && (
+      <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(4px)' }}>
+        <div className="card animate-fade" style={{ width: '100%', maxWidth: '460px', padding: '2rem', position: 'relative' }}>
+          <button onClick={() => { setShowApproveModal(false); setTempPassword(null); setApproveError(null); }} style={{ position: 'absolute', top: '1rem', right: '1rem', background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>
+            <X size={20} />
+          </button>
+
+          {!tempPassword ? (
+            <>
+              <h2 style={{ fontSize: '1.2rem', margin: '0 0 0.25rem 0', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <CheckCircle size={20} color="var(--success)" /> Aprobar Solicitud
+              </h2>
+              <p className="text-muted" style={{ fontSize: '0.85rem', margin: '0 0 1.5rem 0' }}>
+                Se creará la cuenta para <strong style={{ color: 'white' }}>{selectedRequest.name}</strong> ({selectedRequest.email}).
+              </p>
+
+              <div style={{ marginBottom: '1.5rem' }}>
+                <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.85rem' }}>Rol a asignar</label>
+                <div style={{ display: 'flex', gap: '0.75rem' }}>
+                  <button
+                    type="button"
+                    onClick={() => setApproveRole('viewer')}
+                    style={{ flex: 1, padding: '0.85rem', borderRadius: '8px', border: `2px solid ${approveRole === 'viewer' ? 'var(--success)' : 'var(--border-color)'}`, background: approveRole === 'viewer' ? 'rgba(16,185,129,0.08)' : 'transparent', color: approveRole === 'viewer' ? 'var(--success)' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 600, fontSize: '0.9rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}
+                  >
+                    <Eye size={16} /> Observador
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setApproveRole('admin')}
+                    style={{ flex: 1, padding: '0.85rem', borderRadius: '8px', border: `2px solid ${approveRole === 'admin' ? 'var(--primary-color)' : 'var(--border-color)'}`, background: approveRole === 'admin' ? 'rgba(245,158,11,0.08)' : 'transparent', color: approveRole === 'admin' ? 'var(--primary-color)' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 600, fontSize: '0.9rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}
+                  >
+                    <ShieldCheck size={16} /> Administrador
+                  </button>
+                </div>
+              </div>
+
+              {approveError && (
+                <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid var(--danger)', color: 'var(--danger)', padding: '0.75rem 1rem', borderRadius: '8px', fontSize: '0.85rem', marginBottom: '1rem' }}>
+                  {approveError}
+                </div>
+              )}
+
+              <div style={{ display: 'flex', gap: '0.75rem' }}>
+                <button type="button" className="btn-secondary" style={{ flex: 1, justifyContent: 'center' }} onClick={() => { setShowApproveModal(false); setApproveError(null); }}>
+                  Cancelar
+                </button>
+                <button type="button" className="btn-primary" style={{ flex: 1, justifyContent: 'center' }} onClick={handleApproveRequest} disabled={!!approvingId}>
+                  {approvingId ? 'Creando cuenta...' : <><CheckCircle size={16} /> Confirmar Aprobación</>}
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
+                <div style={{ width: '64px', height: '64px', borderRadius: '50%', background: 'rgba(16,185,129,0.1)', border: '2px solid var(--success)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1rem' }}>
+                  <CheckCircle2 size={32} color="var(--success)" />
+                </div>
+                <h2 style={{ fontSize: '1.2rem', margin: '0 0 0.5rem 0' }}>¡Cuenta creada!</h2>
+                <p className="text-muted" style={{ fontSize: '0.85rem' }}>
+                  La cuenta de <strong style={{ color: 'white' }}>{selectedRequest.name}</strong> fue activada con rol <strong style={{ color: approveRole === 'admin' ? 'var(--primary-color)' : 'var(--success)' }}>{approveRole === 'admin' ? 'Administrador' : 'Observador'}</strong>.
+                </p>
+              </div>
+
+              <div style={{ marginBottom: '1.5rem' }}>
+                <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.82rem' }}>
+                  Contraseña temporal — compártela con el usuario:
+                </label>
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                  <div style={{ flex: 1, background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '0.85rem 1rem', fontFamily: 'monospace', fontSize: '1.1rem', letterSpacing: '0.1em', color: 'white', fontWeight: 600 }}>
+                    {tempPassword}
+                  </div>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    style={{ padding: '0.85rem', flexShrink: 0 }}
+                    onClick={() => copyToClipboard(tempPassword!)}
+                    title="Copiar contraseña"
+                  >
+                    {copiedPassword ? <CheckCircle2 size={18} color="var(--success)" /> : <Copy size={18} />}
+                  </button>
+                </div>
+                <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '0.5rem' }}>
+                  ⚠️ Esta contraseña no volverá a mostrarse. Cópiala y envíala al usuario por WhatsApp o email.
+                </p>
+              </div>
+
+              <button type="button" className="btn-primary" style={{ width: '100%', justifyContent: 'center' }} onClick={() => { setShowApproveModal(false); setTempPassword(null); }}>
+                Entendido, ya la copié
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    )}
 
     {/* MODAL: CREAR USUARIO */}
     {showCreateUser && (
