@@ -63,7 +63,7 @@ export default function AdministracionDashboard() {
   const [globalNotes, setGlobalNotes] = useState('');
   const [savingNotes, setSavingNotes] = useState(false);
   const [notesSaved, setNotesSaved] = useState(false);
-  const [activeTab, setActiveTab] = useState<'finanzas' | 'usuarios' | 'solicitudes'>('finanzas');
+  const [activeTab, setActiveTab] = useState<'finanzas' | 'usuarios'>('finanzas');
   const [users, setUsers] = useState<any[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [currentUser, setCurrentUser] = useState<any>(null);
@@ -513,28 +513,11 @@ export default function AdministracionDashboard() {
             fontWeight: 600,
             display: 'flex',
             alignItems: 'center',
-            gap: '0.5rem'
-          }}
-        >
-          <Users size={18} /> Gestión de Usuarios
-        </button>
-        <button 
-          onClick={() => setActiveTab('solicitudes')}
-          style={{ 
-            padding: '1rem 1.5rem', 
-            background: 'none', 
-            border: 'none', 
-            borderBottom: activeTab === 'solicitudes' ? '2px solid var(--primary-color)' : '2px solid transparent',
-            color: activeTab === 'solicitudes' ? 'var(--primary-color)' : 'var(--text-muted)',
-            cursor: 'pointer',
-            fontWeight: 600,
-            display: 'flex',
-            alignItems: 'center',
             gap: '0.5rem',
             position: 'relative'
           }}
         >
-          <ClipboardList size={18} /> Solicitudes de Acceso
+          <Users size={18} /> Gestión de Usuarios
           {pendingCount > 0 && (
             <span style={{
               background: 'var(--primary-color)',
@@ -546,6 +529,7 @@ export default function AdministracionDashboard() {
               minWidth: '20px',
               textAlign: 'center',
               lineHeight: '18px',
+              marginLeft: '0.5rem'
             }}>
               {pendingCount}
             </span>
@@ -798,121 +782,19 @@ export default function AdministracionDashboard() {
 
       </>
       ) : (
-        <div className="animate-fade">
-          <div className="card" style={{ padding: '0', overflow: 'hidden' }}>
+                {activeTab === 'usuarios' && (
+        <div className="animate-fade" style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+          
+          {/* ── SECCIÓN: SOLICITUDES DE ACCESO ── */}
+          <div className="card" style={{ padding: '0', overflow: 'hidden', borderLeft: pendingCount > 0 ? '4px solid var(--primary-color)' : '1px solid var(--border-color)' }}>
             <div style={{ padding: '1.5rem', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.01)' }}>
               <div>
                 <h2 style={{ fontSize: '1.2rem', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <ShieldCheck size={20} color="var(--primary-color)" /> Control de Usuarios y Roles
+                  <ClipboardList size={20} color="var(--primary-color)" /> Solicitudes de Acceso
+                  {pendingCount > 0 && <span className="badge" style={{ background: 'var(--primary-color)', color: '#000', fontSize: '0.7rem' }}>{pendingCount} PENDIENTES</span>}
                 </h2>
                 <p className="text-muted" style={{ margin: '0.25rem 0 0 0', fontSize: '0.85rem' }}>
-                  Define quién puede modificar datos y quién tiene acceso de solo lectura.
-                </p>
-              </div>
-              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                <button className="btn-secondary" style={{ padding: '0.5rem 1rem' }} onClick={fetchUsers}>
-                  <RefreshCcw size={16} className={loadingUsers ? 'animate-spin' : ''} />
-                </button>
-                {canCreate ? (
-                  <button className="btn-primary" style={{ padding: '0.5rem 1rem', display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem' }} onClick={() => setShowCreateUser(true)}>
-                    <UserPlus size={16} /> Crear Usuario
-                  </button>
-                ) : (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-muted)', fontSize: '0.85rem', padding: '0.5rem 1rem' }}>
-                    <Lock size={14} /> Solo admin
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div style={{ padding: '1.5rem', background: 'rgba(245,158,11,0.05)', borderBottom: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', gap: '1rem' }}>
-              <AlertCircle size={20} color="var(--primary-color)" />
-              <div style={{ fontSize: '0.85rem', color: 'var(--text-main)' }}>
-                <strong>Modo Observador (Viewer):</strong> El usuario podrá entrar a todos los módulos y ver el historial, pero no verá los botones de "Crear", "Registrar", "Editar" o "Eliminar".
-              </div>
-            </div>
-
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr style={{ background: 'rgba(0,0,0,0.2)', color: 'var(--text-muted)', fontSize: '0.85rem', borderBottom: '1px solid var(--border-color)' }}>
-                  <th style={{ textAlign: 'left', padding: '1rem 1.5rem' }}>USUARIO</th>
-                  <th style={{ textAlign: 'center', padding: '1rem 1.5rem' }}>ROL ACTUAL</th>
-                  <th style={{ textAlign: 'right', padding: '1rem 1.5rem' }}>ACCIONES</th>
-                </tr>
-              </thead>
-              <tbody>
-                {users.map(u => (
-                  <tr key={u.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
-                    <td style={{ padding: '1.25rem 1.5rem' }}>
-                      <div style={{ fontWeight: '600', color: 'white', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                        <User size={16} className="text-muted" /> {u.name || 'Usuario sin nombre'}
-                        {currentUser?.id === u.id && <span className="badge" style={{ background: 'rgba(56,189,248,0.1)', color: 'var(--accent-blue)', fontSize: '0.65rem' }}>TÚ</span>}
-                      </div>
-                      <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>ID: {u.id}</div>
-                    </td>
-                    <td style={{ padding: '1.25rem 1.5rem', textAlign: 'center' }}>
-                      <span className={`badge ${u.role === 'admin' ? 'badge-active' : 'badge-pending'}`} style={{ minWidth: '100px', textAlign: 'center' }}>
-                        {u.role === 'admin' ? 'Administrador' : 'Observador'}
-                      </span>
-                    </td>
-                    <td style={{ padding: '1.25rem 1.5rem', textAlign: 'right' }}>
-                      <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', alignItems: 'center' }}>
-                        {canEdit && (
-                          <button
-                            className="btn-secondary"
-                            style={{
-                              fontSize: '0.8rem',
-                              padding: '0.4rem 0.8rem',
-                              borderColor: u.role === 'admin' ? 'rgba(239, 68, 68, 0.2)' : 'rgba(16, 185, 129, 0.2)',
-                              color: u.role === 'admin' ? 'var(--danger)' : 'var(--success)'
-                            }}
-                            onClick={() => handleToggleRole(u.id, u.role)}
-                            disabled={currentUser?.id === u.id}
-                          >
-                            {u.role === 'admin' ? 'Degradar a Observador' : 'Promover a Admin'}
-                          </button>
-                        )}
-                        {canDelete && (
-                          <button
-                            className="btn-secondary"
-                            style={{
-                              padding: '0.4rem 0.5rem',
-                              borderColor: 'rgba(239, 68, 68, 0.3)',
-                              color: 'var(--danger)',
-                              display: 'flex',
-                              alignItems: 'center'
-                            }}
-                            onClick={() => handleDeleteUser(u.id, u.name)}
-                            disabled={currentUser?.id === u.id || deletingId === u.id}
-                            title="Eliminar usuario"
-                          >
-                            <Trash2 size={16} />
-                          </button>
-                        )}
-                        {!canEdit && !canDelete && (
-                          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Sin permisos</span>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* ── TAB: SOLICITUDES DE ACCESO ── */}
-      {activeTab === 'solicitudes' && (
-        <div className="animate-fade">
-          <div className="card" style={{ padding: '0', overflow: 'hidden' }}>
-            <div style={{ padding: '1.5rem', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.01)' }}>
-              <div>
-                <h2 style={{ fontSize: '1.2rem', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <ClipboardList size={20} color="var(--primary-color)" /> Solicitudes de Acceso al Sistema
-                </h2>
-                <p className="text-muted" style={{ margin: '0.25rem 0 0 0', fontSize: '0.85rem' }}>
-                  Revisa y aprueba las solicitudes de usuarios que desean ingresar al sistema.
+                  Usuarios que han solicitado unirse a la plataforma.
                 </p>
               </div>
               <button className="btn-secondary" style={{ padding: '0.5rem 1rem' }} onClick={fetchAccessRequests}>
@@ -1004,6 +886,107 @@ export default function AdministracionDashboard() {
                 </table>
               </div>
             )}
+          </div>
+
+          {/* ── SECCIÓN: USUARIOS REGISTRADOS ── */}
+          <div className="card" style={{ padding: '0', overflow: 'hidden' }}>
+            <div style={{ padding: '1.5rem', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.01)' }}>
+              <div>
+                <h2 style={{ fontSize: '1.2rem', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <ShieldCheck size={20} color="var(--primary-color)" /> Usuarios del Sistema
+                </h2>
+                <p className="text-muted" style={{ margin: '0.25rem 0 0 0', fontSize: '0.85rem' }}>
+                  Gestiona los roles y el acceso de los usuarios activos.
+                </p>
+              </div>
+              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                <button className="btn-secondary" style={{ padding: '0.5rem 1rem' }} onClick={fetchUsers}>
+                  <RefreshCcw size={16} className={loadingUsers ? 'animate-spin' : ''} />
+                </button>
+                {canCreate ? (
+                  <button className="btn-primary" style={{ padding: '0.5rem 1rem', display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem' }} onClick={() => setShowCreateUser(true)}>
+                    <UserPlus size={16} /> Crear Usuario
+                  </button>
+                ) : (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-muted)', fontSize: '0.85rem', padding: '0.5rem 1rem' }}>
+                    <Lock size={14} /> Solo admin
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div style={{ padding: '1.5rem', background: 'rgba(245,158,11,0.05)', borderBottom: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', gap: '1rem' }}>
+              <AlertCircle size={20} color="var(--primary-color)" />
+              <div style={{ fontSize: '0.85rem', color: 'var(--text-main)' }}>
+                <strong>Modo Observador (Viewer):</strong> El usuario podrá entrar a todos los módulos y ver el historial, pero no podrá realizar cambios.
+              </div>
+            </div>
+
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ background: 'rgba(0,0,0,0.2)', color: 'var(--text-muted)', fontSize: '0.85rem', borderBottom: '1px solid var(--border-color)' }}>
+                    <th style={{ textAlign: 'left', padding: '1rem 1.5rem' }}>USUARIO</th>
+                    <th style={{ textAlign: 'center', padding: '1rem 1.5rem' }}>ROL ACTUAL</th>
+                    <th style={{ textAlign: 'right', padding: '1rem 1.5rem' }}>ACCIONES</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {users.map(u => (
+                    <tr key={u.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+                      <td style={{ padding: '1.25rem 1.5rem' }}>
+                        <div style={{ fontWeight: '600', color: 'white', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                          <User size={16} className="text-muted" /> {u.name || 'Usuario sin nombre'}
+                          {currentUser?.id === u.id && <span className="badge" style={{ background: 'rgba(56,189,248,0.1)', color: 'var(--accent-blue)', fontSize: '0.65rem' }}>TÚ</span>}
+                        </div>
+                        <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>ID: {u.id}</div>
+                      </td>
+                      <td style={{ padding: '1.25rem 1.5rem', textAlign: 'center' }}>
+                        <span className={`badge ${u.role === 'admin' ? 'badge-active' : 'badge-pending'}`} style={{ minWidth: '100px', textAlign: 'center' }}>
+                          {u.role === 'admin' ? 'Administrador' : 'Observador'}
+                        </span>
+                      </td>
+                      <td style={{ padding: '1.25rem 1.5rem', textAlign: 'right' }}>
+                        <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', alignItems: 'center' }}>
+                          {canEdit && (
+                            <button
+                              className="btn-secondary"
+                              style={{
+                                fontSize: '0.8rem',
+                                padding: '0.4rem 0.8rem',
+                                borderColor: u.role === 'admin' ? 'rgba(239, 68, 68, 0.2)' : 'rgba(16, 185, 129, 0.2)',
+                                color: u.role === 'admin' ? 'var(--danger)' : 'var(--success)'
+                              }}
+                              onClick={() => handleToggleRole(u.id, u.role)}
+                              disabled={currentUser?.id === u.id}
+                            >
+                              {u.role === 'admin' ? 'Degradar a Observador' : 'Promover a Admin'}
+                            </button>
+                          )}
+                          {canDelete && (
+                            <button
+                              className="btn-secondary"
+                              style={{
+                                padding: '0.4rem 0.5rem',
+                                borderColor: 'rgba(239, 68, 68, 0.3)',
+                                color: 'var(--danger)',
+                                display: 'flex',
+                                alignItems: 'center'
+                              }}
+                              onClick={() => handleDeleteUser(u.id, u.name)}
+                              disabled={currentUser?.id === u.id || deletingId === u.id}
+                              title="Eliminar usuario"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}
