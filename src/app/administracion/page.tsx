@@ -29,6 +29,7 @@ import {
   CheckCircle,
   XCircle,
   Copy,
+  Trash2,
   Send
 } from 'lucide-react';
 
@@ -85,6 +86,37 @@ export default function AdministracionDashboard() {
   const [tempPassword, setTempPassword] = useState<string | null>(null);
   const [approveError, setApproveError] = useState<string | null>(null);
   const [copiedPassword, setCopiedPassword] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  async function handleDeleteUser(userId: string, userName: string) {
+    if (userId === currentUser?.id) {
+      alert("No puedes eliminar tu propia cuenta.");
+      return;
+    }
+
+    if (!confirm(`¿Estás seguro de que deseas eliminar permanentemente al usuario "${userName}"? Esta acción no se puede deshacer y el usuario perderá el acceso de inmediato.`)) {
+      return;
+    }
+
+    setDeletingId(userId);
+    try {
+      const res = await fetch('/api/admin/delete-user', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || `Error ${res.status}`);
+      
+      alert("Usuario eliminado correctamente.");
+      await fetchUsers();
+    } catch (err: any) {
+      console.error('Error deleting user:', err);
+      alert(`Error al eliminar usuario: ${err.message}`);
+    } finally {
+      setDeletingId(null);
+    }
+  }
 
   const pendingCount = accessRequests.filter(r => r.status === 'pending').length;
 
@@ -824,23 +856,43 @@ export default function AdministracionDashboard() {
                       </span>
                     </td>
                     <td style={{ padding: '1.25rem 1.5rem', textAlign: 'right' }}>
-                      {canEdit ? (
-                        <button
-                          className="btn-secondary"
-                          style={{
-                            fontSize: '0.8rem',
-                            padding: '0.4rem 0.8rem',
-                            borderColor: u.role === 'admin' ? 'rgba(239, 68, 68, 0.2)' : 'rgba(16, 185, 129, 0.2)',
-                            color: u.role === 'admin' ? 'var(--danger)' : 'var(--success)'
-                          }}
-                          onClick={() => handleToggleRole(u.id, u.role)}
-                          disabled={currentUser?.id === u.id}
-                        >
-                          {u.role === 'admin' ? 'Degradar a Observador' : 'Promover a Admin'}
-                        </button>
-                      ) : (
-                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Sin permisos</span>
-                      )}
+                      <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', alignItems: 'center' }}>
+                        {canEdit && (
+                          <button
+                            className="btn-secondary"
+                            style={{
+                              fontSize: '0.8rem',
+                              padding: '0.4rem 0.8rem',
+                              borderColor: u.role === 'admin' ? 'rgba(239, 68, 68, 0.2)' : 'rgba(16, 185, 129, 0.2)',
+                              color: u.role === 'admin' ? 'var(--danger)' : 'var(--success)'
+                            }}
+                            onClick={() => handleToggleRole(u.id, u.role)}
+                            disabled={currentUser?.id === u.id}
+                          >
+                            {u.role === 'admin' ? 'Degradar a Observador' : 'Promover a Admin'}
+                          </button>
+                        )}
+                        {canDelete && (
+                          <button
+                            className="btn-secondary"
+                            style={{
+                              padding: '0.4rem 0.5rem',
+                              borderColor: 'rgba(239, 68, 68, 0.3)',
+                              color: 'var(--danger)',
+                              display: 'flex',
+                              alignItems: 'center'
+                            }}
+                            onClick={() => handleDeleteUser(u.id, u.name)}
+                            disabled={currentUser?.id === u.id || deletingId === u.id}
+                            title="Eliminar usuario"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        )}
+                        {!canEdit && !canDelete && (
+                          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Sin permisos</span>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
