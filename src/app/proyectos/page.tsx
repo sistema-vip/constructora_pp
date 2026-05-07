@@ -51,7 +51,7 @@ export default function ProyectosPage() {
   const [editContent, setEditContent] = useState('');
   const [editBudget, setEditBudget] = useState<string>('0');
   const [saving, setSaving] = useState(false);
-  const [view, setView] = useState<'active' | 'archived'>('active');
+  const [view, setView] = useState<'proposals' | 'execution' | 'archived'>('proposals');
 
   const [aiInstruction, setAiInstruction] = useState('');
   const [isModifyingAi, setIsModifyingAi] = useState(false);
@@ -181,9 +181,15 @@ export default function ProyectosPage() {
     window.print();
   };
 
-  const activeProjects = projects.filter(p => p.archived_at === null || p.archived_at === undefined);
-  const archivedProjects = projects.filter(p => p.archived_at !== null && p.archived_at !== undefined);
-  const filteredProjects = (view === 'active' ? activeProjects : archivedProjects).filter(p =>
+  const proposals = projects.filter(p => !p.archived_at && p.status === 'proposal');
+  const execution = projects.filter(p => !p.archived_at && p.status === 'in_progress');
+  const archived = projects.filter(p => !!p.archived_at);
+
+  const filteredProjects = (
+    view === 'proposals' ? proposals :
+    view === 'execution' ? execution :
+    archived
+  ).filter(p =>
     p.title?.toLowerCase().includes(searchTerm.toLowerCase()) ||
     p.clients?.name?.toLowerCase().includes(searchTerm.toLowerCase())
   );
@@ -205,22 +211,29 @@ export default function ProyectosPage() {
           </div>
         </div>
 
-        {/* Tab switcher: Activos / Historial */}
+        {/* Tab switcher: Propuestas / Ejecución / Historial */}
         <div className="hide-on-print" style={{ display: 'flex', borderBottom: '1px solid var(--border-color)', marginBottom: '0', background: 'var(--surface-color)', borderRadius: '16px 16px 0 0', overflow: 'hidden' }}>
           <button
-            onClick={() => setView('active')}
-            style={{ padding: '0.9rem 1.5rem', background: 'none', border: 'none', borderBottom: view === 'active' ? '2px solid var(--primary-color)' : '2px solid transparent', color: view === 'active' ? 'var(--primary-color)' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem', transition: 'all 0.2s' }}
+            onClick={() => setView('proposals')}
+            style={{ padding: '0.9rem 1.5rem', background: 'none', border: 'none', borderBottom: view === 'proposals' ? '2px solid var(--primary-color)' : '2px solid transparent', color: view === 'proposals' ? 'var(--primary-color)' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem', transition: 'all 0.2s' }}
           >
-            <HardHat size={16} /> Activos
-            <span style={{ background: 'rgba(255,255,255,0.07)', borderRadius: '99px', padding: '0.1rem 0.5rem', fontSize: '0.75rem' }}>{activeProjects.length}</span>
+            <FileText size={16} /> Propuestas Pendientes
+            <span style={{ background: 'rgba(255,255,255,0.07)', borderRadius: '99px', padding: '0.1rem 0.5rem', fontSize: '0.75rem' }}>{proposals.length}</span>
+          </button>
+          <button
+            onClick={() => setView('execution')}
+            style={{ padding: '0.9rem 1.5rem', background: 'none', border: 'none', borderBottom: view === 'execution' ? '2px solid var(--primary-color)' : '2px solid transparent', color: view === 'execution' ? 'var(--primary-color)' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem', transition: 'all 0.2s' }}
+          >
+            <HardHat size={16} /> En Ejecución
+            <span style={{ background: 'rgba(255,255,255,0.07)', borderRadius: '99px', padding: '0.1rem 0.5rem', fontSize: '0.75rem' }}>{execution.length}</span>
           </button>
           <button
             onClick={() => setView('archived')}
             style={{ padding: '0.9rem 1.5rem', background: 'none', border: 'none', borderBottom: view === 'archived' ? '2px solid var(--primary-color)' : '2px solid transparent', color: view === 'archived' ? 'var(--primary-color)' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem', transition: 'all 0.2s' }}
           >
             <Archive size={16} /> Historial
-            {archivedProjects.length > 0 && (
-              <span style={{ background: 'rgba(255,255,255,0.07)', borderRadius: '99px', padding: '0.1rem 0.5rem', fontSize: '0.75rem' }}>{archivedProjects.length}</span>
+            {archived.length > 0 && (
+              <span style={{ background: 'rgba(255,255,255,0.07)', borderRadius: '99px', padding: '0.1rem 0.5rem', fontSize: '0.75rem' }}>{archived.length}</span>
             )}
           </button>
         </div>
