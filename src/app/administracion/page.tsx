@@ -779,10 +779,8 @@ export default function AdministracionDashboard() {
           )}
         </div>
       </div>
-
       </>
-      ) : (
-                {activeTab === 'usuarios' && (
+      ) : activeTab === 'usuarios' ? (
         <div className="animate-fade" style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
           
           {/* ── SECCIÓN: SOLICITUDES DE ACCESO ── */}
@@ -989,7 +987,7 @@ export default function AdministracionDashboard() {
             </div>
           </div>
         </div>
-      )}
+      ) : null}
     </div>
 
     {/* MODAL: APROBAR SOLICITUD */}
