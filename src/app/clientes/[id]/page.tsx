@@ -740,6 +740,15 @@ export default function ClienteDashboard() {
                               <button 
                                 className="btn-secondary" 
                                 style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', marginRight: '0.5rem' }} 
+                                onClick={() => router.push(`/proyectos/${p.id}?from=client&clientId=${clientId}`)}
+                              >
+                                <FileText size={14} /> Ver
+                              </button>
+                            )}
+                            {!isViewer && (
+                              <button 
+                                className="btn-secondary" 
+                                style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', marginRight: '0.5rem' }} 
                                 onClick={() => initiateEdit(p)}
                               >
                                 <Edit3 size={14} /> Editar
@@ -808,8 +817,11 @@ export default function ClienteDashboard() {
                               <button className="btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', marginRight: '0.5rem' }} onClick={() => router.push(`/proyectos/${project.id}?from=client&clientId=${clientId}`)}>
                                 <FileText size={14} /> Ver
                               </button>
-                              <button className="btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', marginRight: '0.5rem' }} onClick={() => router.push(`/proyectos?print=${project.id}`)}>
-                                <Printer size={14} /> Imprimir
+                              <button className="btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', marginRight: '0.5rem' }} onClick={() => initiateEdit(project)} title="Editar propuesta">
+                                <Edit3 size={14} />
+                              </button>
+                              <button className="btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', marginRight: '0.5rem' }} onClick={() => router.push(`/proyectos?print=${project.id}`)} title="Imprimir reporte">
+                                <Printer size={14} />
                               </button>
                               <button
                                 className="btn-secondary"
@@ -864,13 +876,15 @@ export default function ClienteDashboard() {
                               <Edit3 size={14} />
                             </button>
                           )}
-                          <button
-                            className="btn-secondary"
-                            style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--danger)', borderColor: 'rgba(239, 68, 68, 0.2)' }}
-                            onClick={() => initiateDelete(c.id, 'commitment')}
-                          >
-                            <Trash2 size={14} />
-                          </button>
+                          {!isViewer && (
+                            <button
+                              className="btn-secondary"
+                              style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--danger)', borderColor: 'rgba(239, 68, 68, 0.2)' }}
+                              onClick={() => initiateDelete(c.id, 'commitment')}
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          )}
                         </td>
                       </tr>
                     ))}
@@ -913,13 +927,15 @@ export default function ClienteDashboard() {
                               <Edit3 size={14} />
                             </button>
                           )}
-                          <button
-                            className="btn-secondary"
-                            style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--danger)', borderColor: 'rgba(239, 68, 68, 0.2)' }}
-                            onClick={() => initiateDelete(p.id, 'payment')}
-                          >
-                            <Trash2 size={14} />
-                          </button>
+                          {!isViewer && (
+                            <button
+                              className="btn-secondary"
+                              style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--danger)', borderColor: 'rgba(239, 68, 68, 0.2)' }}
+                              onClick={() => initiateDelete(p.id, 'payment')}
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          )}
                         </td>
                       </tr>
                     ))}
@@ -964,13 +980,15 @@ export default function ClienteDashboard() {
                               <Edit3 size={14} />
                             </button>
                           )}
-                          <button
-                            className="btn-secondary"
-                            style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--danger)', borderColor: 'rgba(239, 68, 68, 0.2)' }}
-                            onClick={() => initiateDelete(c.id, 'cost')}
-                          >
-                            <Trash2 size={14} />
-                          </button>
+                          {!isViewer && (
+                            <button
+                              className="btn-secondary"
+                              style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--danger)', borderColor: 'rgba(239, 68, 68, 0.2)' }}
+                              onClick={() => initiateDelete(c.id, 'cost')}
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          )}
                         </td>
                       </tr>
                     ))}
@@ -1001,13 +1019,15 @@ export default function ClienteDashboard() {
                         <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>{e.proposal_number ? `#${e.proposal_number} - ` : ''}{e.project_title}</td>
                         <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold', color: 'var(--primary-color)' }}>+ ${formatCurrency(e.amount_usd)}</td>
                         <td style={{ padding: '1rem', textAlign: 'right' }}>
-                          <button 
-                            className="btn-secondary" 
-                            style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--danger)', borderColor: 'rgba(239, 68, 68, 0.2)' }} 
-                            onClick={() => initiateDelete(e.id, 'extra')}
-                          >
-                            <Trash2 size={14} />
-                          </button>
+                          {!isViewer && (
+                            <button 
+                              className="btn-secondary" 
+                              style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--danger)', borderColor: 'rgba(239, 68, 68, 0.2)' }} 
+                              onClick={() => initiateDelete(e.id, 'extra')}
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          )}
                         </td>
                       </tr>
                     ))}
@@ -1081,13 +1101,15 @@ export default function ClienteDashboard() {
                           <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>{a.proposal_number ? `#${a.proposal_number} - ` : ''}{a.project_title}</td>
                           <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold', color: '#a78bfa' }}>${formatCurrency(a.amount_usd)}</td>
                           <td style={{ padding: '1rem', textAlign: 'right' }}>
-                            <button 
-                              className="btn-secondary" 
-                              style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--danger)', borderColor: 'rgba(239, 68, 68, 0.2)' }} 
-                              onClick={() => initiateDelete(a.id, 'advance')}
-                            >
-                              <Trash2 size={14} />
-                            </button>
+                            {!isViewer && (
+                              <button 
+                                className="btn-secondary" 
+                                style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--danger)', borderColor: 'rgba(239, 68, 68, 0.2)' }} 
+                                onClick={() => initiateDelete(a.id, 'advance')}
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            )}
                           </td>
                         </tr>
                       ))}

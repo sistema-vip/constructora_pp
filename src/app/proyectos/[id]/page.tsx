@@ -19,6 +19,7 @@ import {
   X,
   Archive,
   Edit3,
+  Trash2,
   AlertCircle,
   Briefcase as BriefcaseIcon,
   DollarSign as DollarIcon
@@ -129,14 +130,18 @@ export default function ProjectDashboard() {
   const [showCloseConfirm, setShowCloseConfirm] = useState(false);
   const [showArchiveConfirm, setShowArchiveConfirm] = useState(false);
 
-  // Estado para edición de gastos
+  // Estado para edición de gastos y compromisos
   const [editingCost, setEditingCost] = useState<Cost | null>(null);
+  const [editingCommitment, setEditingCommitment] = useState<Commitment | null>(null);
 
   useEffect(() => {
     if (projectId) {
+      console.log('Project ID:', projectId);
+      console.log('Current Role:', role);
+      console.log('Is Viewer:', isViewer);
       fetchProjectData();
     }
-  }, [projectId]);
+  }, [projectId, role, isViewer]);
 
   async function fetchProjectData() {
     setLoading(true);
@@ -265,6 +270,26 @@ export default function ProjectDashboard() {
     else fetchProjectData();
   }
 
+  function openEditCommitment(c: Commitment) {
+    setEditingCommitment(c);
+    setCommitmentForm({
+      description: c.description,
+      provider: c.provider || '',
+      category: c.category,
+      quantity: c.quantity,
+      unit_price_usd: c.unit_price_usd.toString(),
+      date: c.date || new Date().toISOString().split('T')[0]
+    });
+    setShowCommitmentModal(true);
+  }
+
+  async function handleDeleteCommitment(id: string) {
+    if (!confirm('¿Eliminar este compromiso? Esta acción no se puede deshacer.')) return;
+    const { error } = await supabase.from('project_commitments').delete().eq('id', id);
+    if (error) alert('Error al eliminar compromiso: ' + error.message);
+    else fetchProjectData();
+  }
+
   async function handleAddExtra(e: React.FormEvent) {
     e.preventDefault();
     const { error } = await supabase.from('project_extras').insert([{
@@ -302,8 +327,7 @@ export default function ProjectDashboard() {
 
   async function handleAddCommitment(e: React.FormEvent) {
     e.preventDefault();
-    const { error } = await supabase.from('project_commitments').insert([{
-      project_id: projectId,
+    const data = {
       description: commitmentForm.description,
       provider: commitmentForm.provider,
       category: commitmentForm.category,
@@ -311,14 +335,19 @@ export default function ProjectDashboard() {
       unit_price_usd: parseCurrency(String(commitmentForm.unit_price_usd)),
       amount_usd: commitmentForm.quantity * parseCurrency(String(commitmentForm.unit_price_usd)),
       date: commitmentForm.date
-    }]);
+    };
+
+    const { error } = editingCommitment
+      ? await supabase.from('project_commitments').update(data).eq('id', editingCommitment.id)
+      : await supabase.from('project_commitments').insert([{ project_id: projectId, ...data }]);
 
     if (!error) {
       setShowCommitmentModal(false);
+      setEditingCommitment(null);
       setCommitmentForm({ description: '', provider: '', category: 'materials', quantity: 1, unit_price_usd: '', date: new Date().toISOString().split('T')[0] });
       fetchProjectData();
     } else {
-      alert(`Error al registrar compromiso: ${error.message}`);
+      alert(`Error al guardar compromiso: ${error.message}`);
     }
   }
 
@@ -676,7 +705,7 @@ export default function ProjectDashboard() {
                                 title="Eliminar gasto"
                                 onClick={() => handleDeleteCost(c.id)}
                               >
-                                <X size={13} />
+                                <Trash2 size={13} />
                               </button>
                             </div>
                           </td>
@@ -844,11 +873,12 @@ export default function ProjectDashboard() {
                     <th style={{ textAlign: 'center', padding: '1rem' }}>CANT.</th>
                     <th style={{ textAlign: 'right', padding: '1rem' }}>P. UNITARIO</th>
                     <th style={{ textAlign: 'right', padding: '1rem' }}>TOTAL</th>
+                    {canEdit && <th style={{ textAlign: 'right', padding: '1rem' }}>ACCIONES</th>}
                   </tr>
                 </thead>
                 <tbody>
                   {commitments.length === 0 ? (
-                    <tr><td colSpan={6} style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>Aún no hay compromisos registrados.</td></tr>
+                    <tr><td colSpan={canEdit ? 7 : 6} style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>Aún no hay compromisos registrados.</td></tr>
                   ) : (
                     commitments.map(c => (
                       <tr key={c.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
@@ -860,6 +890,28 @@ export default function ProjectDashboard() {
                         <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold', color: 'var(--primary-color)' }}>
                           ${Number(c.amount_usd).toLocaleString('es-VE', { minimumFractionDigits: 2 })}
                         </td>
+                        {canEdit && (
+                          <td style={{ padding: '1rem', textAlign: 'right' }}>
+                            <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                              <button
+                                className="btn-secondary"
+                                style={{ padding: '0.4rem 0.7rem', fontSize: '0.8rem' }}
+                                title="Editar compromiso"
+                                onClick={() => openEditCommitment(c)}
+                              >
+                                <Edit3 size={13} />
+                              </button>
+                              <button
+                                className="btn-secondary"
+                                style={{ padding: '0.4rem 0.7rem', fontSize: '0.8rem', color: 'var(--danger)', borderColor: 'rgba(239,68,68,0.2)' }}
+                                title="Eliminar compromiso"
+                                onClick={() => handleDeleteCommitment(c.id)}
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            </div>
+                          </td>
+                        )}
                       </tr>
                     ))
                   )}
@@ -1030,7 +1082,7 @@ export default function ProjectDashboard() {
       {showCommitmentModal && (
         <div className="modal-overlay">
           <div className="card modal-content animate-fade" style={{ maxWidth: '500px', width: '90%' }}>
-            <h2 style={{ marginBottom: '1.5rem', color: 'white' }}>Registrar Compromiso</h2>
+            <h2 style={{ marginBottom: '1.5rem', color: 'white' }}>{editingCommitment ? 'Editar Compromiso' : 'Registrar Compromiso'}</h2>
             <form onSubmit={handleAddCommitment} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               <div>
                 <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Fecha del Compromiso</label>
@@ -1075,8 +1127,8 @@ export default function ProjectDashboard() {
                  Total: ${(commitmentForm.quantity * parseCurrency(String(commitmentForm.unit_price_usd))).toLocaleString('es-VE', {minimumFractionDigits:2})}
               </div>
               <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
-                <button type="button" className="btn-secondary" style={{ flex: 1 }} onClick={() => setShowCommitmentModal(false)}>Cancelar</button>
-                <button type="submit" className="btn-primary" style={{ flex: 1, justifyContent: 'center' }}>Guardar Compromiso</button>
+                <button type="button" className="btn-secondary" style={{ flex: 1 }} onClick={() => { setShowCommitmentModal(false); setEditingCommitment(null); setCommitmentForm({ description: '', provider: '', category: 'materials', quantity: 1, unit_price_usd: '', date: new Date().toISOString().split('T')[0] }); }}>Cancelar</button>
+                <button type="submit" className="btn-primary" style={{ flex: 1, justifyContent: 'center' }}>{editingCommitment ? 'Guardar Cambios' : 'Guardar Compromiso'}</button>
               </div>
             </form>
           </div>

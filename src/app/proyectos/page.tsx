@@ -338,6 +338,14 @@ export default function ProyectosPage() {
                             <div style={{ display: 'flex', gap: '0.5rem' }}>
                               <button
                                 className="btn-secondary"
+                                style={{ padding: '0.5rem', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                                title="Ver página de la propuesta"
+                                onClick={() => router.push(`/proyectos/${project.id}`)}
+                              >
+                                <FileText size={14} /> Ver
+                              </button>
+                              <button
+                                className="btn-secondary"
                                 style={{ padding: '0.5rem', fontSize: '0.8rem', color: 'var(--primary-color)' }}
                                 title="Editar Presupuesto y Texto"
                                 onClick={() => {
