@@ -183,7 +183,7 @@ export default function ProyectosPage() {
 
   const proposals = projects.filter(p => !p.archived_at && p.status === 'proposal');
   const execution = projects.filter(p => !p.archived_at && p.status === 'in_progress');
-  const archived = projects.filter(p => !!p.archived_at);
+  const archived = projects.filter(p => !!p.archived_at || p.status === 'completed' || p.status === 'cancelled');
 
   const filteredProjects = (
     view === 'proposals' ? proposals :

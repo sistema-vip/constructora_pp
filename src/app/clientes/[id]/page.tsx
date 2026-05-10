@@ -31,7 +31,8 @@ import {
   Edit3,
   X,
   Sparkles,
-  Loader2
+  Loader2,
+  Archive
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency, handleMoneyInput, parseCurrency, formatOnBlur } from '@/lib/formatters';
@@ -64,6 +65,7 @@ interface Project {
   project_extras: any[];
   project_commitments: any[];
   partner_advances: any[];
+  archived_at?: string | null;
 }
 
 export default function ClienteDashboard() {
@@ -96,7 +98,7 @@ export default function ClienteDashboard() {
   const isViewer = role === 'viewer';
   
   // Tabs State
-  const [activeTab, setActiveTab] = useState<'proyectos' | 'pagos' | 'gastos' | 'adicionales' | 'compromisos' | 'retiros' | 'propuestas'>('proyectos');
+  const [activeTab, setActiveTab] = useState<'proyectos' | 'pagos' | 'gastos' | 'adicionales' | 'compromisos' | 'retiros' | 'propuestas' | 'historial'>('proyectos');
 
   // Modals state
   const [showPaymentModal, setShowPaymentModal] = useState(false);
@@ -466,16 +468,26 @@ export default function ClienteDashboard() {
   }
 
   // Cálculos Financieros
-  const activeProjects = projects.filter(p => p.status === 'in_progress' || p.status === 'completed');
-  const pendingProposals = projects.filter(p => p.status === 'proposal');
+  const activeProjects = projects.filter(p => (p.status === 'in_progress' || p.status === 'completed') && !p.archived_at);
+  const archivedProjects = projects.filter(p => !!p.archived_at || p.status === 'cancelled' || (p.status === 'completed' && !!p.archived_at)); // Wait, if completed and not archived, where does it go?
+  // Let's refine the filters:
+  // Active: in_progress or completed (if not archived)
+  // Proposals: proposal
+  // History: cancelled or archived (even if completed)
   
-  const allPayments = activeProjects.flatMap(p => p.project_payments.map(x => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })));
-  const allCosts = activeProjects.flatMap(p => p.project_costs.map(x => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })));
-  const allExtras = activeProjects.flatMap(p => p.project_extras.map(x => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })));
-  const allCommitments = activeProjects.flatMap(p => p.project_commitments.map(x => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })));
-  const allAdvances = activeProjects.flatMap(p => p.partner_advances.map(x => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })));
+  // Revised Filters:
+  const financialProjects = projects.filter(p => p.status === 'in_progress' || p.status === 'completed');
+  const currentProjects = projects.filter(p => !p.archived_at && p.status === 'in_progress');
+  const pendingProposals = projects.filter(p => p.status === 'proposal');
+  const historyProjects = projects.filter(p => !!p.archived_at || p.status === 'completed' || p.status === 'cancelled');
 
-  const totalContracted = activeProjects.reduce((sum, p) => sum + Number(p.budget_usd), 0) + allExtras.reduce((sum, e) => sum + Number(e.amount_usd), 0);
+  const allPayments = financialProjects.flatMap(p => p.project_payments.map(x => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })));
+  const allCosts = financialProjects.flatMap(p => p.project_costs.map(x => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })));
+  const allExtras = financialProjects.flatMap(p => p.project_extras.map(x => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })));
+  const allCommitments = financialProjects.flatMap(p => p.project_commitments.map(x => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })));
+  const allAdvances = financialProjects.flatMap(p => p.partner_advances.map(x => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })));
+
+  const totalContracted = financialProjects.reduce((sum, p) => sum + Number(p.budget_usd), 0) + allExtras.reduce((sum, e) => sum + Number(e.amount_usd), 0);
   const totalPaid = allPayments.reduce((sum, p) => sum + Number(p.amount_usd), 0);
   const totalCostsValue = allCosts.reduce((sum, c) => sum + (Number(c.quantity) * Number(c.unit_price_usd)), 0);
   const totalCommitted = allCommitments.reduce((sum, c) => sum + Number(c.amount_usd), 0);
@@ -488,8 +500,8 @@ export default function ClienteDashboard() {
 
   // Variables de impresión filtradas por selección del usuario
   const printProjects = selectedProjectIds.size > 0
-    ? activeProjects.filter(p => selectedProjectIds.has(p.id))
-    : activeProjects;
+    ? currentProjects.filter(p => selectedProjectIds.has(p.id))
+    : currentProjects;
   const printPayments = printProjects.flatMap(p => p.project_payments.map((x: any) => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })));
   const printCosts = printProjects.flatMap(p => p.project_costs.map((x: any) => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })));
   const printExtras = printProjects.flatMap(p => p.project_extras.map((x: any) => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })));
@@ -527,7 +539,7 @@ export default function ClienteDashboard() {
           </div>
           
           <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-start' }}>
-            <button className="btn-secondary" onClick={() => { setSelectedProjectIds(new Set(activeProjects.map((p: any) => p.id))); setShowPrintModal(true); }} style={{ padding: '0.7rem 1.2rem', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600, background: 'rgba(255,255,255,0.03)' }}>
+            <button className="btn-secondary" onClick={() => { setSelectedProjectIds(new Set(currentProjects.map((p: any) => p.id))); setShowPrintModal(true); }} style={{ padding: '0.7rem 1.2rem', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600, background: 'rgba(255,255,255,0.03)' }}>
               <Printer size={18} /> Imprimir Reporte
             </button>
           </div>
@@ -634,7 +646,7 @@ export default function ClienteDashboard() {
           <div className="card" style={{ padding: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.02)' }}>
             <div>
               <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Proyectos Activos</div>
-              <div style={{ fontSize: '1.4rem', fontWeight: 'bold', color: 'white' }}>{activeProjects.length}</div>
+              <div style={{ fontSize: '1.4rem', fontWeight: 'bold', color: 'white' }}>{currentProjects.length}</div>
             </div>
             <Briefcase size={24} color="var(--accent-blue)" opacity={0.5} />
           </div>
@@ -713,6 +725,13 @@ export default function ClienteDashboard() {
             >
               Retiro de Socios
             </button>
+            <button
+              className={`btn-secondary ${activeTab === 'historial' ? 'btn-primary' : ''}`}
+              style={{ padding: '0.5rem 1rem', background: activeTab === 'historial' ? 'var(--text-muted)' : 'transparent', border: 'none', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '0.4rem' }}
+              onClick={() => setActiveTab('historial')}
+            >
+              <Archive size={16} /> Historial
+            </button>
           </div>
 
           {activeTab === 'propuestas' && (
@@ -782,7 +801,7 @@ export default function ClienteDashboard() {
 
           {activeTab === 'proyectos' && (
             <div>
-              {activeProjects.length === 0 ? (
+              {currentProjects.length === 0 ? (
                 <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>No hay proyectos activos.</div>
               ) : (
                 <div style={{ overflowX: 'auto' }}>
@@ -797,7 +816,7 @@ export default function ClienteDashboard() {
                       </tr>
                     </thead>
                     <tbody>
-                      {activeProjects.map(project => {
+                      {currentProjects.map(project => {
                         const pExtras = project.project_extras?.reduce((acc, e) => acc + Number(e.amount_usd), 0) || 0;
                         const pContratado = Number(project.budget_usd) + pExtras;
                         const pEgresos = project.project_costs?.reduce((acc, c) => acc + (Number(c.quantity) * Number(c.unit_price_usd)), 0) || 0;
@@ -1114,6 +1133,56 @@ export default function ClienteDashboard() {
                                 <Trash2 size={14} />
                               </button>
                             )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+          {activeTab === 'historial' && (
+            <div className="animate-fade">
+              {historyProjects.length === 0 ? (
+                <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>No hay proyectos en el historial.</div>
+              ) : (
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                        <th style={{ textAlign: 'left', padding: '1rem' }}>FECHA</th>
+                        <th style={{ textAlign: 'left', padding: '1rem' }}>PROYECTO</th>
+                        <th style={{ textAlign: 'left', padding: '1rem' }}>ESTADO</th>
+                        <th style={{ textAlign: 'right', padding: '1rem' }}>PRESUPUESTO</th>
+                        <th style={{ textAlign: 'right', padding: '1rem' }}>ACCIONES</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {historyProjects.map(p => (
+                        <tr key={p.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                          <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>{new Date(p.created_at).toLocaleDateString()}</td>
+                          <td style={{ padding: '1rem' }}>
+                            <div style={{ fontWeight: 'bold' }}>{p.proposal_number ? `#${p.proposal_number} - ` : ''}{p.title}</div>
+                            {p.archived_at && <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Archivado el {new Date(p.archived_at).toLocaleDateString()}</div>}
+                          </td>
+                          <td style={{ padding: '1rem' }}>
+                            <span className={`badge ${p.status === 'completed' ? 'badge-success' : p.status === 'cancelled' ? 'badge-danger' : ''}`}>
+                              {p.status === 'completed' ? 'Completado' : p.status === 'cancelled' ? 'Cancelado' : p.status}
+                            </span>
+                          </td>
+                          <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold' }}>${formatCurrency(p.budget_usd)}</td>
+                          <td style={{ padding: '1rem', textAlign: 'right' }}>
+                            <button 
+                              className="btn-secondary" 
+                              style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', marginRight: '0.5rem' }} 
+                              onClick={() => router.push(`/proyectos/${p.id}?from=client&clientId=${clientId}`)}
+                            >
+                              <FileText size={14} /> Ver
+                            </button>
+                            <button className="btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem' }} onClick={() => router.push(`/proyectos?print=${p.id}`)}>
+                              <Printer size={14} />
+                            </button>
                           </td>
                         </tr>
                       ))}

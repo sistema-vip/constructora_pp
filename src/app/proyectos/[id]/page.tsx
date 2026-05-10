@@ -680,7 +680,7 @@ export default function ProjectDashboard() {
         </div>
 
         {/* 8. GANANCIA DISPONIBLE */}
-        <div className="card" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.4rem', background: 'linear-gradient(145deg, rgba(139,92,246,0.12) 0%, rgba(0,0,0,0) 100%)', borderColor: 'rgba(139,92,246,0.6)', borderWeight: '2px' }}>
+        <div className="card" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.4rem', background: 'linear-gradient(145deg, rgba(139,92,246,0.12) 0%, rgba(0,0,0,0) 100%)', borderColor: 'rgba(139,92,246,0.6)', borderWidth: '2px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#a78bfa', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
             <TrendingUp size={14} /> <span style={{ fontWeight: 700 }}>Ganancia Disponible</span>
           </div>
