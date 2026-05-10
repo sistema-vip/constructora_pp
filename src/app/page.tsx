@@ -392,7 +392,7 @@ export default function Home() {
                 </div>
              </div>
              <div style={{ marginTop: '0.5rem', textAlign: 'right', fontWeight: 'bold' }}>
-                Total: ${(expenseForm.quantity * parseCurrency(String(expenseForm.unit_price_usd))).toLocaleString('es-VE', {minimumFractionDigits:2})}
+                Total: ${(expenseForm.quantity * parseCurrency(String(expenseForm.unit_price_usd))).toLocaleString('es-VE', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
              </div>
              <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
                <button type="button" className="btn-secondary" style={{ flex: 1 }} onClick={() => setShowExpenseModal(false)}>Cancelar</button>

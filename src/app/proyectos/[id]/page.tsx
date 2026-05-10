@@ -104,7 +104,7 @@ export default function ProjectDashboard() {
   const [advances, setAdvances] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [isPrintingReport, setIsPrintingReport] = useState(false);
-  const [activeTab, setActiveTab] = useState<'payments' | 'costs' | 'details' | 'advances' | 'commitments'>('payments');
+  const [activeTab, setActiveTab] = useState<'pagos' | 'gastos' | 'adicionales' | 'compromisos' | 'retiros' | 'detalles'>('pagos');
 
   // Permisos
   const { role } = useUser();
@@ -133,6 +133,19 @@ export default function ProjectDashboard() {
   // Estado para edición de gastos y compromisos
   const [editingCost, setEditingCost] = useState<Cost | null>(null);
   const [editingCommitment, setEditingCommitment] = useState<Commitment | null>(null);
+
+  // Estados para edición inline (estilo clientes)
+  const [showEditItemModal, setShowEditItemModal] = useState(false);
+  const [editingItem, setEditingItem] = useState<any>(null);
+  const [editItemType, setEditItemType] = useState<'payment' | 'cost' | 'commitment' | null>(null);
+  const [editItemForm, setEditItemForm] = useState<any>({});
+
+  // Estados para eliminación protegida (estilo clientes)
+  const [showAdminAuth, setShowAdminAuth] = useState(false);
+  const [adminPassword, setAdminPassword] = useState('');
+  const [authError, setAuthError] = useState('');
+  const [itemToDelete, setItemToDelete] = useState<{ id: string, type: 'payment' | 'cost' | 'extra' | 'commitment' | 'advance' } | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     if (projectId) {
@@ -185,14 +198,14 @@ export default function ProjectDashboard() {
   }
 
   // KPIs Calculations
-  const baseBudget = project?.budget_usd || 0;
-  const totalExtra = extras.reduce((sum, e) => sum + Number(e.amount_usd), 0);
-  const totalAdvances = advances.reduce((sum, a) => sum + Number(a.amount_usd), 0);
-  const totalCommitments = commitments.reduce((sum, c) => sum + Number(c.amount_usd), 0);
-  const totalBudget = Number(project?.budget_usd || 0) + totalExtra;
-  const totalPaid = payments.reduce((sum, p) => sum + Number(p.amount_usd), 0);
+  const baseBudget = Number(project?.budget_usd || 0);
+  const totalExtra = extras.reduce((sum, e) => sum + (Number(e.amount_usd) || 0), 0);
+  const totalAdvances = advances.reduce((sum, a) => sum + (Number(a.amount_usd) || 0), 0);
+  const totalCommitments = commitments.reduce((sum, c) => sum + (Number(c.quantity || 0) * (Number(c.unit_price_usd) || 0)), 0);
+  const totalBudget = baseBudget + totalExtra;
+  const totalPaid = payments.reduce((sum, p) => sum + (Number(p.amount_usd) || 0), 0);
   const balanceDue = totalBudget - totalPaid;
-  const totalCosts = costs.reduce((sum, c) => sum + Number(c.total_usd), 0);
+  const totalCosts = costs.reduce((sum, c) => sum + (Number(c.quantity || 0) * (Number(c.unit_price_usd) || 0)), 0);
   const estimatedProfit = totalBudget - totalCosts - totalCommitments;
   const netProfit = estimatedProfit - totalAdvances;
 
@@ -201,7 +214,7 @@ export default function ProjectDashboard() {
   advances.forEach(a => {
     const partner = a.partner_name;
     if (!partnerAdvances[partner]) partnerAdvances[partner] = 0;
-    partnerAdvances[partner] += Number(a.amount_usd);
+    partnerAdvances[partner] += (Number(a.amount_usd) || 0);
   });
   const profitPerPartner = estimatedProfit / 2;
   const partners = ['Henry Peraza', 'Losbers Perez'];
@@ -289,6 +302,77 @@ export default function ProjectDashboard() {
     if (error) alert('Error al eliminar compromiso: ' + error.message);
     else fetchProjectData();
   }
+
+  const initiateDelete = (id: string, type: 'payment' | 'cost' | 'extra' | 'commitment' | 'advance') => {
+    setItemToDelete({ id, type });
+    setShowAdminAuth(true);
+    setAdminPassword('');
+    setAuthError('');
+  };
+
+  const handleConfirmDelete = async () => {
+    const MASTER_KEY = 'admin123';
+    if (adminPassword !== MASTER_KEY) {
+      setAuthError('Contraseña incorrecta. Solo administradores autorizados.');
+      return;
+    }
+    if (!itemToDelete) return;
+    setDeleting(true);
+    try {
+      const tableMap: Record<string, string> = {
+        payment: 'project_payments', cost: 'project_costs',
+        extra: 'project_extras', commitment: 'project_commitments', advance: 'partner_advances'
+      };
+      const { error } = await supabase.from(tableMap[itemToDelete.type]).delete().eq('id', itemToDelete.id);
+      if (error) throw error;
+      setShowAdminAuth(false);
+      setItemToDelete(null);
+      fetchProjectData();
+    } catch (err: any) {
+      alert('Error al eliminar: ' + err.message);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const initiateEditItem = (item: any, type: 'payment' | 'cost' | 'commitment') => {
+    if (isViewer) return;
+    setEditingItem(item);
+    setEditItemType(type);
+    setEditItemForm({ ...item });
+    setShowEditItemModal(true);
+  };
+
+  const handleSaveEditItem = async () => {
+    if (!editingItem || !editItemType) return;
+    setLoading(true);
+    try {
+      let table = '';
+      let updateData: any = {};
+      if (editItemType === 'payment') {
+        table = 'project_payments';
+        updateData = { amount_usd: parseCurrency(editItemForm.amount_usd), date: editItemForm.date, reference: editItemForm.reference, description: editItemForm.description };
+      } else if (editItemType === 'cost') {
+        table = 'project_costs';
+        const up = parseCurrency(editItemForm.unit_price_usd);
+        updateData = { description: editItemForm.description, provider: editItemForm.provider, category: editItemForm.category, quantity: editItemForm.quantity, unit_price_usd: up, total_usd: editItemForm.quantity * up, date: editItemForm.date };
+      } else if (editItemType === 'commitment') {
+        table = 'project_commitments';
+        const up = parseCurrency(editItemForm.unit_price_usd);
+        updateData = { description: editItemForm.description, provider: editItemForm.provider, category: editItemForm.category, quantity: editItemForm.quantity, unit_price_usd: up, amount_usd: editItemForm.quantity * up, date: editItemForm.date };
+      }
+      const { error } = await supabase.from(table).update(updateData).eq('id', editingItem.id);
+      if (error) throw error;
+      setShowEditItemModal(false);
+      setEditingItem(null);
+      setEditItemType(null);
+      fetchProjectData();
+    } catch (err: any) {
+      alert('Error al guardar: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   async function handleAddExtra(e: React.FormEvent) {
     e.preventDefault();
@@ -517,409 +601,411 @@ export default function ProjectDashboard() {
         </div>
       )}
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1.5rem' }}>
-        <div className="card" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-muted)' }}>
-            <DollarSign size={18} /> <span>Valor Total</span>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '1.25rem' }}>
+        {/* 1. MONTO DEL PROYECTO */}
+        <div className="card" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.4rem', background: 'linear-gradient(145deg, rgba(255,255,255,0.03) 0%, rgba(0,0,0,0) 100%)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-muted)', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            <DollarSign size={14} /> <span>Monto del Proyecto</span>
           </div>
-          <div style={{ fontSize: '1.8rem', fontWeight: 'bold' }}>
-            ${totalBudget.toLocaleString('es-VE', { minimumFractionDigits: 2 })}
+          <div style={{ fontSize: '1.8rem', fontWeight: 800, color: 'white' }}>
+            ${totalBudget.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </div>
-        </div>
-        
-        <div className="card" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.5rem', borderColor: 'rgba(16, 185, 129, 0.3)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--success)' }}>
-            <TrendingUp size={18} /> <span>Total Cobrado</span>
-          </div>
-          <div style={{ fontSize: '1.8rem', fontWeight: 'bold', color: 'var(--success)' }}>
-            ${totalPaid.toLocaleString('es-VE', { minimumFractionDigits: 2 })}
-          </div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Contrato + Adicionales</div>
         </div>
 
-        <div className="card" style={{ padding: '1.5rem', background: 'linear-gradient(145deg, rgba(16,185,129,0.05) 0%, rgba(0,0,0,0) 100%)', borderColor: 'rgba(16,185,129,0.5)', position: 'relative', overflow: 'hidden' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--success)', marginBottom: '0.5rem' }}>
-              <TrendingUp size={16} /> <span style={{ fontWeight: 600 }}>Ganancia Neta</span>
-            </div>
-            <div style={{ fontSize: '1.8rem', fontWeight: 'bold', color: 'white' }}>
-              ${netProfit.toLocaleString('es-VE', {minimumFractionDigits:2})}
-            </div>
-            <div style={{ marginTop: '0.5rem', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-              Est. ${estimatedProfit.toLocaleString('es-VE', {minimumFractionDigits:2})}
-            </div>
+        {/* 2. TOTAL COBRADO */}
+        <div className="card" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.4rem', background: 'linear-gradient(145deg, rgba(16,185,129,0.05) 0%, rgba(0,0,0,0) 100%)', borderColor: 'rgba(16,185,129,0.25)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--success)', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            <TrendingUp size={14} /> <span>Total Cobrado</span>
+          </div>
+          <div style={{ fontSize: '1.8rem', fontWeight: 800, color: 'var(--success)' }}>
+            ${totalPaid.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Pagos recibidos</div>
         </div>
 
-        <div className="card" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.5rem', borderColor: 'rgba(245, 158, 11, 0.3)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--primary-color)' }}>
-            <Wallet size={18} /> <span>Saldo Pendiente</span>
+        {/* 3. SALDO PENDIENTE */}
+        <div className="card" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.4rem', background: 'linear-gradient(145deg, rgba(245,158,11,0.08) 0%, rgba(0,0,0,0) 100%)', borderColor: 'rgba(245,158,11,0.35)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--primary-color)', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            <Wallet size={14} /> <span style={{ fontWeight: 700 }}>Saldo Pendiente</span>
           </div>
-          <div style={{ fontSize: '1.8rem', fontWeight: 'bold', color: 'var(--primary-color)' }}>
-            ${balanceDue.toLocaleString('es-VE', { minimumFractionDigits: 2 })}
+          <div style={{ fontSize: '1.8rem', fontWeight: 800, color: 'var(--primary-color)' }}>
+            ${balanceDue.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Por cobrar al cliente</div>
         </div>
 
-        <div className="card" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.5rem', borderColor: 'rgba(245, 158, 11, 0.4)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--primary-color)' }}>
-            <AlertCircle size={18} /> <span>Compromisos</span>
+        {/* 4. COSTOS TOTALES */}
+        <div className="card" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.4rem', background: 'linear-gradient(145deg, rgba(239,68,68,0.08) 0%, rgba(0,0,0,0) 100%)', borderColor: 'rgba(239,68,68,0.35)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--danger)', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            <TrendingDown size={14} /> <span>Costos Totales</span>
           </div>
-          <div style={{ fontSize: '1.8rem', fontWeight: 'bold', color: 'white' }}>
-            ${totalCommitments.toLocaleString('es-VE', { minimumFractionDigits: 2 })}
+          <div style={{ fontSize: '1.8rem', fontWeight: 800, color: 'var(--danger)' }}>
+            ${totalCosts.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Gastos registrados</div>
         </div>
 
-        <div className="card" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.5rem', borderColor: 'rgba(239, 68, 68, 0.3)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--danger)' }}>
-            <TrendingDown size={18} /> <span>Costos Totales</span>
+        {/* 5. COMPROMISOS */}
+        <div className="card" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.4rem', background: 'linear-gradient(145deg, rgba(245,158,11,0.08) 0%, rgba(0,0,0,0) 100%)', borderColor: 'rgba(245,158,11,0.45)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--primary-color)', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            <AlertCircle size={14} /> <span>Compromisos</span>
           </div>
-          <div style={{ fontSize: '1.8rem', fontWeight: 'bold', color: 'var(--danger)' }}>
-            ${totalCosts.toLocaleString('es-VE', { minimumFractionDigits: 2 })}
+          <div style={{ fontSize: '1.8rem', fontWeight: 800, color: 'white' }}>
+            ${totalCommitments.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Gastos futuros</div>
+        </div>
+
+        {/* 6. GANANCIA FINAL */}
+        <div className="card" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.4rem', background: 'linear-gradient(145deg, rgba(16,185,129,0.08) 0%, rgba(0,0,0,0) 100%)', borderColor: 'rgba(16,185,129,0.4)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--success)', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            <TrendingUp size={14} /> <span style={{ fontWeight: 700 }}>Ganancia Final</span>
+          </div>
+          <div style={{ fontSize: '1.8rem', fontWeight: 800, color: 'white' }}>
+            ${estimatedProfit.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Monto − Gastos − Compromisos</div>
+        </div>
+
+        {/* 7. RETIRO DE SOCIOS */}
+        <div className="card" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.4rem', background: 'linear-gradient(145deg, rgba(139,92,246,0.08) 0%, rgba(0,0,0,0) 100%)', borderColor: 'rgba(139,92,246,0.4)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#8b5cf6', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            <Users size={14} /> <span style={{ fontWeight: 700 }}>Retiro de Socios</span>
+          </div>
+          <div style={{ fontSize: '1.8rem', fontWeight: 800, color: 'white' }}>
+            ${totalAdvances.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Adelantos entregados</div>
+        </div>
+
+        {/* 8. GANANCIA DISPONIBLE */}
+        <div className="card" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.4rem', background: 'linear-gradient(145deg, rgba(139,92,246,0.12) 0%, rgba(0,0,0,0) 100%)', borderColor: 'rgba(139,92,246,0.6)', borderWeight: '2px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#a78bfa', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            <TrendingUp size={14} /> <span style={{ fontWeight: 700 }}>Ganancia Disponible</span>
+          </div>
+          <div style={{ fontSize: '1.8rem', fontWeight: 800, color: 'white' }}>
+            ${netProfit.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Ganancia Final − Retiros</div>
         </div>
       </div>
 
-      <div className="card" style={{ padding: '0', overflow: 'hidden' }}>
-        <div style={{ display: 'flex', borderBottom: '1px solid var(--border-color)', background: 'rgba(255,255,255,0.02)' }}>
-          <button 
-            style={{ flex: 1, padding: '1rem', background: activeTab === 'payments' ? 'rgba(255,255,255,0.05)' : 'transparent', border: 'none', color: activeTab === 'payments' ? 'white' : 'var(--text-muted)', borderBottom: activeTab === 'payments' ? '2px solid var(--primary-color)' : 'none', cursor: 'pointer', fontWeight: 600 }}
-            onClick={() => setActiveTab('payments')}
-          >
-            Pagos del Cliente
-          </button>
-          <button 
-            style={{ flex: 1, padding: '1rem', background: activeTab === 'costs' ? 'rgba(255,255,255,0.05)' : 'transparent', border: 'none', color: activeTab === 'costs' ? 'white' : 'var(--text-muted)', borderBottom: activeTab === 'costs' ? '2px solid var(--primary-color)' : 'none', cursor: 'pointer', fontWeight: 600 }}
-            onClick={() => setActiveTab('costs')}
-          >
-            Control de Gastos
-          </button>
-          <button 
-            className={`btn-secondary ${activeTab === 'details' ? 'btn-primary' : ''}`}
-            style={{ flex: 1, padding: '0.5rem 1rem', background: activeTab === 'details' ? 'var(--accent-blue)' : 'transparent', border: 'none', borderBottom: activeTab === 'details' ? '2px solid var(--primary-color)' : 'none', color: activeTab === 'details' ? 'white' : 'var(--text-muted)' }}
-            onClick={() => setActiveTab('details')}
-          >
-            Detalles
-          </button>
-          <button 
-            className={`btn-secondary ${activeTab === 'commitments' ? 'btn-primary' : ''}`}
-            style={{ flex: 1, padding: '0.5rem 1rem', background: activeTab === 'commitments' ? 'var(--primary-color)' : 'transparent', border: 'none', borderBottom: activeTab === 'commitments' ? '2px solid var(--primary-color)' : 'none', color: activeTab === 'commitments' ? 'white' : 'var(--text-muted)' }}
-            onClick={() => setActiveTab('commitments')}
-          >
-            Compromisos
-          </button>
-          <button 
-            className={`btn-secondary ${activeTab === 'advances' ? 'btn-primary' : ''}`}
-            style={{ flex: 1, padding: '0.5rem 1rem', background: activeTab === 'advances' ? '#8b5cf6' : 'transparent', border: 'none', borderBottom: activeTab === 'advances' ? '2px solid #8b5cf6' : 'none', color: activeTab === 'advances' ? 'white' : 'var(--text-muted)' }}
-            onClick={() => setActiveTab('advances')}
-          >
-            Retiro de Socios
-          </button>
+      <div className="card" style={{ padding: '1.5rem', height: '100%' }}>
+        <div style={{ display: 'flex', gap: '1rem', borderBottom: '1px solid var(--border-color)', marginBottom: '1.5rem', paddingBottom: '0.5rem', overflowX: 'auto' }}>
+          <button
+            className={`btn-secondary ${activeTab === 'pagos' ? 'btn-primary' : ''}`}
+            style={{ padding: '0.5rem 1rem', background: activeTab === 'pagos' ? 'var(--accent-blue)' : 'transparent', border: 'none', whiteSpace: 'nowrap' }}
+            onClick={() => setActiveTab('pagos')}
+          >Pagos</button>
+          <button
+            className={`btn-secondary ${activeTab === 'gastos' ? 'btn-primary' : ''}`}
+            style={{ padding: '0.5rem 1rem', background: activeTab === 'gastos' ? 'var(--danger)' : 'transparent', border: 'none', whiteSpace: 'nowrap' }}
+            onClick={() => setActiveTab('gastos')}
+          >Gastos</button>
+          <button
+            className={`btn-secondary ${activeTab === 'adicionales' ? 'btn-primary' : ''}`}
+            style={{ padding: '0.5rem 1rem', background: activeTab === 'adicionales' ? 'var(--primary-color)' : 'transparent', border: 'none', whiteSpace: 'nowrap' }}
+            onClick={() => setActiveTab('adicionales')}
+          >Adicionales</button>
+          <button
+            className={`btn-secondary ${activeTab === 'compromisos' ? 'btn-primary' : ''}`}
+            style={{ padding: '0.5rem 1rem', background: activeTab === 'compromisos' ? 'var(--primary-color)' : 'transparent', border: 'none', whiteSpace: 'nowrap' }}
+            onClick={() => setActiveTab('compromisos')}
+          >Compromisos</button>
+          <button
+            className={`btn-secondary ${activeTab === 'retiros' ? 'btn-primary' : ''}`}
+            style={{ padding: '0.5rem 1rem', background: activeTab === 'retiros' ? '#8b5cf6' : 'transparent', border: 'none', whiteSpace: 'nowrap' }}
+            onClick={() => setActiveTab('retiros')}
+          >Retiro de Socios</button>
+          <button
+            className={`btn-secondary ${activeTab === 'detalles' ? 'btn-primary' : ''}`}
+            style={{ padding: '0.5rem 1rem', background: activeTab === 'detalles' ? 'var(--accent-blue)' : 'transparent', border: 'none', whiteSpace: 'nowrap' }}
+            onClick={() => setActiveTab('detalles')}
+          >Detalles</button>
         </div>
 
-        <div style={{ padding: '2rem' }}>
-          
-          {activeTab === 'payments' && (
-            <div className="animate-fade">
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
-                <h3 style={{ margin: 0 }}>Historial de Pagos</h3>
-                <button className="btn-primary" onClick={() => setShowPaymentModal(true)}>
-                  <Plus size={16} /> Registrar Pago
-                </button>
-              </div>
-              
+        {/* TAB: PAGOS */}
+        {activeTab === 'pagos' && (
+          <div className="animate-fade">
+            {payments.length === 0 ? (
+              <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>No hay pagos registrados.</div>
+            ) : (
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
                     <th style={{ textAlign: 'left', padding: '1rem' }}>FECHA</th>
                     <th style={{ textAlign: 'left', padding: '1rem' }}>CONCEPTO</th>
-                    <th style={{ textAlign: 'left', padding: '1rem' }}>REFERENCIA</th>
-                    <th style={{ textAlign: 'right', padding: '1rem' }}>MONTO</th>
+                    <th style={{ textAlign: 'right', padding: '1rem' }}>MONTO (USD)</th>
+                    <th style={{ textAlign: 'right', padding: '1rem' }}></th>
                   </tr>
                 </thead>
                 <tbody>
-                  {payments.length === 0 ? (
-                    <tr><td colSpan={4} style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>Aún no hay pagos registrados.</td></tr>
-                  ) : (
-                    payments.map(p => (
-                      <tr key={p.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                        <td style={{ padding: '1rem' }}>{new Date(p.date).toLocaleDateString()}</td>
-                        <td style={{ padding: '1rem' }}>{p.description}</td>
-                        <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>{p.reference}</td>
-                        <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold', color: 'var(--success)' }}>
-                          ${Number(p.amount_usd).toLocaleString('es-VE', { minimumFractionDigits: 2 })}
-                        </td>
-                      </tr>
-                    ))
-                  )}
+                  {payments.map(p => (
+                    <tr key={p.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                      <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>{p.date}</td>
+                      <td style={{ padding: '1rem' }}>{p.description}<br/><span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Ref: {p.reference || 'N/A'}</span></td>
+                      <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold', color: 'var(--success)' }}>+ ${Number(p.amount_usd).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                      <td style={{ padding: '1rem', textAlign: 'right', display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                        {!isViewer && (<button className="btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--primary-color)', borderColor: 'rgba(59,130,246,0.2)' }} onClick={() => initiateEditItem(p, 'payment')} title="Editar pago"><Edit3 size={14} /></button>)}
+                        {!isViewer && (<button className="btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--danger)', borderColor: 'rgba(239,68,68,0.2)' }} onClick={() => initiateDelete(p.id, 'payment')}><Trash2 size={14} /></button>)}
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
-            </div>
-          )}
+            )}
+          </div>
+        )}
 
-          {activeTab === 'costs' && (
-            <div className="animate-fade">
-               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
-                <h3 style={{ margin: 0 }}>Gastos de Ejecución</h3>
-                <button className="btn-primary" onClick={() => setShowCostModal(true)}>
-                  <Plus size={16} /> Registrar Gasto
-                </button>
-              </div>
-              
+        {/* TAB: GASTOS */}
+        {activeTab === 'gastos' && (
+          <div className="animate-fade">
+            {costs.length === 0 ? (
+              <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>No hay gastos registrados.</div>
+            ) : (
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
                     <th style={{ textAlign: 'left', padding: '1rem' }}>DESCRIPCIÓN</th>
+                    <th style={{ textAlign: 'left', padding: '1rem' }}>PROVEEDOR</th>
                     <th style={{ textAlign: 'left', padding: '1rem' }}>CATEGORÍA</th>
-                    <th style={{ textAlign: 'center', padding: '1rem' }}>CANT.</th>
-                    <th style={{ textAlign: 'right', padding: '1rem' }}>P. UNITARIO</th>
-                    <th style={{ textAlign: 'right', padding: '1rem' }}>TOTAL</th>
-                    {canEdit && <th style={{ textAlign: 'right', padding: '1rem' }}>ACCIONES</th>}
+                    <th style={{ textAlign: 'right', padding: '1rem' }}>TOTAL (USD)</th>
+                    <th style={{ textAlign: 'right', padding: '1rem' }}></th>
                   </tr>
                 </thead>
                 <tbody>
-                  {costs.length === 0 ? (
-                    <tr><td colSpan={canEdit ? 6 : 5} style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>Aún no hay gastos registrados.</td></tr>
-                  ) : (
-                    costs.map(c => (
-                      <tr key={c.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                        <td style={{ padding: '1rem' }}>{c.description}</td>
-                        <td style={{ padding: '1rem' }}>
-                          <span className="badge" style={{ background: 'rgba(255,255,255,0.1)' }}>{c.category}</span>
-                        </td>
-                        <td style={{ padding: '1rem', textAlign: 'center' }}>{c.quantity}</td>
-                        <td style={{ padding: '1rem', textAlign: 'right', color: 'var(--text-muted)' }}>${Number(c.unit_price_usd).toLocaleString('es-VE', { minimumFractionDigits: 2 })}</td>
-                        <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold', color: 'var(--danger)' }}>
-                          ${Number(c.total_usd).toLocaleString('es-VE', { minimumFractionDigits: 2 })}
-                        </td>
-                        {canEdit && (
-                          <td style={{ padding: '1rem', textAlign: 'right' }}>
-                            <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
-                              <button
-                                className="btn-secondary"
-                                style={{ padding: '0.4rem 0.7rem', fontSize: '0.8rem' }}
-                                title="Editar gasto"
-                                onClick={() => openEditCost(c)}
-                              >
-                                <Edit3 size={13} />
-                              </button>
-                              <button
-                                className="btn-secondary"
-                                style={{ padding: '0.4rem 0.7rem', fontSize: '0.8rem', color: 'var(--danger)', borderColor: 'rgba(239,68,68,0.2)' }}
-                                title="Eliminar gasto"
-                                onClick={() => handleDeleteCost(c.id)}
-                              >
-                                <Trash2 size={13} />
-                              </button>
-                            </div>
-                          </td>
-                        )}
-                      </tr>
-                    ))
-                  )}
+                  {costs.map(c => (
+                    <tr key={c.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                      <td style={{ padding: '1rem' }}>{c.description}<br/><span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{c.quantity} x ${Number(c.unit_price_usd).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></td>
+                      <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>{c.provider || 'N/A'}</td>
+                      <td style={{ padding: '1rem' }}>{c.category === 'materials' ? 'Materiales' : c.category === 'labor' ? 'Mano de Obra' : c.category === 'equipment' ? 'Equipos' : c.category === 'permits' ? 'Permisos' : 'Otros'}</td>
+                      <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold', color: 'var(--danger)' }}>- ${Number(c.quantity * c.unit_price_usd).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                      <td style={{ padding: '1rem', textAlign: 'right', display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                        {!isViewer && (<button className="btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--primary-color)', borderColor: 'rgba(59,130,246,0.2)' }} onClick={() => initiateEditItem(c, 'cost')} title="Editar gasto"><Edit3 size={14} /></button>)}
+                        {!isViewer && (<button className="btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--danger)', borderColor: 'rgba(239,68,68,0.2)' }} onClick={() => initiateDelete(c.id, 'cost')}><Trash2 size={14} /></button>)}
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
-            </div>
-          )}
+            )}
+          </div>
+        )}
 
-          {activeTab === 'details' && (
-            <div className="animate-fade">
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem' }}>
-                <div>
-                  <h3 style={{ marginBottom: '1rem' }}>Propuesta Original</h3>
-                  <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.6, color: 'var(--text-muted)', background: 'rgba(0,0,0,0.2)', padding: '1.5rem', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
-                      {project.description || 'Sin descripción detallada.'}
-                  </div>
-                  <div style={{ marginTop: '1rem', fontWeight: 'bold', fontSize: '1.1rem', padding: '1rem', background: 'rgba(255,255,255,0.02)', borderRadius: '8px' }}>
-                    Presupuesto Base: ${baseBudget.toLocaleString('es-VE', { minimumFractionDigits: 2 })}
-                  </div>
-                </div>
+        {/* TAB: ADICIONALES */}
+        {activeTab === 'adicionales' && (
+          <div className="animate-fade">
+            {extras.length === 0 ? (
+              <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>No hay trabajos adicionales registrados.</div>
+            ) : (
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                    <th style={{ textAlign: 'left', padding: '1rem' }}>DESCRIPCIÓN</th>
+                    <th style={{ textAlign: 'right', padding: '1rem' }}>MONTO EXTRA (USD)</th>
+                    <th style={{ textAlign: 'right', padding: '1rem' }}></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {extras.map(e => (
+                    <tr key={e.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                      <td style={{ padding: '1rem' }}>{e.description}</td>
+                      <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold', color: 'var(--primary-color)' }}>+ ${Number(e.amount_usd).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                      <td style={{ padding: '1rem', textAlign: 'right' }}>
+                        {!isViewer && (<button className="btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--danger)', borderColor: 'rgba(239,68,68,0.2)' }} onClick={() => initiateDelete(e.id, 'extra')}><Trash2 size={14} /></button>)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
 
-                <div>
-                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginBottom: '1rem' }}>
-                    <button className="btn-secondary" onClick={() => window.print()} style={{ padding: '0.6rem 1rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                      <Printer size={16} /> Imprimir Propuesta
-                    </button>
-                    <button className="btn-secondary" onClick={() => setShowAdvanceModal(true)} style={{ padding: '0.6rem 1rem', display: 'flex', alignItems: 'center', gap: '0.4rem', borderColor: '#8b5cf6', color: '#8b5cf6' }}>
-                      <Users size={16} /> Retiro de Socio
-                    </button>
-                    <button className="btn-secondary" onClick={() => setShowExtraModal(true)} style={{ padding: '0.6rem 1rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                      <Plus size={16} /> Trabajo Adicional
-                    </button>
-                  </div>
-                  
-                  <div style={{ background: 'rgba(0,0,0,0.2)', borderRadius: '8px', border: '1px solid var(--border-color)', overflow: 'hidden' }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                      <thead>
-                        <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
-                          <th style={{ textAlign: 'left', padding: '0.75rem 1rem' }}>DESCRIPCIÓN</th>
-                          <th style={{ textAlign: 'right', padding: '0.75rem 1rem' }}>MONTO</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {extras.length === 0 ? (
-                          <tr><td colSpan={2} style={{ textAlign: 'center', padding: '1.5rem', color: 'var(--text-muted)', fontSize: '0.9rem' }}>No hay adicionales registrados.</td></tr>
-                        ) : (
-                          extras.map(e => (
-                            <tr key={e.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
-                              <td style={{ padding: '1rem' }}>{e.description}</td>
-                              <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold', color: 'var(--accent-blue)' }}>
-                                + ${Number(e.amount_usd).toLocaleString('es-VE', { minimumFractionDigits: 2 })}
-                              </td>
-                            </tr>
-                          ))
-                        )}
-                      </tbody>
-                      <tfoot>
-                        <tr style={{ background: 'rgba(255,255,255,0.02)' }}>
-                          <td style={{ padding: '1rem', fontWeight: 'bold', textAlign: 'right' }}>Total Adicionales:</td>
-                          <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold', color: 'var(--accent-blue)' }}>
-                            ${totalExtra.toLocaleString('es-VE', { minimumFractionDigits: 2 })}
-                          </td>
-                        </tr>
-                      </tfoot>
-                    </table>
-                  </div>
-                </div>
-              </div>
-
-              {/* DISTRIBUCIÓN DE GANANCIAS POR SOCIO - PARA IMPRESIÓN */}
-              <div style={{ marginTop: '3rem', paddingTop: '2rem', borderTop: '2px solid var(--border-color)' }}>
-                <h3 style={{ marginBottom: '1.5rem', fontSize: '1.1rem' }}>Distribución de Ganancias por Socio</h3>
-                <div style={{ background: 'rgba(0,0,0,0.2)', borderRadius: '8px', border: '1px solid var(--border-color)', overflow: 'hidden' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <thead>
-                      <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '0.8rem', background: 'rgba(0,0,0,0.3)' }}>
-                        <th style={{ textAlign: 'left', padding: '0.75rem 1rem' }}>SOCIO</th>
-                        <th style={{ textAlign: 'right', padding: '0.75rem 1rem' }}>GANANCIA CORRESPONDIENTE</th>
-                        <th style={{ textAlign: 'right', padding: '0.75rem 1rem' }}>RETIROS REALIZADOS</th>
-                        <th style={{ textAlign: 'right', padding: '0.75rem 1rem' }}>SALDO DISPONIBLE</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {partners.map((partner, idx) => {
-                        const totalRetired = partnerAdvances[partner] || 0;
-                        const availableBalance = profitPerPartner - totalRetired;
-                        return (
-                          <tr key={idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
-                            <td style={{ padding: '1rem', fontWeight: '600' }}>{partner}</td>
-                            <td style={{ padding: '1rem', textAlign: 'right', fontWeight: '500', color: 'var(--success)' }}>
-                              ${profitPerPartner.toLocaleString('es-VE', { minimumFractionDigits: 2 })}
-                            </td>
-                            <td style={{ padding: '1rem', textAlign: 'right', fontWeight: '500', color: '#a78bfa' }}>
-                              ${totalRetired.toLocaleString('es-VE', { minimumFractionDigits: 2 })}
-                            </td>
-                            <td style={{ padding: '1rem', textAlign: 'right', fontWeight: '600', color: availableBalance < 0 ? 'var(--danger)' : 'var(--success)' }}>
-                              {availableBalance < 0 ? '-' : ''}${Math.abs(availableBalance).toLocaleString('es-VE', { minimumFractionDigits: 2 })}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {activeTab === 'advances' && (
-            <div>
-              {advances.length === 0 ? (
-                <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>No hay retiros registrados para este proyecto.</div>
-              ) : (
-                <div style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <thead>
-                      <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                        <th style={{ textAlign: 'left', padding: '1rem' }}>FECHA</th>
-                        <th style={{ textAlign: 'left', padding: '1rem' }}>SOCIO</th>
-                        <th style={{ textAlign: 'left', padding: '1rem' }}>CONCEPTO</th>
-                        <th style={{ textAlign: 'right', padding: '1rem' }}>MONTO (USD)</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {advances.map(a => (
-                        <tr key={a.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                          <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>{a.date}</td>
-                          <td style={{ padding: '1rem', fontWeight: 'bold' }}>{a.partner_name}</td>
-                          <td style={{ padding: '1rem' }}>{a.description || 'Sin descripción'}</td>
-                          <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold', color: '#a78bfa' }}>${Number(a.amount_usd).toLocaleString('es-VE', {minimumFractionDigits:2})}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                    <tfoot>
-                       <tr style={{ borderTop: '2px solid var(--border-color)', fontWeight: 'bold' }}>
-                         <td colSpan={3} style={{ padding: '1rem', textAlign: 'right' }}>Total Retirado:</td>
-                         <td style={{ padding: '1rem', textAlign: 'right', color: '#a78bfa' }}>${totalAdvances.toLocaleString('es-VE', {minimumFractionDigits:2})}</td>
-                       </tr>
-                    </tfoot>
-                  </table>
-                </div>
-              )}
-            </div>
-          )}
-
-          {activeTab === 'commitments' && (
-            <div className="animate-fade">
-               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
-                <h3 style={{ margin: 0 }}>Compromisos (Gastos por Ejecutar)</h3>
-                <button className="btn-primary" onClick={() => setShowCommitmentModal(true)}>
-                  <Plus size={16} /> Registrar Compromiso
-                </button>
-              </div>
-              
+        {/* TAB: COMPROMISOS */}
+        {activeTab === 'compromisos' && (
+          <div className="animate-fade">
+            {commitments.length === 0 ? (
+              <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>No hay compromisos (gastos por ejecutar) registrados.</div>
+            ) : (
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
                     <th style={{ textAlign: 'left', padding: '1rem' }}>FECHA</th>
                     <th style={{ textAlign: 'left', padding: '1rem' }}>CONCEPTO</th>
                     <th style={{ textAlign: 'left', padding: '1rem' }}>PROVEEDOR</th>
-                    <th style={{ textAlign: 'center', padding: '1rem' }}>CANT.</th>
-                    <th style={{ textAlign: 'right', padding: '1rem' }}>P. UNITARIO</th>
-                    <th style={{ textAlign: 'right', padding: '1rem' }}>TOTAL</th>
-                    {canEdit && <th style={{ textAlign: 'right', padding: '1rem' }}>ACCIONES</th>}
+                    <th style={{ textAlign: 'right', padding: '1rem' }}>TOTAL (USD)</th>
+                    <th style={{ textAlign: 'right', padding: '1rem' }}></th>
                   </tr>
                 </thead>
                 <tbody>
-                  {commitments.length === 0 ? (
-                    <tr><td colSpan={canEdit ? 7 : 6} style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>Aún no hay compromisos registrados.</td></tr>
-                  ) : (
-                    commitments.map(c => (
-                      <tr key={c.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                        <td style={{ padding: '1rem' }}>{new Date(c.date).toLocaleDateString()}</td>
-                        <td style={{ padding: '1rem' }}>{c.description}</td>
-                        <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>{c.provider || 'N/A'}</td>
-                        <td style={{ padding: '1rem', textAlign: 'center' }}>{c.quantity}</td>
-                        <td style={{ padding: '1rem', textAlign: 'right', color: 'var(--text-muted)' }}>${Number(c.unit_price_usd).toLocaleString('es-VE', { minimumFractionDigits: 2 })}</td>
-                        <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold', color: 'var(--primary-color)' }}>
-                          ${Number(c.amount_usd).toLocaleString('es-VE', { minimumFractionDigits: 2 })}
-                        </td>
-                        {canEdit && (
-                          <td style={{ padding: '1rem', textAlign: 'right' }}>
-                            <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
-                              <button
-                                className="btn-secondary"
-                                style={{ padding: '0.4rem 0.7rem', fontSize: '0.8rem' }}
-                                title="Editar compromiso"
-                                onClick={() => openEditCommitment(c)}
-                              >
-                                <Edit3 size={13} />
-                              </button>
-                              <button
-                                className="btn-secondary"
-                                style={{ padding: '0.4rem 0.7rem', fontSize: '0.8rem', color: 'var(--danger)', borderColor: 'rgba(239,68,68,0.2)' }}
-                                title="Eliminar compromiso"
-                                onClick={() => handleDeleteCommitment(c.id)}
-                              >
-                                <Trash2 size={13} />
-                              </button>
-                            </div>
-                          </td>
-                        )}
-                      </tr>
-                    ))
-                  )}
+                  {commitments.map(c => (
+                    <tr key={c.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                      <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>{c.date}</td>
+                      <td style={{ padding: '1rem' }}>{c.description}<br/><span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{c.quantity} x ${Number(c.unit_price_usd).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></td>
+                      <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>{c.provider || 'N/A'}</td>
+                      <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold', color: 'var(--primary-color)' }}>- ${Number(c.amount_usd).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                      <td style={{ padding: '1rem', textAlign: 'right', display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                        {!isViewer && (<button className="btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--primary-color)', borderColor: 'rgba(59,130,246,0.2)' }} onClick={() => initiateEditItem(c, 'commitment')} title="Editar compromiso"><Edit3 size={14} /></button>)}
+                        {!isViewer && (<button className="btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--danger)', borderColor: 'rgba(239,68,68,0.2)' }} onClick={() => initiateDelete(c.id, 'commitment')}><Trash2 size={14} /></button>)}
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
+            )}
+          </div>
+        )}
+
+        {/* TAB: RETIRO DE SOCIOS */}
+        {activeTab === 'retiros' && (
+          <div className="animate-fade">
+            {(() => {
+              const share = estimatedProfit / 2;
+              const henryAmt = advances.filter(a => a.partner_name === 'Henry Peraza').reduce((s, a) => s + Number(a.amount_usd), 0);
+              const losberAmt = advances.filter(a => a.partner_name === 'Losbers Perez').reduce((s, a) => s + Number(a.amount_usd), 0);
+              return (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', marginBottom: '2rem' }}>
+                  {[{ name: 'Henry Peraza', amt: henryAmt }, { name: 'Losbers Perez', amt: losberAmt }].map(partner => {
+                    const saldo = share - partner.amt;
+                    return (
+                      <div key={partner.name} className="card" style={{ padding: '1.5rem', background: 'linear-gradient(145deg,rgba(139,92,246,0.06) 0%,rgba(0,0,0,0) 100%)', borderColor: 'rgba(139,92,246,0.2)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '1.2rem' }}>
+                          <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'rgba(139,92,246,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, color: '#a78bfa', fontSize: '0.9rem' }}>{partner.name.charAt(0)}</div>
+                          <span style={{ fontWeight: 700, color: 'white', fontSize: '1rem' }}>{partner.name}</span>
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.6rem 0.8rem', background: 'rgba(139,92,246,0.08)', borderRadius: '8px' }}>
+                            <span style={{ fontSize: '0.8rem', color: '#a78bfa' }}>Le corresponde (50%)</span>
+                            <span style={{ fontWeight: 700, color: '#a78bfa' }}>${share.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.6rem 0.8rem', background: 'rgba(239,68,68,0.06)', borderRadius: '8px' }}>
+                            <span style={{ fontSize: '0.8rem', color: 'var(--danger)' }}>Retiros realizados</span>
+                            <span style={{ fontWeight: 700, color: 'var(--danger)' }}>−${partner.amt.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.7rem 0.8rem', background: saldo >= 0 ? 'rgba(16,185,129,0.08)' : 'rgba(239,68,68,0.08)', borderRadius: '8px', border: `1px solid ${saldo >= 0 ? 'rgba(16,185,129,0.2)' : 'rgba(239,68,68,0.2)'}` }}>
+                            <span style={{ fontSize: '0.85rem', fontWeight: 700, color: saldo >= 0 ? 'var(--success)' : 'var(--danger)' }}>Saldo disponible</span>
+                            <span style={{ fontSize: '1.1rem', fontWeight: 800, color: saldo >= 0 ? 'var(--success)' : 'var(--danger)' }}>${Math.abs(saldo).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}{saldo < 0 ? ' (excedido)' : ''}</span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+            {advances.length === 0 ? (
+              <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>No hay retiros registrados.</div>
+            ) : (
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                    <th style={{ textAlign: 'left', padding: '1rem' }}>FECHA</th>
+                    <th style={{ textAlign: 'left', padding: '1rem' }}>SOCIO</th>
+                    <th style={{ textAlign: 'left', padding: '1rem' }}>CONCEPTO</th>
+                    <th style={{ textAlign: 'right', padding: '1rem' }}>MONTO (USD)</th>
+                    <th style={{ textAlign: 'right', padding: '1rem' }}></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {advances.map(a => (
+                    <tr key={a.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                      <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>{a.date}</td>
+                      <td style={{ padding: '1rem', fontWeight: 'bold' }}>{a.partner_name}</td>
+                      <td style={{ padding: '1rem' }}>{a.description || 'Sin descripción'}</td>
+                      <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold', color: '#a78bfa' }}>${Number(a.amount_usd).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                      <td style={{ padding: '1rem', textAlign: 'right' }}>
+                        {!isViewer && (<button className="btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--danger)', borderColor: 'rgba(239,68,68,0.2)' }} onClick={() => initiateDelete(a.id, 'advance')}><Trash2 size={14} /></button>)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
+
+        {/* TAB: DETALLES */}
+        {activeTab === 'detalles' && (
+          <div className="animate-fade">
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem' }}>
+              <div>
+                <h3 style={{ marginBottom: '1rem' }}>Propuesta Original</h3>
+                <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.6, color: 'var(--text-muted)', background: 'rgba(0,0,0,0.2)', padding: '1.5rem', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                  {project.description || 'Sin descripción detallada.'}
+                </div>
+                <div style={{ marginTop: '1rem', fontWeight: 'bold', fontSize: '1.1rem', padding: '1rem', background: 'rgba(255,255,255,0.02)', borderRadius: '8px' }}>
+                  Presupuesto Base: ${baseBudget.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </div>
+              </div>
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginBottom: '1rem' }}>
+                  <button className="btn-secondary" onClick={() => setShowExtraModal(true)} style={{ padding: '0.6rem 1rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                    <Plus size={16} /> Trabajo Adicional
+                  </button>
+                </div>
+                <div style={{ background: 'rgba(0,0,0,0.2)', borderRadius: '8px', border: '1px solid var(--border-color)', overflow: 'hidden' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+                        <th style={{ textAlign: 'left', padding: '0.75rem 1rem' }}>DESCRIPCIÓN</th>
+                        <th style={{ textAlign: 'right', padding: '0.75rem 1rem' }}>MONTO</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {extras.length === 0 ? (
+                        <tr><td colSpan={2} style={{ textAlign: 'center', padding: '1.5rem', color: 'var(--text-muted)', fontSize: '0.9rem' }}>No hay adicionales registrados.</td></tr>
+                      ) : extras.map(e => (
+                        <tr key={e.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
+                          <td style={{ padding: '1rem' }}>{e.description}</td>
+                          <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold', color: 'var(--accent-blue)' }}>+ ${Number(e.amount_usd).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr style={{ background: 'rgba(255,255,255,0.02)' }}>
+                        <td style={{ padding: '1rem', fontWeight: 'bold', textAlign: 'right' }}>Total Adicionales:</td>
+                        <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold', color: 'var(--accent-blue)' }}>${totalExtra.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
             </div>
-          )}
-        </div>
+            <div style={{ marginTop: '3rem', paddingTop: '2rem', borderTop: '2px solid var(--border-color)' }}>
+              <h3 style={{ marginBottom: '1.5rem', fontSize: '1.1rem' }}>Distribución de Ganancias por Socio</h3>
+              <div style={{ background: 'rgba(0,0,0,0.2)', borderRadius: '8px', border: '1px solid var(--border-color)', overflow: 'hidden' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '0.8rem', background: 'rgba(0,0,0,0.3)' }}>
+                      <th style={{ textAlign: 'left', padding: '0.75rem 1rem' }}>SOCIO</th>
+                      <th style={{ textAlign: 'right', padding: '0.75rem 1rem' }}>GANANCIA CORRESPONDIENTE</th>
+                      <th style={{ textAlign: 'right', padding: '0.75rem 1rem' }}>RETIROS REALIZADOS</th>
+                      <th style={{ textAlign: 'right', padding: '0.75rem 1rem' }}>SALDO DISPONIBLE</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {partners.map((partner, idx) => {
+                      const totalRetired = partnerAdvances[partner] || 0;
+                      const availableBalance = profitPerPartner - totalRetired;
+                      return (
+                        <tr key={idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+                          <td style={{ padding: '1rem', fontWeight: '600' }}>{partner}</td>
+                          <td style={{ padding: '1rem', textAlign: 'right', color: 'var(--success)' }}>${profitPerPartner.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                          <td style={{ padding: '1rem', textAlign: 'right', color: '#a78bfa' }}>${totalRetired.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                          <td style={{ padding: '1rem', textAlign: 'right', fontWeight: '600', color: availableBalance < 0 ? 'var(--danger)' : 'var(--success)' }}>
+                            {availableBalance < 0 ? '-' : ''}${Math.abs(availableBalance).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
 
@@ -1005,7 +1091,7 @@ export default function ProjectDashboard() {
                 </div>
              </div>
              <div style={{ marginTop: '0.5rem', textAlign: 'right', fontWeight: 'bold' }}>
-                Total: ${(costForm.quantity * parseCurrency(String(costForm.unit_price_usd))).toLocaleString('es-VE', {minimumFractionDigits:2})}
+                Total: ${(costForm.quantity * parseCurrency(String(costForm.unit_price_usd))).toLocaleString('es-VE', {minimumFractionDigits: 2})}
              </div>
              <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
                <button type="button" className="btn-secondary" style={{ flex: 1 }} onClick={() => { setShowCostModal(false); setEditingCost(null); setCostForm({ description: '', provider: '', category: 'materials', quantity: 1, unit_price_usd: '', date: new Date().toISOString().split('T')[0] }); }}>Cancelar</button>
@@ -1124,7 +1210,7 @@ export default function ProjectDashboard() {
                  </div>
               </div>
               <div style={{ marginTop: '0.5rem', textAlign: 'right', fontWeight: 'bold' }}>
-                 Total: ${(commitmentForm.quantity * parseCurrency(String(commitmentForm.unit_price_usd))).toLocaleString('es-VE', {minimumFractionDigits:2})}
+                 Total: ${(commitmentForm.quantity * parseCurrency(String(commitmentForm.unit_price_usd))).toLocaleString('es-VE', {minimumFractionDigits: 2})}
               </div>
               <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
                 <button type="button" className="btn-secondary" style={{ flex: 1 }} onClick={() => { setShowCommitmentModal(false); setEditingCommitment(null); setCommitmentForm({ description: '', provider: '', category: 'materials', quantity: 1, unit_price_usd: '', date: new Date().toISOString().split('T')[0] }); }}>Cancelar</button>
@@ -1410,6 +1496,100 @@ export default function ProjectDashboard() {
           }
         }
       `}} />
+
+      {/* MODAL: AUTENTICACIÓN ADMIN PARA ELIMINAR */}
+      {showAdminAuth && (
+        <div className="modal-overlay">
+          <div className="card modal-content animate-fade" style={{ maxWidth: '400px', width: '90%' }}>
+            <h3 style={{ marginBottom: '0.5rem', color: 'var(--danger)' }}>🔐 Acción Protegida</h3>
+            <p style={{ color: 'var(--text-muted)', marginBottom: '1.5rem', fontSize: '0.9rem' }}>
+              Esta acción requiere autorización de administrador. Ingrese la contraseña de sistema para continuar.
+            </p>
+            <div>
+              <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Contraseña de Administrador</label>
+              <input
+                type="password"
+                className="input-field"
+                value={adminPassword}
+                onChange={e => setAdminPassword(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && handleConfirmDelete()}
+                placeholder="••••••••"
+                autoFocus
+              />
+            </div>
+            {authError && <p style={{ color: 'var(--danger)', fontSize: '0.85rem', marginTop: '0.5rem' }}>{authError}</p>}
+            <div style={{ display: 'flex', gap: '1rem', marginTop: '1.5rem' }}>
+              <button className="btn-secondary" style={{ flex: 1 }} onClick={() => { setShowAdminAuth(false); setAdminPassword(''); setAuthError(''); }}>Cancelar</button>
+              <button className="btn-primary" style={{ flex: 1, background: 'var(--danger)', borderColor: 'var(--danger)' }} onClick={handleConfirmDelete} disabled={deleting}>
+                {deleting ? 'Eliminando...' : 'Confirmar Eliminación'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: EDICIÓN INLINE */}
+      {showEditItemModal && editingItem && (
+        <div className="modal-overlay">
+          <div className="card modal-content animate-fade" style={{ maxWidth: '520px', width: '90%' }}>
+            <h3 style={{ marginBottom: '1.5rem' }}>
+              {editItemType === 'payment' ? '✏️ Editar Pago' : editItemType === 'cost' ? '✏️ Editar Gasto' : '✏️ Editar Compromiso'}
+            </h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              {editItemType === 'payment' && (
+                <>
+                  <div>
+                    <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Monto (USD)</label>
+                    <input type="text" className="input-field" value={editItemForm.amount_usd} onChange={e => setEditItemForm({...editItemForm, amount_usd: handleMoneyInput(e.target.value)})} onBlur={e => setEditItemForm({...editItemForm, amount_usd: formatOnBlur(e.target.value)})} />
+                  </div>
+                  <div>
+                    <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Concepto</label>
+                    <input type="text" className="input-field" value={editItemForm.description} onChange={e => setEditItemForm({...editItemForm, description: e.target.value})} />
+                  </div>
+                  <div>
+                    <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Referencia</label>
+                    <input type="text" className="input-field" value={editItemForm.reference || ''} onChange={e => setEditItemForm({...editItemForm, reference: e.target.value})} />
+                  </div>
+                  <div>
+                    <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Fecha</label>
+                    <input type="date" className="input-field" value={editItemForm.date} onChange={e => setEditItemForm({...editItemForm, date: e.target.value})} />
+                  </div>
+                </>
+              )}
+              {(editItemType === 'cost' || editItemType === 'commitment') && (
+                <>
+                  <div>
+                    <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Descripción</label>
+                    <input type="text" className="input-field" value={editItemForm.description} onChange={e => setEditItemForm({...editItemForm, description: e.target.value})} />
+                  </div>
+                  <div>
+                    <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Proveedor</label>
+                    <input type="text" className="input-field" value={editItemForm.provider || ''} onChange={e => setEditItemForm({...editItemForm, provider: e.target.value})} />
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                    <div>
+                      <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Cantidad</label>
+                      <input type="number" className="input-field" value={editItemForm.quantity} onChange={e => setEditItemForm({...editItemForm, quantity: Number(e.target.value)})} />
+                    </div>
+                    <div>
+                      <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>P. Unitario (USD)</label>
+                      <input type="text" className="input-field" value={editItemForm.unit_price_usd} onChange={e => setEditItemForm({...editItemForm, unit_price_usd: handleMoneyInput(e.target.value)})} onBlur={e => setEditItemForm({...editItemForm, unit_price_usd: formatOnBlur(e.target.value)})} />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Fecha</label>
+                    <input type="date" className="input-field" value={editItemForm.date} onChange={e => setEditItemForm({...editItemForm, date: e.target.value})} />
+                  </div>
+                </>
+              )}
+              <div style={{ display: 'flex', gap: '1rem', marginTop: '0.5rem' }}>
+                <button className="btn-secondary" style={{ flex: 1 }} onClick={() => { setShowEditItemModal(false); setEditingItem(null); setEditItemType(null); }}>Cancelar</button>
+                <button className="btn-primary" style={{ flex: 1 }} onClick={handleSaveEditItem}>Guardar Cambios</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

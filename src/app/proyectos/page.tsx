@@ -269,7 +269,7 @@ export default function ProyectosPage() {
                   </td>
                   <td style={{ padding: '1.25rem 1.5rem' }}>
                     <div style={{ fontWeight: '600', color: 'var(--success)' }}>
-                      ${Number(project.budget_usd).toLocaleString('es-VE', { minimumFractionDigits: 2 })}
+                      ${Number(project.budget_usd).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </div>
                   </td>
                   <td style={{ padding: '1.25rem 1.5rem' }}>

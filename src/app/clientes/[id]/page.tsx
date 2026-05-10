@@ -313,13 +313,15 @@ export default function ClienteDashboard() {
   async function handleAddCost(e: React.FormEvent) {
     e.preventDefault();
     if (!costForm.project_id) return alert('Seleccione un proyecto destino.');
+    const unitPrice = parseCurrency(costForm.unit_price_usd);
     const { error } = await supabase.from('project_costs').insert([{
       project_id: costForm.project_id,
       description: costForm.description,
       provider: costForm.provider,
       category: costForm.category,
       quantity: costForm.quantity,
-      unit_price_usd: parseCurrency(costForm.unit_price_usd),
+      unit_price_usd: unitPrice,
+      total_usd: costForm.quantity * unitPrice,
       date: costForm.date
     }]);
     if (!error) {
@@ -392,13 +394,15 @@ export default function ClienteDashboard() {
         };
       } else if (editItemType === 'cost') {
         table = 'project_costs';
+        const unitPrice = parseCurrency(editItemForm.unit_price_usd);
         updateData = {
           project_id: editItemForm.project_id,
           description: editItemForm.description,
           provider: editItemForm.provider,
           category: editItemForm.category,
           quantity: editItemForm.quantity,
-          unit_price_usd: parseCurrency(editItemForm.unit_price_usd),
+          unit_price_usd: unitPrice,
+          total_usd: editItemForm.quantity * unitPrice,
           date: editItemForm.date
         };
       } else if (editItemType === 'commitment') {
@@ -1281,7 +1285,7 @@ export default function ClienteDashboard() {
                 </div>
               </div>
               <div style={{ marginTop: '0.5rem', textAlign: 'right', fontWeight: 'bold' }}>
-                Total: ${(commitmentForm.quantity * parseCurrency(String(commitmentForm.unit_price_usd))).toLocaleString('es-VE', {minimumFractionDigits:2})}
+                Total: ${(commitmentForm.quantity * parseCurrency(String(commitmentForm.unit_price_usd))).toLocaleString('es-VE', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
               </div>
               <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
                 <button type="button" className="btn-secondary" style={{ flex: 1 }} onClick={() => setShowCommitmentModal(false)}>Cancelar</button>

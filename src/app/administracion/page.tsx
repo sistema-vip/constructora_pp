@@ -613,7 +613,7 @@ export default function AdministracionDashboard() {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.5rem', position: 'relative', zIndex: 1 }}>
              <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Proyección (Contratado - Gastos)</div>
              <span className="badge" style={{ background: 'rgba(16,185,129,0.1)', color: 'var(--success)' }}>
-               {estimatedMargin.toFixed(1)}% Margen Estimado
+               {estimatedMargin.toFixed(2)}% Margen Estimado
              </span>
           </div>
         </div>
@@ -767,7 +767,7 @@ export default function AdministracionDashboard() {
                             {isLossEst ? '-' : ''}${formatCurrency(Math.abs(rentabilidadEst))}
                           </div>
                           <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
-                            Margen: {pptFinal > 0 ? ((rentabilidadEst / pptFinal) * 100).toFixed(1) : '0'}%
+                            Margen: {pptFinal > 0 ? ((rentabilidadEst / pptFinal) * 100).toFixed(2) : '0.00'}%
                           </div>
                         </td>
                       </tr>
