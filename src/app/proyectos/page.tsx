@@ -4,22 +4,20 @@ import { useState, useEffect } from 'react';
 import {
   Search,
   FileText,
-  Clock,
-  CheckCircle,
   Printer,
   Edit3,
-  ChevronRight,
   DollarSign,
   Trash2,
   Ban,
   Check,
-  LayoutDashboard,
   Save,
   X,
   Sparkles,
   Lock,
   Archive,
-  HardHat
+  HardHat,
+  RotateCcw,
+  GitMerge
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { handleMoneyInput, parseCurrency, formatCurrency, formatOnBlur } from '@/lib/formatters';
@@ -55,6 +53,18 @@ export default function ProyectosPage() {
 
   const [aiInstruction, setAiInstruction] = useState('');
   const [isModifyingAi, setIsModifyingAi] = useState(false);
+
+  // Merge states
+  const [selectedForMerge, setSelectedForMerge] = useState<string[]>([]);
+  const [showMergeModal, setShowMergeModal] = useState(false);
+  const [targetMergeId, setTargetMergeId] = useState<string>('');
+  const [merging, setMerging] = useState(false);
+
+  // Reopen states
+  const [showReopenModal, setShowReopenModal] = useState(false);
+  const [reopenTarget, setReopenTarget] = useState<Project | null>(null);
+  const [reopenPassword, setReopenPassword] = useState('');
+  const [reopenError, setReopenError] = useState('');
 
   useEffect(() => {
     fetchProjects();
@@ -181,6 +191,65 @@ export default function ProyectosPage() {
     window.print();
   };
 
+  function toggleMergeSelect(id: string) {
+    setSelectedForMerge(prev =>
+      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+    );
+  }
+
+  async function handleMerge() {
+    if (!targetMergeId || selectedForMerge.length < 2) return;
+    setMerging(true);
+    try {
+      const sourcesIds = selectedForMerge.filter(id => id !== targetMergeId);
+      const totalBudget = selectedForMerge.reduce(
+        (sum, id) => sum + (projects.find(p => p.id === id)?.budget_usd ?? 0), 0
+      );
+
+      for (const sourceId of sourcesIds) {
+        await supabase.from('project_payments').update({ project_id: targetMergeId }).eq('project_id', sourceId);
+        await supabase.from('project_costs').update({ project_id: targetMergeId }).eq('project_id', sourceId);
+        await supabase.from('project_extras').update({ project_id: targetMergeId }).eq('project_id', sourceId);
+        await supabase.from('project_commitments').update({ project_id: targetMergeId }).eq('project_id', sourceId);
+        await supabase.from('partner_advances').update({ project_id: targetMergeId }).eq('project_id', sourceId);
+      }
+
+      await supabase.from('projects').update({ budget_usd: totalBudget }).eq('id', targetMergeId);
+      await supabase.from('projects')
+        .update({ status: 'cancelled', archived_at: new Date().toISOString() })
+        .in('id', sourcesIds);
+
+      setShowMergeModal(false);
+      setSelectedForMerge([]);
+      setTargetMergeId('');
+      fetchProjects();
+    } catch (err: any) {
+      alert('Error al unificar: ' + err.message);
+    } finally {
+      setMerging(false);
+    }
+  }
+
+  async function handleReopen() {
+    if (reopenPassword !== '080911') {
+      setReopenError('Contraseña incorrecta. Solo administradores autorizados.');
+      return;
+    }
+    try {
+      const { error } = await supabase.from('projects')
+        .update({ archived_at: null, status: 'in_progress' })
+        .eq('id', reopenTarget!.id);
+      if (error) throw error;
+      setShowReopenModal(false);
+      setReopenTarget(null);
+      setReopenPassword('');
+      setReopenError('');
+      fetchProjects();
+    } catch (err: any) {
+      alert('Error al reabrir proyecto: ' + err.message);
+    }
+  }
+
   const proposals = projects.filter(p => !p.archived_at && p.status === 'proposal');
   const execution = projects.filter(p => !p.archived_at && p.status === 'in_progress');
   const archived = projects.filter(p => !!p.archived_at || p.status === 'completed' || p.status === 'cancelled');
@@ -238,10 +307,40 @@ export default function ProyectosPage() {
           </button>
         </div>
 
+        {/* Barra de acción de unificación */}
+        {selectedForMerge.length >= 2 && view !== 'archived' && (
+          <div style={{ background: 'rgba(184,115,51,0.12)', border: '1px solid rgba(184,115,51,0.4)', borderRadius: '10px', padding: '0.75rem 1.25rem', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '1rem' }}>
+            <GitMerge size={18} style={{ color: '#b87333' }} />
+            <span style={{ color: 'var(--text-secondary)', flex: 1 }}>
+              <strong style={{ color: 'white' }}>{selectedForMerge.length} propuestas</strong> seleccionadas para unificar
+            </span>
+            <button
+              className="btn-primary"
+              style={{ padding: '0.5rem 1.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+              onClick={() => {
+                setTargetMergeId(selectedForMerge[0]);
+                setShowMergeModal(true);
+              }}
+            >
+              <GitMerge size={15} /> Unificar Propuestas
+            </button>
+            <button
+              className="btn-secondary"
+              style={{ padding: '0.5rem 1rem' }}
+              onClick={() => setSelectedForMerge([])}
+            >
+              Cancelar
+            </button>
+          </div>
+        )}
+
         <div className="card hide-on-print" style={{ padding: 0, overflow: 'hidden', borderRadius: '0 0 16px 16px', marginTop: 0, borderTop: 'none' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr style={{ background: 'rgba(255, 255, 255, 0.02)', borderBottom: '1px solid var(--border-color)' }}>
+              {view !== 'archived' && (
+                <th style={{ textAlign: 'left', padding: '1.25rem 1rem', fontSize: '0.85rem', color: 'var(--text-muted)', width: '40px' }}></th>
+              )}
               <th style={{ textAlign: 'left', padding: '1.25rem 1.5rem', fontSize: '0.85rem', color: 'var(--text-muted)' }}>PROYECTO</th>
               <th style={{ textAlign: 'left', padding: '1.25rem 1.5rem', fontSize: '0.85rem', color: 'var(--text-muted)' }}>CLIENTE</th>
               <th style={{ textAlign: 'left', padding: '1.25rem 1.5rem', fontSize: '0.85rem', color: 'var(--text-muted)' }}>PRESUPUESTO</th>
@@ -257,6 +356,17 @@ export default function ProyectosPage() {
             ) : (
               filteredProjects.map((project) => (
                 <tr key={project.id} className="table-row">
+                  {view !== 'archived' && (
+                    <td style={{ padding: '1.25rem 1rem', width: '40px' }}>
+                      <input
+                        type="checkbox"
+                        checked={selectedForMerge.includes(project.id)}
+                        onChange={() => toggleMergeSelect(project.id)}
+                        style={{ width: '16px', height: '16px', cursor: 'pointer', accentColor: '#b87333' }}
+                        title="Seleccionar para unificar"
+                      />
+                    </td>
+                  )}
                   <td style={{ padding: '1.25rem 1.5rem' }}>
                     <div style={{ fontWeight: '600', color: 'white' }}>
                       {project.proposal_number ? <span style={{ color: 'var(--primary-color)', marginRight: '0.5rem' }}>#{project.proposal_number}</span> : null}
@@ -307,6 +417,19 @@ export default function ProyectosPage() {
                             }}
                           >
                             <Printer size={14} />
+                          </button>
+                          <button
+                            className="btn-secondary"
+                            style={{ padding: '0.5rem', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#38bdf8' }}
+                            title="Reabrir proyecto (requiere clave admin)"
+                            onClick={() => {
+                              setReopenTarget(project);
+                              setReopenPassword('');
+                              setReopenError('');
+                              setShowReopenModal(true);
+                            }}
+                          >
+                            <RotateCcw size={14} /> Reabrir
                           </button>
                         </>
                       ) : (
@@ -573,6 +696,153 @@ export default function ProyectosPage() {
                   {selectedProject.description}
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Unificar Propuestas */}
+      {showMergeModal && (
+        <div className="modal-overlay" style={{ zIndex: 1000 }}>
+          <div className="card animate-fade" style={{ maxWidth: '560px', width: '90%', padding: '2rem', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h2 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <GitMerge size={22} style={{ color: '#b87333' }} /> Unificar Propuestas
+              </h2>
+              <button className="btn-secondary" style={{ padding: '0.4rem' }} onClick={() => setShowMergeModal(false)}>
+                <X size={18} />
+              </button>
+            </div>
+
+            <p style={{ color: 'var(--text-muted)', margin: 0 }}>
+              Las propuestas seleccionadas se fusionarán en una sola. Los datos financieros de las propuestas secundarias se transferirán a la propuesta principal y los presupuestos se sumarán.
+            </p>
+
+            {/* Lista de propuestas seleccionadas */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+              <label style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 600 }}>PROPUESTAS A UNIFICAR</label>
+              {selectedForMerge.map(id => {
+                const p = projects.find(x => x.id === id);
+                if (!p) return null;
+                return (
+                  <div key={id} style={{ padding: '0.75rem 1rem', background: 'rgba(255,255,255,0.04)', borderRadius: '8px', border: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <span style={{ color: 'var(--primary-color)', fontWeight: 600 }}>#{p.proposal_number} </span>
+                      <span style={{ color: 'white' }}>{p.title}</span>
+                      <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{p.clients?.name}</div>
+                    </div>
+                    <div style={{ color: 'var(--success)', fontWeight: 600 }}>
+                      ${Number(p.budget_usd).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Presupuesto combinado */}
+            <div style={{ padding: '0.75rem 1rem', background: 'rgba(184,115,51,0.08)', borderRadius: '8px', border: '1px solid rgba(184,115,51,0.3)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ color: 'var(--text-muted)' }}>Presupuesto total combinado:</span>
+              <span style={{ color: '#b87333', fontWeight: 700, fontSize: '1.1rem' }}>
+                ${selectedForMerge.reduce((sum, id) => sum + (projects.find(p => p.id === id)?.budget_usd ?? 0), 0).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
+            </div>
+
+            {/* Selección de propuesta target */}
+            <div>
+              <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 600 }}>
+                PROPUESTA QUE SE CONSERVA (número de proyecto)
+              </label>
+              <select
+                className="input-field"
+                value={targetMergeId}
+                onChange={e => setTargetMergeId(e.target.value)}
+                style={{ width: '100%' }}
+              >
+                {selectedForMerge.map(id => {
+                  const p = projects.find(x => x.id === id);
+                  if (!p) return null;
+                  return (
+                    <option key={id} value={id}>
+                      #{p.proposal_number} — {p.title}
+                    </option>
+                  );
+                })}
+              </select>
+              <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                Las otras propuestas se marcarán como canceladas y pasarán al historial.
+              </p>
+            </div>
+
+            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+              <button className="btn-secondary" onClick={() => setShowMergeModal(false)}>Cancelar</button>
+              <button
+                className="btn-primary"
+                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                onClick={handleMerge}
+                disabled={merging || !targetMergeId}
+              >
+                <GitMerge size={16} /> {merging ? 'Unificando...' : 'Confirmar Unificación'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Reabrir Proyecto del Historial */}
+      {showReopenModal && reopenTarget && (
+        <div className="modal-overlay" style={{ zIndex: 1000 }}>
+          <div className="card animate-fade" style={{ maxWidth: '440px', width: '90%', padding: '2rem', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h2 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <RotateCcw size={20} style={{ color: '#38bdf8' }} /> Reabrir Proyecto
+              </h2>
+              <button className="btn-secondary" style={{ padding: '0.4rem' }} onClick={() => setShowReopenModal(false)}>
+                <X size={18} />
+              </button>
+            </div>
+
+            <div style={{ padding: '0.75rem 1rem', background: 'rgba(56,189,248,0.06)', borderRadius: '8px', border: '1px solid rgba(56,189,248,0.2)' }}>
+              <div style={{ fontWeight: 600, color: 'white' }}>
+                {reopenTarget.proposal_number ? <span style={{ color: 'var(--primary-color)' }}>#{reopenTarget.proposal_number} — </span> : ''}
+                {reopenTarget.title}
+              </div>
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
+                {reopenTarget.clients?.name}
+              </div>
+            </div>
+
+            <p style={{ color: 'var(--text-muted)', margin: 0, fontSize: '0.9rem' }}>
+              Este proyecto regresará a <strong style={{ color: 'white' }}>En Ejecución</strong>. Ingresa la contraseña de administrador para continuar.
+            </p>
+
+            <div>
+              <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                CONTRASEÑA DE ADMINISTRADOR
+              </label>
+              <input
+                type="password"
+                className="input-field"
+                style={{ width: '100%' }}
+                placeholder="••••••••"
+                value={reopenPassword}
+                onChange={e => { setReopenPassword(e.target.value); setReopenError(''); }}
+                onKeyDown={e => { if (e.key === 'Enter') handleReopen(); }}
+                autoFocus
+              />
+              {reopenError && (
+                <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.82rem', color: '#ff4444' }}>{reopenError}</p>
+              )}
+            </div>
+
+            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+              <button className="btn-secondary" onClick={() => setShowReopenModal(false)}>Cancelar</button>
+              <button
+                className="btn-primary"
+                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: '#38bdf8', borderColor: '#38bdf8' }}
+                onClick={handleReopen}
+              >
+                <RotateCcw size={15} /> Confirmar Reapertura
+              </button>
             </div>
           </div>
         </div>

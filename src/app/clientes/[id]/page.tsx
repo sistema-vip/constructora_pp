@@ -206,7 +206,7 @@ export default function ClienteDashboard() {
 
   const handleConfirmDelete = async () => {
     // CLAVE MAESTRA (En un entorno real esto iría en el backend o en variables de entorno seguras)
-    const MASTER_KEY = 'admin123'; 
+    const MASTER_KEY = '080911'; 
 
     if (adminPassword !== MASTER_KEY) {
       setAuthError('Contraseña incorrecta. Solo administradores autorizados.');

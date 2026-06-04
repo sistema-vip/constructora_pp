@@ -311,7 +311,7 @@ export default function ProjectDashboard() {
   };
 
   const handleConfirmDelete = async () => {
-    const MASTER_KEY = 'admin123';
+    const MASTER_KEY = '080911';
     if (adminPassword !== MASTER_KEY) {
       setAuthError('Contraseña incorrecta. Solo administradores autorizados.');
       return;
