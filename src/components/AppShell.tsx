@@ -72,6 +72,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           <Link href="/proyectos" className={`nav-link ${pathname.startsWith('/proyectos') ? 'active' : ''}`}>
             <HardHat size={20} /> Proyectos
           </Link>
+          <Link href="/cuentas-por-pagar" className={`nav-link ${pathname.startsWith('/cuentas-por-pagar') ? 'active' : ''}`}>
+            <Wallet size={20} /> Cuentas por Pagar
+          </Link>
           <Link href="/materiales" className={`nav-link ${pathname.startsWith('/materiales') ? 'active' : ''}`}>
             <Package size={20} /> Materiales
           </Link>

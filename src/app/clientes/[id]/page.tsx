@@ -120,6 +120,19 @@ export default function ClienteDashboard() {
   const [editItemType, setEditItemType] = useState<'payment' | 'cost' | 'commitment' | null>(null);
   const [editItemForm, setEditItemForm] = useState<any>({});
 
+  // Estados para Unificar Proyectos
+  const [showMergeModal, setShowMergeModal] = useState(false);
+  const [primaryProjectId, setPrimaryProjectId] = useState('');
+  const [secondaryProjectId, setSecondaryProjectId] = useState('');
+  const [merging, setMerging] = useState(false);
+
+  // Estados para Reapertura de Proyectos
+  const [showReopenAuth, setShowReopenAuth] = useState(false);
+  const [reopenPassword, setReopenPassword] = useState('');
+  const [reopenError, setReopenError] = useState('');
+  const [projectToReopen, setProjectToReopen] = useState<string | null>(null);
+  const [reopening, setReopening] = useState(false);
+
   // Estado del modal de selección de impresión
   const [showPrintModal, setShowPrintModal] = useState(false);
   const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(new Set());
@@ -239,6 +252,100 @@ export default function ClienteDashboard() {
       alert('Error al eliminar: ' + error.message);
     } finally {
       setDeleting(false);
+    }
+  };
+
+  const handleMergeProjects = async () => {
+    if (!primaryProjectId || !secondaryProjectId || primaryProjectId === secondaryProjectId) {
+      alert("Debes seleccionar dos proyectos distintos.");
+      return;
+    }
+
+    setMerging(true);
+    try {
+      const primary = projects.find(p => p.id === primaryProjectId);
+      const secondary = projects.find(p => p.id === secondaryProjectId);
+
+      if (!primary || !secondary) throw new Error("Proyecto no encontrado");
+
+      const newBudget = Number(primary.budget_usd) + Number(secondary.budget_usd);
+      const newDescription = `${primary.description || ''}\n\n--- [UNIFICACIÓN CON PROPUESTA ${secondary.proposal_number || 'S/N'}] ---\n\n${secondary.description || ''}`.trim();
+
+      // 1. Actualizar el proyecto principal
+      const { error: updateError } = await supabase
+        .from('projects')
+        .update({ budget_usd: newBudget, description: newDescription })
+        .eq('id', primaryProjectId);
+      if (updateError) throw updateError;
+
+      // 2. Transferir registros
+      const transferData = async (table: string) => {
+        const { error } = await supabase
+          .from(table)
+          .update({ project_id: primaryProjectId })
+          .eq('project_id', secondaryProjectId);
+        if (error) throw error;
+      };
+
+      await Promise.all([
+        transferData('project_payments'),
+        transferData('project_costs'),
+        transferData('project_extras'),
+        transferData('project_commitments'),
+        transferData('partner_advances')
+      ]);
+
+      // 3. Eliminar el proyecto secundario
+      const { error: deleteError } = await supabase
+        .from('projects')
+        .delete()
+        .eq('id', secondaryProjectId);
+      if (deleteError) throw deleteError;
+
+      setShowMergeModal(false);
+      setPrimaryProjectId('');
+      setSecondaryProjectId('');
+      await fetchClientData();
+    } catch (error: any) {
+      console.error("Error al unificar:", error);
+      alert("Error al unificar proyectos: " + error.message);
+    } finally {
+      setMerging(false);
+    }
+  };
+
+  const initiateReopen = (projectId: string) => {
+    setProjectToReopen(projectId);
+    setShowReopenAuth(true);
+    setReopenPassword('');
+    setReopenError('');
+  };
+
+  const handleConfirmReopen = async () => {
+    const MASTER_KEY = '080911';
+    if (reopenPassword !== MASTER_KEY) {
+      setReopenError('Contraseña incorrecta. Solo administradores autorizados.');
+      return;
+    }
+
+    if (!projectToReopen) return;
+
+    setReopening(true);
+    try {
+      const { error } = await supabase
+        .from('projects')
+        .update({ archived_at: null, status: 'in_progress' })
+        .eq('id', projectToReopen);
+      
+      if (error) throw error;
+
+      setShowReopenAuth(false);
+      setProjectToReopen(null);
+      await fetchClientData();
+    } catch (error: any) {
+      alert('Error al reabrir el proyecto: ' + error.message);
+    } finally {
+      setReopening(false);
     }
   };
 
@@ -551,6 +658,11 @@ export default function ClienteDashboard() {
           <button className="btn-primary" onClick={() => setShowProposalModal(true)} style={{ height: '38px', padding: '0 1.1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', boxShadow: '0 4px 12px rgba(245,158,11,0.2)' }}>
             <PlusCircle size={16} /> Nueva Propuesta
           </button>
+          {!isViewer && (
+            <button className="btn-primary" onClick={() => setShowMergeModal(true)} style={{ height: '38px', padding: '0 1.1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', background: '#8b5cf6', borderColor: '#8b5cf6' }}>
+              <PlusCircle size={16} /> Unificar Proyectos
+            </button>
+          )}
 
           <button className="btn-primary" onClick={() => setShowPaymentModal(true)} style={{ height: '38px', padding: '0 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', background: 'var(--success)', borderColor: 'var(--success)', boxShadow: '0 4px 12px rgba(16,185,129,0.15)' }}>
             <BriefcaseIcon size={15} /> Registrar Pago
@@ -1183,6 +1295,16 @@ export default function ClienteDashboard() {
                             <button className="btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem' }} onClick={() => router.push(`/proyectos?print=${p.id}`)}>
                               <Printer size={14} />
                             </button>
+                            {!isViewer && (
+                              <button 
+                                className="btn-secondary" 
+                                style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', marginLeft: '0.5rem', color: 'var(--success)' }} 
+                                onClick={() => initiateReopen(p.id)}
+                                title="Reabrir proyecto"
+                              >
+                                <CheckCircle size={14} /> Reabrir
+                              </button>
+                            )}
                           </td>
                         </tr>
                       ))}
@@ -1903,6 +2025,102 @@ export default function ClienteDashboard() {
                 disabled={deleting}
               >
                 {deleting ? 'Eliminando...' : 'Eliminar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Reabrir Proyecto */}
+      {showReopenAuth && (
+        <div className="modal-overlay" style={{ zIndex: 1000 }}>
+          <div className="card modal-content animate-fade" style={{ maxWidth: '400px', width: '90%', padding: '2rem' }}>
+            <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
+              <div style={{ width: '60px', height: '60px', borderRadius: '50%', background: 'rgba(16, 185, 129, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1rem auto' }}>
+                <CheckCircle size={30} color="var(--success)" />
+              </div>
+              <h2 style={{ fontSize: '1.25rem', color: 'white', margin: '0 0 0.5rem 0' }}>Reabrir Proyecto</h2>
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', margin: 0 }}>
+                Esta acción restaurará el proyecto a la pestaña "Proyectos". Ingresa la clave maestra.
+              </p>
+            </div>
+            
+            <div style={{ marginBottom: '1.5rem' }}>
+              <input 
+                type="password" 
+                className="input-field" 
+                placeholder="Contraseña de administrador"
+                value={reopenPassword}
+                onChange={(e) => setReopenPassword(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleConfirmReopen()}
+                autoFocus
+              />
+              {reopenError && <p style={{ color: 'var(--danger)', fontSize: '0.8rem', marginTop: '0.5rem' }}>{reopenError}</p>}
+            </div>
+
+            <div style={{ display: 'flex', gap: '1rem' }}>
+              <button 
+                className="btn-secondary" 
+                style={{ flex: 1, justifyContent: 'center' }} 
+                onClick={() => { setShowReopenAuth(false); setProjectToReopen(null); }}
+              >
+                Cancelar
+              </button>
+              <button 
+                className="btn-primary" 
+                style={{ flex: 1, background: 'var(--success)', borderColor: 'var(--success)', justifyContent: 'center' }} 
+                onClick={handleConfirmReopen}
+                disabled={reopening}
+              >
+                {reopening ? 'Reabriendo...' : 'Reabrir'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Unificar Proyectos */}
+      {showMergeModal && (
+        <div className="modal-overlay">
+          <div className="card modal-content animate-fade" style={{ maxWidth: '600px', width: '90%' }}>
+            <h2 style={{ marginBottom: '1.5rem', color: 'white', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <PlusCircle size={20} color="#8b5cf6" /> Unificar Proyectos
+            </h2>
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginBottom: '1.5rem' }}>
+              Selecciona dos proyectos para fusionarlos en uno solo. Los registros del proyecto a integrar se transferirán al proyecto principal, sumando sus presupuestos, y el proyecto a integrar desaparecerá.
+            </p>
+            
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '2rem' }}>
+              <div>
+                <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Proyecto Principal (Se conserva)</label>
+                <select className="input-field" value={primaryProjectId} onChange={e => setPrimaryProjectId(e.target.value)}>
+                  <option value="">Selecciona el proyecto principal</option>
+                  {projects.map(p => (
+                    <option key={p.id} value={p.id}>{p.proposal_number ? `#${p.proposal_number} - ` : ''}{p.title}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Proyecto a Integrar (Se eliminará y sus montos se sumarán)</label>
+                <select className="input-field" value={secondaryProjectId} onChange={e => setSecondaryProjectId(e.target.value)}>
+                  <option value="">Selecciona el proyecto a integrar</option>
+                  {projects.map(p => (
+                    <option key={p.id} value={p.id} disabled={p.id === primaryProjectId}>{p.proposal_number ? `#${p.proposal_number} - ` : ''}{p.title}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end' }}>
+              <button className="btn-secondary" onClick={() => setShowMergeModal(false)}>Cancelar</button>
+              <button 
+                className="btn-primary" 
+                onClick={handleMergeProjects} 
+                disabled={merging || !primaryProjectId || !secondaryProjectId}
+                style={{ background: '#8b5cf6', borderColor: '#8b5cf6' }}
+              >
+                {merging ? 'Unificando...' : 'Unificar Proyectos'}
               </button>
             </div>
           </div>
