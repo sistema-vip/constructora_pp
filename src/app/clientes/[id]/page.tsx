@@ -163,13 +163,27 @@ export default function ClienteDashboard() {
       setClientNotes(clientData.notes || '');
 
       // 2. Obtener proyectos y sus detalles relacionados
-      const { data: projectsData, error: projectsError } = await supabase
+      // Intentar con join de payable_accounts; si falla (migración no aplicada), usar query simple
+      let projectsData: any[] | null = null;
+      const { data: richData, error: richError } = await supabase
         .from('projects')
         .select('*, project_payments(*), project_costs(*), project_extras(*), project_commitments(*, payable_accounts(payable_payments(amount_usd))), partner_advances(*)')
         .eq('client_id', clientId)
         .order('created_at', { ascending: false });
 
-      if (projectsError) throw projectsError;
+      if (richError) {
+        // Fallback: query sin payable_accounts
+        const { data: fallbackData, error: fallbackError } = await supabase
+          .from('projects')
+          .select('*, project_payments(*), project_costs(*), project_extras(*), project_commitments(*), partner_advances(*)')
+          .eq('client_id', clientId)
+          .order('created_at', { ascending: false });
+        if (fallbackError) throw fallbackError;
+        projectsData = fallbackData;
+      } else {
+        projectsData = richData;
+      }
+
       setProjects(projectsData || []);
       
       if (projectsData && projectsData.length > 0) {

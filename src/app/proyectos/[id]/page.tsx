@@ -165,30 +165,37 @@ export default function ProjectDashboard() {
         paymentsRes,
         costsRes,
         extrasRes,
-        advancesRes,
-        commitmentsRes
+        advancesRes
       ] = await Promise.all([
         supabase.from('projects').select('*, clients(name)').eq('id', projectId).single(),
         supabase.from('project_payments').select('*').eq('project_id', projectId).order('date', { ascending: false }),
         supabase.from('project_costs').select('*').eq('project_id', projectId).order('created_at', { ascending: false }),
         supabase.from('project_extras').select('*').eq('project_id', projectId).order('created_at', { ascending: true }),
-        supabase.from('partner_advances').select('*').eq('project_id', projectId).order('date', { ascending: false }),
-        supabase.from('project_commitments').select('*, payable_accounts(payable_payments(amount_usd))').eq('project_id', projectId).order('date', { ascending: false })
+        supabase.from('partner_advances').select('*').eq('project_id', projectId).order('date', { ascending: false })
       ]);
+
+      // Intentar query con payable_accounts; fallback si migración no aplicada
+      let commitmentsData: any[] = [];
+      const richCommit = await supabase.from('project_commitments').select('*, payable_accounts(payable_payments(amount_usd))').eq('project_id', projectId).order('date', { ascending: false });
+      if (richCommit.error) {
+        const fallbackCommit = await supabase.from('project_commitments').select('*').eq('project_id', projectId).order('date', { ascending: false });
+        if (!fallbackCommit.error) commitmentsData = fallbackCommit.data || [];
+      } else {
+        commitmentsData = richCommit.data || [];
+      }
 
       if (projectRes.error) throw projectRes.error;
       if (paymentsRes.error) throw paymentsRes.error;
       if (costsRes.error) throw costsRes.error;
       if (extrasRes.error) throw extrasRes.error;
       if (advancesRes.error) throw advancesRes.error;
-      if (commitmentsRes.error) throw commitmentsRes.error;
 
       setProject(projectRes.data);
       setPayments(paymentsRes.data || []);
       setCosts(costsRes.data || []);
       setExtras(extrasRes.data || []);
       setAdvances(advancesRes.data || []);
-      setCommitments(commitmentsRes.data || []);
+      setCommitments(commitmentsData);
 
     } catch (error: any) {
       console.error("Error fetching data:", error);
