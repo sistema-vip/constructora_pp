@@ -26,6 +26,7 @@ interface PayableAccount {
   description: string;
   total_amount_usd: number;
   project_id: string | null;
+  commitment_id?: string | null;
   project?: {
     title: string;
     proposal_number?: number;
@@ -284,6 +285,7 @@ export default function CuentasPorPagarPage() {
                   const balance = Number(account.total_amount_usd) - paid;
                   const isExpanded = expandedRows.has(account.id);
                   const progress = account.total_amount_usd > 0 ? Math.min(100, Math.round((paid / account.total_amount_usd) * 100)) : 0;
+                  const isFromCommitment = Boolean(account.commitment_id);
 
                   return (
                     <React.Fragment key={account.id}>
@@ -292,7 +294,14 @@ export default function CuentasPorPagarPage() {
                           {isExpanded ? <ChevronDown size={18} className="text-muted" /> : <ChevronRight size={18} className="text-muted" />}
                         </td>
                         <td style={{ padding: '1rem' }}>
-                          <div style={{ fontWeight: 'bold' }}>{account.name}</div>
+                          <div style={{ fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            {account.name}
+                            {isFromCommitment && (
+                              <span style={{ fontSize: '0.65rem', background: 'rgba(59,130,246,0.1)', color: 'var(--primary-color)', padding: '0.1rem 0.4rem', borderRadius: '4px', border: '1px solid rgba(59,130,246,0.2)' }}>
+                                COMPROMISO
+                              </span>
+                            )}
+                          </div>
                           {account.contact_info && <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{account.contact_info}</div>}
                         </td>
                         <td style={{ padding: '1rem', textTransform: 'capitalize' }}>{account.type}</td>

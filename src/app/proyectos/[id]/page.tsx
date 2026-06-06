@@ -78,6 +78,7 @@ interface Commitment {
   unit_price_usd: number;
   amount_usd: number;
   date: string;
+  payable_accounts?: { payable_payments?: { amount_usd: number }[] }[];
 }
 
 export default function ProjectDashboard() {
@@ -172,7 +173,7 @@ export default function ProjectDashboard() {
         supabase.from('project_costs').select('*').eq('project_id', projectId).order('created_at', { ascending: false }),
         supabase.from('project_extras').select('*').eq('project_id', projectId).order('created_at', { ascending: true }),
         supabase.from('partner_advances').select('*').eq('project_id', projectId).order('date', { ascending: false }),
-        supabase.from('project_commitments').select('*').eq('project_id', projectId).order('date', { ascending: false })
+        supabase.from('project_commitments').select('*, payable_accounts(payable_payments(amount_usd))').eq('project_id', projectId).order('date', { ascending: false })
       ]);
 
       if (projectRes.error) throw projectRes.error;
@@ -359,7 +360,23 @@ export default function ProjectDashboard() {
       } else if (editItemType === 'commitment') {
         table = 'project_commitments';
         const up = parseCurrency(editItemForm.unit_price_usd);
-        updateData = { description: editItemForm.description, provider: editItemForm.provider, category: editItemForm.category, quantity: editItemForm.quantity, unit_price_usd: up, amount_usd: editItemForm.quantity * up, date: editItemForm.date };
+        const amount_usd = editItemForm.quantity * up;
+        updateData = { description: editItemForm.description, provider: editItemForm.provider, category: editItemForm.category, quantity: editItemForm.quantity, unit_price_usd: up, amount_usd: amount_usd, date: editItemForm.date };
+        
+        const { error } = await supabase.from(table).update(updateData).eq('id', editingItem.id);
+        if (error) throw error;
+        
+        await supabase.from('payable_accounts').update({
+          name: editItemForm.provider || 'Proveedor sin nombre',
+          total_amount_usd: amount_usd,
+          description: editItemForm.description
+        }).eq('commitment_id', editingItem.id);
+        
+        setShowEditItemModal(false);
+        setEditingItem(null);
+        setEditItemType(null);
+        fetchProjectData();
+        return; // Return early since we already handled the state updates
       }
       const { error } = await supabase.from(table).update(updateData).eq('id', editingItem.id);
       if (error) throw error;
@@ -421,17 +438,48 @@ export default function ProjectDashboard() {
       date: commitmentForm.date
     };
 
-    const { error } = editingCommitment
-      ? await supabase.from('project_commitments').update(data).eq('id', editingCommitment.id)
-      : await supabase.from('project_commitments').insert([{ project_id: projectId, ...data }]);
+    let errorToReport = null;
 
-    if (!error) {
+    if (editingCommitment) {
+      const { error } = await supabase.from('project_commitments').update(data).eq('id', editingCommitment.id);
+      errorToReport = error;
+      
+      if (!error) {
+        await supabase.from('payable_accounts').update({
+          name: data.provider || 'Proveedor sin nombre',
+          total_amount_usd: data.amount_usd,
+          description: data.description
+        }).eq('commitment_id', editingCommitment.id);
+      }
+    } else {
+      const { data: newCommitment, error } = await supabase.from('project_commitments').insert([{ project_id: projectId, ...data }]).select().single();
+      errorToReport = error;
+      
+      if (!error && newCommitment) {
+        let payableType = 'otro';
+        if (data.category === 'materials') payableType = 'proveedor';
+        else if (data.category === 'labor') payableType = 'obrero';
+        else if (data.category === 'equipment') payableType = 'alquiler';
+        else if (data.category === 'subcontract') payableType = 'subcontratista';
+
+        await supabase.from('payable_accounts').insert([{
+          name: data.provider || 'Proveedor sin nombre',
+          type: payableType,
+          total_amount_usd: data.amount_usd,
+          project_id: projectId,
+          commitment_id: newCommitment.id,
+          description: data.description
+        }]);
+      }
+    }
+
+    if (!errorToReport) {
       setShowCommitmentModal(false);
       setEditingCommitment(null);
       setCommitmentForm({ description: '', provider: '', category: 'materials', quantity: 1, unit_price_usd: '', date: new Date().toISOString().split('T')[0] });
       fetchProjectData();
     } else {
-      alert(`Error al guardar compromiso: ${error.message}`);
+      alert(`Error al guardar compromiso: ${errorToReport.message}`);
     }
   }
 
@@ -835,23 +883,40 @@ export default function ProjectDashboard() {
                     <th style={{ textAlign: 'left', padding: '1rem' }}>FECHA</th>
                     <th style={{ textAlign: 'left', padding: '1rem' }}>CONCEPTO</th>
                     <th style={{ textAlign: 'left', padding: '1rem' }}>PROVEEDOR</th>
-                    <th style={{ textAlign: 'right', padding: '1rem' }}>TOTAL (USD)</th>
+                    <th style={{ textAlign: 'right', padding: '1rem' }}>ESTADO</th>
+                    <th style={{ textAlign: 'right', padding: '1rem' }}>SALDO (USD)</th>
                     <th style={{ textAlign: 'right', padding: '1rem' }}></th>
                   </tr>
                 </thead>
                 <tbody>
-                  {commitments.map(c => (
+                  {commitments.map(c => {
+                    const paid = c.payable_accounts?.[0]?.payable_payments?.reduce((s, p) => s + Number(p.amount_usd), 0) || 0;
+                    const balance = Number(c.amount_usd) - paid;
+                    const isPaid = paid >= Number(c.amount_usd);
+                    
+                    return (
                     <tr key={c.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
                       <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>{c.date}</td>
                       <td style={{ padding: '1rem' }}>{c.description}<br/><span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{c.quantity} x ${Number(c.unit_price_usd).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></td>
                       <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>{c.provider || 'N/A'}</td>
-                      <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold', color: 'var(--primary-color)' }}>- ${Number(c.amount_usd).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                      <td style={{ padding: '1rem', textAlign: 'right' }}>
+                        {paid > 0 ? (
+                          <div style={{ fontSize: '0.8rem' }}>
+                            <div style={{ color: isPaid ? 'var(--success)' : 'var(--warning)', fontWeight: 'bold' }}>{isPaid ? 'Pagado' : 'Abonado'}</div>
+                            <div style={{ color: 'var(--text-muted)' }}>${paid.toLocaleString('es-VE', { minimumFractionDigits: 2 })} / ${Number(c.amount_usd).toLocaleString('es-VE', { minimumFractionDigits: 2 })}</div>
+                          </div>
+                        ) : (
+                          <span style={{ fontSize: '0.8rem', color: 'var(--danger)', fontWeight: 'bold', padding: '0.2rem 0.5rem', background: 'rgba(239,68,68,0.1)', borderRadius: '4px' }}>Pendiente</span>
+                        )}
+                      </td>
+                      <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold', color: 'var(--primary-color)' }}>- ${Number(balance).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                       <td style={{ padding: '1rem', textAlign: 'right', display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
                         {!isViewer && (<button className="btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--primary-color)', borderColor: 'rgba(59,130,246,0.2)' }} onClick={() => initiateEditItem(c, 'commitment')} title="Editar compromiso"><Edit3 size={14} /></button>)}
                         {!isViewer && (<button className="btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--danger)', borderColor: 'rgba(239,68,68,0.2)' }} onClick={() => initiateDelete(c.id, 'commitment')}><Trash2 size={14} /></button>)}
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             )}

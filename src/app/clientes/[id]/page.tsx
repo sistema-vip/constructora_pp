@@ -165,7 +165,7 @@ export default function ClienteDashboard() {
       // 2. Obtener proyectos y sus detalles relacionados
       const { data: projectsData, error: projectsError } = await supabase
         .from('projects')
-        .select('*, project_payments(*), project_costs(*), project_extras(*), project_commitments(*), partner_advances(*)')
+        .select('*, project_payments(*), project_costs(*), project_extras(*), project_commitments(*, payable_accounts(payable_payments(amount_usd))), partner_advances(*)')
         .eq('client_id', clientId)
         .order('created_at', { ascending: false });
 
@@ -459,7 +459,7 @@ export default function ClienteDashboard() {
     e.preventDefault();
     if (!commitmentForm.project_id) return alert('Seleccione un proyecto origen.');
     
-    const { error } = await supabase.from('project_commitments').insert([{
+    const data = {
       project_id: commitmentForm.project_id,
       description: commitmentForm.description,
       provider: commitmentForm.provider,
@@ -468,13 +468,30 @@ export default function ClienteDashboard() {
       unit_price_usd: parseCurrency(commitmentForm.unit_price_usd),
       amount_usd: commitmentForm.quantity * parseCurrency(String(commitmentForm.unit_price_usd)),
       date: commitmentForm.date
-    }]);
+    };
 
-    if (!error) {
+    const { data: newCommitment, error } = await supabase.from('project_commitments').insert([data]).select().single();
+
+    if (!error && newCommitment) {
+      let payableType = 'otro';
+      if (data.category === 'materials') payableType = 'proveedor';
+      else if (data.category === 'labor') payableType = 'obrero';
+      else if (data.category === 'equipment') payableType = 'alquiler';
+      else if (data.category === 'subcontract') payableType = 'subcontratista';
+
+      await supabase.from('payable_accounts').insert([{
+        name: data.provider || 'Proveedor sin nombre',
+        type: payableType,
+        total_amount_usd: data.amount_usd,
+        project_id: data.project_id,
+        commitment_id: newCommitment.id,
+        description: data.description
+      }]);
+
       setShowCommitmentModal(false);
       setCommitmentForm({ ...commitmentForm, description: '', provider: '', category: 'materials', quantity: 1, unit_price_usd: '', date: new Date().toISOString().split('T')[0] });
       fetchClientData();
-    } else alert(`Error: ${error.message}`);
+    } else alert(`Error: ${error?.message || 'Error desconocido'}`);
   }
 
   const initiateEditItem = (item: any, type: 'payment' | 'cost' | 'commitment') => {
@@ -516,16 +533,33 @@ export default function ClienteDashboard() {
         };
       } else if (editItemType === 'commitment') {
         table = 'project_commitments';
+        const up = parseCurrency(editItemForm.unit_price_usd);
+        const amount_usd = editItemForm.quantity * up;
         updateData = {
           project_id: editItemForm.project_id,
           description: editItemForm.description,
           provider: editItemForm.provider,
           category: editItemForm.category,
           quantity: editItemForm.quantity,
-          unit_price_usd: parseCurrency(editItemForm.unit_price_usd),
-          amount_usd: editItemForm.quantity * parseCurrency(String(editItemForm.unit_price_usd)),
+          unit_price_usd: up,
+          amount_usd: amount_usd,
           date: editItemForm.date
         };
+        
+        const { error } = await supabase.from(table).update(updateData).eq('id', editingItem.id);
+        if (error) throw error;
+        
+        await supabase.from('payable_accounts').update({
+          name: editItemForm.provider || 'Proveedor sin nombre',
+          total_amount_usd: amount_usd,
+          description: editItemForm.description
+        }).eq('commitment_id', editingItem.id);
+        
+        setShowEditItemModal(false);
+        setEditingItem(null);
+        setEditItemType(null);
+        fetchClientData();
+        return; // Return early
       }
 
       const { error } = await supabase.from(table).update(updateData).eq('id', editingItem.id);
@@ -988,18 +1022,33 @@ export default function ClienteDashboard() {
                       <th style={{ textAlign: 'left', padding: '1rem' }}>CONCEPTO</th>
                       <th style={{ textAlign: 'left', padding: '1rem' }}>PROVEEDOR</th>
                       <th style={{ textAlign: 'left', padding: '1rem' }}>PROYECTO</th>
-                      <th style={{ textAlign: 'right', padding: '1rem' }}>TOTAL (USD)</th>
+                      <th style={{ textAlign: 'right', padding: '1rem' }}>ESTADO</th>
+                      <th style={{ textAlign: 'right', padding: '1rem' }}>SALDO (USD)</th>
                       <th style={{ textAlign: 'right', padding: '1rem' }}></th>
                     </tr>
                   </thead>
                   <tbody>
-                    {allCommitments.map(c => (
+                    {allCommitments.map(c => {
+                      const paid = c.payable_accounts?.[0]?.payable_payments?.reduce((s: any, p: any) => s + Number(p.amount_usd), 0) || 0;
+                      const balance = Number(c.amount_usd || (c.quantity * c.unit_price_usd)) - paid;
+                      const isPaid = paid >= Number(c.amount_usd || (c.quantity * c.unit_price_usd));
+                      return (
                       <tr key={c.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
                         <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>{c.date || new Date(c.created_at).toISOString().split('T')[0]}</td>
                         <td style={{ padding: '1rem' }}>{c.description} <br/><span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{c.quantity} x ${formatCurrency(c.unit_price_usd)}</span></td>
                         <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>{c.provider || 'N/A'}</td>
                         <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>{c.proposal_number ? `#${c.proposal_number} - ` : ''}{c.project_title}</td>
-                        <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold', color: 'var(--primary-color)' }}>- ${formatCurrency(c.amount_usd || (c.quantity * c.unit_price_usd))}</td>
+                        <td style={{ padding: '1rem', textAlign: 'right' }}>
+                          {paid > 0 ? (
+                            <div style={{ fontSize: '0.8rem' }}>
+                              <div style={{ color: isPaid ? 'var(--success)' : 'var(--warning)', fontWeight: 'bold' }}>{isPaid ? 'Pagado' : 'Abonado'}</div>
+                              <div style={{ color: 'var(--text-muted)' }}>${paid.toLocaleString('es-VE', { minimumFractionDigits: 2 })} / ${Number(c.amount_usd || (c.quantity * c.unit_price_usd)).toLocaleString('es-VE', { minimumFractionDigits: 2 })}</div>
+                            </div>
+                          ) : (
+                            <span style={{ fontSize: '0.8rem', color: 'var(--danger)', fontWeight: 'bold', padding: '0.2rem 0.5rem', background: 'rgba(239,68,68,0.1)', borderRadius: '4px' }}>Pendiente</span>
+                          )}
+                        </td>
+                        <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold', color: 'var(--primary-color)' }}>- ${formatCurrency(balance)}</td>
                         <td style={{ padding: '1rem', textAlign: 'right', display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
                           {!isViewer && (
                             <button
@@ -1022,7 +1071,8 @@ export default function ClienteDashboard() {
                           )}
                         </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               )}
