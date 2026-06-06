@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { 
   ArrowLeft, 
@@ -32,7 +32,9 @@ import {
   X,
   Sparkles,
   Loader2,
-  Archive
+  Archive,
+  ChevronDown,
+  ChevronRight
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency, handleMoneyInput, parseCurrency, formatOnBlur } from '@/lib/formatters';
@@ -86,7 +88,7 @@ export default function ClienteDashboard() {
   const [showAdminAuth, setShowAdminAuth] = useState(false);
   const [adminPassword, setAdminPassword] = useState('');
   const [authError, setAuthError] = useState('');
-  const [itemToDelete, setItemToDelete] = useState<{ id: string, type: 'project' | 'payment' | 'cost' | 'extra' | 'commitment' | 'advance' } | null>(null);
+  const [itemToDelete, setItemToDelete] = useState<{ id: string, type: 'project' | 'payment' | 'cost' | 'extra' | 'commitment' | 'advance' | 'payable_payment' } | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [showProposalModal, setShowProposalModal] = useState(false);
   const [showEditProjectModal, setShowEditProjectModal] = useState(false);
@@ -98,7 +100,7 @@ export default function ClienteDashboard() {
   const isViewer = role === 'viewer';
   
   // Tabs State
-  const [activeTab, setActiveTab] = useState<'proyectos' | 'pagos' | 'gastos' | 'adicionales' | 'compromisos' | 'retiros' | 'propuestas' | 'historial'>('proyectos');
+  const [activeTab, setActiveTab] = useState<'proyectos' | 'pagos' | 'gastos' | 'adicionales' | 'compromisos' | 'cuentas_pagar' | 'retiros' | 'propuestas' | 'historial'>('proyectos');
 
   // Modals state
   const [showPaymentModal, setShowPaymentModal] = useState(false);
@@ -113,6 +115,14 @@ export default function ClienteDashboard() {
   const [commitmentForm, setCommitmentForm] = useState({ project_id: '', description: '', provider: '', category: 'materials', quantity: 1, unit_price_usd: '', date: new Date().toISOString().split('T')[0] });
   const [showAdvanceModal, setShowAdvanceModal] = useState(false);
   const [advanceForm, setAdvanceForm] = useState({ project_id: '', partner_name: 'Henry Peraza', amount_usd: '', description: '', date: new Date().toISOString().split('T')[0] });
+
+  // Cuentas por Pagar state
+  const [clientPayableAccounts, setClientPayableAccounts] = useState<any[]>([]);
+  const [payableExpandedRows, setPayableExpandedRows] = useState<Set<string>>(new Set());
+  const [showPayablePaymentModal, setShowPayablePaymentModal] = useState(false);
+  const [payablePaymentForm, setPayablePaymentForm] = useState({
+    payable_account_id: '', amount_usd: '', description: '', reference: '', date: new Date().toISOString().split('T')[0]
+  });
 
   // Estados para edición de items
   const [showEditItemModal, setShowEditItemModal] = useState(false);
@@ -187,6 +197,17 @@ export default function ClienteDashboard() {
       setProjects(projectsData || []);
       
       if (projectsData && projectsData.length > 0) {
+        const projectIds = projectsData.map(p => p.id);
+        
+        // Cargar cuentas por pagar de estos proyectos
+        const { data: accountsData } = await supabase
+          .from('payable_accounts')
+          .select('*, project:projects(title, proposal_number), payable_payments(*)')
+          .in('project_id', projectIds)
+          .order('created_at', { ascending: false });
+        
+        setClientPayableAccounts(accountsData || []);
+
         const firstActive = projectsData.find(p => p.status === 'in_progress' || p.status === 'completed');
         if (firstActive) {
           const pid = firstActive.id;
@@ -196,6 +217,8 @@ export default function ClienteDashboard() {
           setCommitmentForm(prev => ({ ...prev, project_id: pid }));
           setAdvanceForm(prev => ({ ...prev, project_id: pid }));
         }
+      } else {
+        setClientPayableAccounts([]);
       }
     } catch (error) {
       console.error('Error fetching client data:', error);
@@ -224,7 +247,7 @@ export default function ClienteDashboard() {
   }
 
   // Lógica de Eliminación Protegida
-  const initiateDelete = (id: string, type: 'project' | 'payment' | 'cost' | 'extra' | 'commitment' | 'advance') => {
+  const initiateDelete = (id: string, type: 'project' | 'payment' | 'cost' | 'extra' | 'commitment' | 'advance' | 'payable_payment') => {
     setItemToDelete({ id, type });
     setShowAdminAuth(true);
     setAdminPassword('');
@@ -252,20 +275,52 @@ export default function ClienteDashboard() {
         case 'extra': table = 'project_extras'; break;
         case 'commitment': table = 'project_commitments'; break;
         case 'advance': table = 'partner_advances'; break;
+        case 'payable_payment': table = 'payable_payments'; break;
       }
 
-      const { error } = await supabase.from(table).delete().eq('id', itemToDelete.id);
-      
-      if (error) throw error;
+      if (table) {
+        const { error } = await supabase.from(table).delete().eq('id', itemToDelete.id);
+        
+        if (error) throw error;
 
-      setShowAdminAuth(false);
-      setItemToDelete(null);
-      // Actualización rápida sin recargar toda la página
-      await fetchClientData(); 
+        setShowAdminAuth(false);
+        setItemToDelete(null);
+        // Actualización rápida sin recargar toda la página
+        await fetchClientData(); 
+      }
     } catch (error: any) {
       alert('Error al eliminar: ' + error.message);
     } finally {
       setDeleting(false);
+    }
+  };
+
+  const togglePayableRow = (id: string) => {
+    const newSet = new Set(payableExpandedRows);
+    if (newSet.has(id)) newSet.delete(id);
+    else newSet.add(id);
+    setPayableExpandedRows(newSet);
+  };
+
+  const handleSavePayablePayment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (isViewer) return;
+
+    try {
+      const { error } = await supabase.from('payable_payments').insert([{
+        payable_account_id: payablePaymentForm.payable_account_id,
+        amount_usd: parseFloat(payablePaymentForm.amount_usd) || 0,
+        description: payablePaymentForm.description,
+        reference: payablePaymentForm.reference,
+        date: payablePaymentForm.date
+      }]);
+
+      if (error) throw error;
+      setShowPayablePaymentModal(false);
+      setPayablePaymentForm({ payable_account_id: '', amount_usd: '', description: '', reference: '', date: new Date().toISOString().split('T')[0] });
+      fetchClientData();
+    } catch (err: any) {
+      alert("Error registrando abono a cuenta por pagar: " + err.message);
     }
   };
 
@@ -652,6 +707,8 @@ export default function ClienteDashboard() {
   const estimatedProfit = totalContracted - totalCostsValue - totalCommitted;
   const netProfit = estimatedProfit - totalAdvances;
   const estimatedMargin = totalContracted > 0 ? (estimatedProfit / totalContracted) * 100 : 0;
+  
+  const totalPagado = projects.reduce((sum, p) => sum + (p.project_payments?.reduce((s: any, pm: any) => s + (Number(pm.amount_usd) || 0), 0) || 0), 0);
 
   // Variables de impresión filtradas por selección del usuario
   const printProjects = selectedProjectIds.size > 0
@@ -878,6 +935,13 @@ export default function ClienteDashboard() {
             >
               Compromisos
             </button>
+            <button 
+              className={`btn-secondary ${activeTab === 'cuentas_pagar' ? 'btn-primary' : ''}`}
+              style={{ padding: '0.5rem 1rem', background: activeTab === 'cuentas_pagar' ? 'var(--accent-blue)' : 'transparent', border: 'none', whiteSpace: 'nowrap' }}
+              onClick={() => setActiveTab('cuentas_pagar')}
+            >
+              Cuentas por Pagar
+            </button>
             <button
               className={`btn-secondary ${activeTab === 'retiros' ? 'btn-primary' : ''}`}
               style={{ padding: '0.5rem 1rem', background: activeTab === 'retiros' ? '#8b5cf6' : 'transparent', border: 'none', whiteSpace: 'nowrap' }}
@@ -934,7 +998,7 @@ export default function ClienteDashboard() {
                                 style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', marginRight: '0.5rem' }} 
                                 onClick={() => initiateEdit(p)}
                               >
-                                <Edit3 size={14} /> Editar
+                                <Edit3 size={14} />
                               </button>
                             )}
                             <button className="btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', marginRight: '0.5rem' }} onClick={() => router.push(`/proyectos?print=${p.id}`)}>
@@ -1089,6 +1153,157 @@ export default function ClienteDashboard() {
                     })}
                   </tbody>
                 </table>
+              )}
+            </div>
+          )}
+
+          {activeTab === 'cuentas_pagar' && (
+            <div>
+              {clientPayableAccounts.length === 0 ? (
+                <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>No hay cuentas por pagar registradas para los proyectos de este cliente.</div>
+              ) : (
+                <div style={{ overflowX: 'auto' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', marginBottom: '1.5rem' }}>
+                    <div className="card" style={{ padding: '1rem', background: 'rgba(245,158,11,0.05)', borderColor: 'rgba(245, 158, 11, 0.2)' }}>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--primary-color)', textTransform: 'uppercase', marginBottom: '0.25rem' }}>Total Contratado</div>
+                      <div style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>${formatCurrency(clientPayableAccounts.reduce((acc, a) => acc + Number(a.total_amount_usd), 0))}</div>
+                    </div>
+                    <div className="card" style={{ padding: '1rem', background: 'rgba(16,185,129,0.05)', borderColor: 'rgba(16, 185, 129, 0.2)' }}>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--success)', textTransform: 'uppercase', marginBottom: '0.25rem' }}>Total Abonado</div>
+                      <div style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>${formatCurrency(clientPayableAccounts.reduce((acc, a) => acc + (a.payable_payments?.reduce((s: any, p: any) => s + Number(p.amount_usd), 0) || 0), 0))}</div>
+                    </div>
+                    <div className="card" style={{ padding: '1rem', background: 'rgba(239,68,68,0.05)', borderColor: 'rgba(239, 68, 68, 0.2)' }}>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--danger)', textTransform: 'uppercase', marginBottom: '0.25rem' }}>Saldo Pendiente</div>
+                      <div style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>
+                        ${formatCurrency(clientPayableAccounts.reduce((acc, a) => acc + Number(a.total_amount_usd), 0) - clientPayableAccounts.reduce((acc, a) => acc + (a.payable_payments?.reduce((s: any, p: any) => s + Number(p.amount_usd), 0) || 0), 0))}
+                      </div>
+                    </div>
+                  </div>
+
+                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                        <th style={{ width: '40px', padding: '1rem' }}></th>
+                        <th style={{ textAlign: 'left', padding: '1rem' }}>NOMBRE</th>
+                        <th style={{ textAlign: 'left', padding: '1rem' }}>PROYECTO</th>
+                        <th style={{ textAlign: 'right', padding: '1rem' }}>CONTRATO</th>
+                        <th style={{ textAlign: 'right', padding: '1rem' }}>ABONADO</th>
+                        <th style={{ textAlign: 'right', padding: '1rem' }}>SALDO</th>
+                        <th style={{ textAlign: 'right', padding: '1rem' }}>ACCIONES</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {clientPayableAccounts.map(account => {
+                        const paid = account.payable_payments?.reduce((s: any, p: any) => s + Number(p.amount_usd), 0) || 0;
+                        const balance = Number(account.total_amount_usd) - paid;
+                        const isExpanded = payableExpandedRows.has(account.id);
+                        const progress = account.total_amount_usd > 0 ? Math.min(100, Math.round((paid / account.total_amount_usd) * 100)) : 0;
+                        const isFromCommitment = Boolean(account.commitment_id);
+
+                        return (
+                          <React.Fragment key={account.id}>
+                            <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.05)', background: isExpanded ? 'rgba(255,255,255,0.02)' : 'transparent' }}>
+                              <td style={{ padding: '1rem', cursor: 'pointer' }} onClick={() => togglePayableRow(account.id)}>
+                                {isExpanded ? <ChevronDown size={18} className="text-muted" /> : <ChevronRight size={18} className="text-muted" />}
+                              </td>
+                              <td style={{ padding: '1rem' }}>
+                                <div style={{ fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                  {account.name}
+                                  {isFromCommitment && (
+                                    <span style={{ fontSize: '0.65rem', background: 'rgba(59,130,246,0.1)', color: 'var(--primary-color)', padding: '0.1rem 0.4rem', borderRadius: '4px', border: '1px solid rgba(59,130,246,0.2)' }}>
+                                      COMPROMISO
+                                    </span>
+                                  )}
+                                </div>
+                                <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'capitalize' }}>{account.type}</div>
+                              </td>
+                              <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>
+                                {account.project?.proposal_number ? `#${account.project?.proposal_number} - ` : ''}{account.project?.title || 'General'}
+                              </td>
+                              <td style={{ padding: '1rem', textAlign: 'right' }}>${formatCurrency(account.total_amount_usd)}</td>
+                              <td style={{ padding: '1rem', textAlign: 'right', color: 'var(--success)' }}>${formatCurrency(paid)}</td>
+                              <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold', color: 'var(--danger)' }}>${formatCurrency(balance)}</td>
+                              <td style={{ padding: '1rem', textAlign: 'right' }}>
+                                {!isViewer && (
+                                  <button 
+                                    className="btn-primary" 
+                                    style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem' }}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setPayablePaymentForm(prev => ({ ...prev, payable_account_id: account.id }));
+                                      setShowPayablePaymentModal(true);
+                                    }}
+                                  >
+                                    Abonar
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+                            
+                            {/* Panel Expandido con Historial de Abonos */}
+                            {isExpanded && (
+                              <tr>
+                                <td colSpan={7} style={{ padding: 0 }}>
+                                  <div style={{ background: 'rgba(0,0,0,0.2)', padding: '1.5rem', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                                    
+                                    {/* Barra de progreso */}
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.5rem' }}>
+                                      <div style={{ flex: 1, height: '8px', background: 'rgba(255,255,255,0.1)', borderRadius: '4px', overflow: 'hidden' }}>
+                                        <div style={{ width: `${progress}%`, height: '100%', background: progress >= 100 ? 'var(--success)' : 'var(--primary-color)', transition: 'width 0.3s ease' }}></div>
+                                      </div>
+                                      <div style={{ fontSize: '0.85rem', fontWeight: 'bold', color: progress >= 100 ? 'var(--success)' : 'var(--text-muted)' }}>
+                                        {progress}% Pagado
+                                      </div>
+                                    </div>
+
+                                    <h4 style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginBottom: '1rem', textTransform: 'uppercase', letterSpacing: '1px' }}>Historial de Abonos</h4>
+                                    
+                                    {(!account.payable_payments || account.payable_payments.length === 0) ? (
+                                      <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>No se han registrado abonos a esta cuenta.</div>
+                                    ) : (
+                                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
+                                        <thead>
+                                          <tr style={{ color: 'var(--text-muted)', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                                            <th style={{ textAlign: 'left', padding: '0.5rem' }}>Fecha</th>
+                                            <th style={{ textAlign: 'left', padding: '0.5rem' }}>Concepto</th>
+                                            <th style={{ textAlign: 'left', padding: '0.5rem' }}>Referencia</th>
+                                            <th style={{ textAlign: 'right', padding: '0.5rem' }}>Monto</th>
+                                            <th style={{ textAlign: 'right', padding: '0.5rem' }}></th>
+                                          </tr>
+                                        </thead>
+                                        <tbody>
+                                          {account.payable_payments.map((p: any) => (
+                                            <tr key={p.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
+                                              <td style={{ padding: '0.5rem' }}>{p.date || new Date(p.created_at).toISOString().split('T')[0]}</td>
+                                              <td style={{ padding: '0.5rem' }}>{p.description || '-'}</td>
+                                              <td style={{ padding: '0.5rem', color: 'var(--primary-color)' }}>{p.reference || '-'}</td>
+                                              <td style={{ padding: '0.5rem', textAlign: 'right', fontWeight: 'bold' }}>${formatCurrency(p.amount_usd)}</td>
+                                              <td style={{ padding: '0.5rem', textAlign: 'right' }}>
+                                                {!isViewer && (
+                                                  <button 
+                                                    className="btn-secondary"
+                                                    style={{ padding: '0.2rem 0.5rem', color: 'var(--danger)', borderColor: 'transparent' }}
+                                                    onClick={() => initiateDelete(p.id, 'payable_payment')}
+                                                  >
+                                                    <Trash2 size={14} />
+                                                  </button>
+                                                )}
+                                              </td>
+                                            </tr>
+                                          ))}
+                                        </tbody>
+                                      </table>
+                                    )}
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </React.Fragment>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               )}
             </div>
           )}
@@ -2011,7 +2226,63 @@ export default function ClienteDashboard() {
           </div>
         )}
 
-        {/* Observaciones / Notas */}
+        {/* Modal Abono Cuenta Pagar */}
+      {showPayablePaymentModal && (
+        <div className="modal-backdrop">
+          <div className="modal-content animate-scale">
+            <h2 style={{ fontSize: '1.5rem', fontWeight: 800, marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <CheckCircle size={24} color="var(--success)" /> Registrar Abono (Cuentas por Pagar)
+            </h2>
+            <form onSubmit={handleSavePayablePayment}>
+              <div style={{ display: 'grid', gap: '1rem' }}>
+                <div className="form-group">
+                  <label>Monto (USD)</label>
+                  <input
+                    type="text"
+                    required
+                    value={payablePaymentForm.amount_usd}
+                    onChange={(e) => setPayablePaymentForm({...payablePaymentForm, amount_usd: handleMoneyInput(e.target.value)})}
+                    onBlur={(e) => setPayablePaymentForm({...payablePaymentForm, amount_usd: formatOnBlur(e.target.value)})}
+                    placeholder="Ej. 1500.00"
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Concepto / Descripción</label>
+                  <input
+                    type="text"
+                    required
+                    value={payablePaymentForm.description}
+                    onChange={e => setPayablePaymentForm({...payablePaymentForm, description: e.target.value})}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Referencia / Banco</label>
+                  <input
+                    type="text"
+                    value={payablePaymentForm.reference}
+                    onChange={e => setPayablePaymentForm({...payablePaymentForm, reference: e.target.value})}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Fecha del Pago</label>
+                  <input
+                    type="date"
+                    required
+                    value={payablePaymentForm.date}
+                    onChange={e => setPayablePaymentForm({...payablePaymentForm, date: e.target.value})}
+                  />
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: '1rem', marginTop: '2rem', justifyContent: 'flex-end' }}>
+                <button type="button" className="btn-secondary" onClick={() => setShowPayablePaymentModal(false)}>Cancelar</button>
+                <button type="submit" className="btn-primary">Registrar Abono</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Avanzado de Ajustes y Notas */}
         {clientNotes && (
           <div>
             <h3 style={{ fontSize: '16px', borderBottom: '1px solid #ccc', paddingBottom: '0.5rem', marginBottom: '1rem' }}>OBSERVACIONES IMPORTANTES</h3>
