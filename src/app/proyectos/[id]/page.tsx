@@ -1173,8 +1173,8 @@ export default function ProjectDashboard() {
         
         {/* Modal de Abono a Compromiso */}
         {showCommitmentPayModal && commitmentToPay && (
-          <div className="modal-backdrop">
-            <div className="modal-content animate-scale">
+          <div className="modal-overlay">
+            <div className="card modal-content animate-fade" style={{ maxWidth: '500px', width: '90%' }}>
               <h2 style={{ fontSize: '1.5rem', fontWeight: 800, marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <CheckCircle size={24} color="var(--success)" /> Registrar Abono a Compromiso
               </h2>
