@@ -537,6 +537,24 @@ export default function ProjectDashboard() {
       }]);
       if (costError) throw new Error(`Error al registrar como gasto: ${costError.message}`);
 
+      // 3. Delete commitment if fully paid
+      const previouslyPaid = commitmentToPay.payable_accounts?.[0]?.payable_payments?.reduce((s: any, p: any) => s + Number(p.amount_usd), 0) || 0;
+      const totalAmount = Number(commitmentToPay.amount_usd);
+      const remainingBalance = totalAmount - previouslyPaid - monto;
+
+      // Usamos una tolerancia de 0.01 por problemas de precision en decimales
+      if (remainingBalance <= 0.01 && commitmentToPay.payable_accounts?.[0]?.id) {
+        // Update payable account to 'paid' status
+        await supabase.from('payable_accounts')
+          .update({ status: 'paid' })
+          .eq('id', commitmentToPay.payable_accounts[0].id);
+        
+        // Delete the commitment
+        await supabase.from('project_commitments')
+          .delete()
+          .eq('id', commitmentToPay.id);
+      }
+
       setShowCommitmentPayModal(false);
       setCommitmentToPay(null);
       setCommitmentPayForm({ amount_usd: '', description: '', reference: '', date: new Date().toISOString().split('T')[0] });
