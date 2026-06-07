@@ -183,7 +183,7 @@ export default function ProjectDashboard() {
 
       // Intentar query con payable_accounts; fallback si migración no aplicada
       let commitmentsData: any[] = [];
-      const richCommit = await supabase.from('project_commitments').select('*, payable_accounts(payable_payments(amount_usd))').eq('project_id', projectId).order('date', { ascending: false });
+      const richCommit = await supabase.from('project_commitments').select('*, payable_accounts(id, payable_payments(amount_usd))').eq('project_id', projectId).order('date', { ascending: false });
       if (richCommit.error) {
         const fallbackCommit = await supabase.from('project_commitments').select('*').eq('project_id', projectId).order('date', { ascending: false });
         if (!fallbackCommit.error) commitmentsData = fallbackCommit.data || [];
