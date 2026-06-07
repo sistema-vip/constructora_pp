@@ -183,7 +183,7 @@ export default function ProjectDashboard() {
 
       // Intentar query con payable_accounts; fallback si migración no aplicada
       let commitmentsData: any[] = [];
-      const richCommit = await supabase.from('project_commitments').select('*, payable_accounts(id, payable_payments(amount_usd))').eq('project_id', projectId).order('date', { ascending: false });
+      const richCommit = await supabase.from('project_commitments').select('*, payable_accounts(id, payable_payments(id, amount_usd, description, reference, date))').eq('project_id', projectId).order('date', { ascending: false });
       if (richCommit.error) {
         const fallbackCommit = await supabase.from('project_commitments').select('*').eq('project_id', projectId).order('date', { ascending: false });
         if (!fallbackCommit.error) commitmentsData = fallbackCommit.data || [];
@@ -459,11 +459,28 @@ export default function ProjectDashboard() {
       errorToReport = error;
       
       if (!error) {
-        await supabase.from('payable_accounts').update({
+        const { data: updatedPayables, error: updatePayableErr } = await supabase.from('payable_accounts').update({
           name: data.provider || 'Proveedor sin nombre',
           total_amount_usd: data.amount_usd,
           description: data.description
-        }).eq('commitment_id', editingCommitment.id);
+        }).eq('commitment_id', editingCommitment.id).select();
+
+        if (!updatePayableErr && (!updatedPayables || updatedPayables.length === 0)) {
+          let payableType = 'otro';
+          if (data.category === 'materials') payableType = 'proveedor';
+          else if (data.category === 'labor') payableType = 'obrero';
+          else if (data.category === 'equipment') payableType = 'alquiler';
+          else if (data.category === 'subcontract') payableType = 'subcontratista';
+
+          await supabase.from('payable_accounts').insert([{
+            name: data.provider || 'Proveedor sin nombre',
+            type: payableType,
+            total_amount_usd: data.amount_usd,
+            project_id: projectId,
+            commitment_id: editingCommitment.id,
+            description: data.description
+          }]);
+        }
       }
     } else {
       const { data: newCommitment, error } = await supabase.from('project_commitments').insert([{ project_id: projectId, ...data }]).select().single();
@@ -510,19 +527,38 @@ export default function ProjectDashboard() {
     if (monto <= 0) return alert('El monto debe ser mayor a 0');
 
     try {
-      // 1. Insert into payable_payments
-      if (commitmentToPay.payable_accounts?.[0]?.id) {
-        const { error: payError } = await supabase.from('payable_payments').insert([{
-          payable_account_id: commitmentToPay.payable_accounts[0].id,
-          amount_usd: monto,
-          description: commitmentPayForm.description,
-          reference: commitmentPayForm.reference,
-          date: commitmentPayForm.date
-        }]);
-        if (payError) throw new Error(`Error al registrar abono en la cuenta por pagar: ${payError.message}`);
-      } else {
-        alert('Advertencia: Este compromiso no tiene una cuenta por pagar vinculada. Solo se registrará como gasto.');
+      let payableAccountId = commitmentToPay.payable_accounts?.[0]?.id;
+
+      if (!payableAccountId) {
+        let payableType = 'otro';
+        if (commitmentToPay.category === 'materials') payableType = 'proveedor';
+        else if (commitmentToPay.category === 'labor') payableType = 'obrero';
+        else if (commitmentToPay.category === 'equipment') payableType = 'alquiler';
+        else if (commitmentToPay.category === 'subcontract') payableType = 'subcontratista';
+
+        const { data: newPayable, error: payableError } = await supabase.from('payable_accounts').insert([{
+          name: commitmentToPay.provider || 'Proveedor sin nombre',
+          type: payableType,
+          total_amount_usd: commitmentToPay.amount_usd,
+          project_id: projectId,
+          commitment_id: commitmentToPay.id,
+          description: commitmentToPay.description
+        }]).select().single();
+
+        if (payableError) throw new Error(`Error al crear la cuenta por pagar vinculada: ${payableError.message}`);
+        payableAccountId = newPayable.id;
+        commitmentToPay.payable_accounts = [{ id: payableAccountId, payable_payments: [] }];
       }
+
+      // 1. Insert into payable_payments
+      const { error: payError } = await supabase.from('payable_payments').insert([{
+        payable_account_id: payableAccountId,
+        amount_usd: monto,
+        description: commitmentPayForm.description,
+        reference: commitmentPayForm.reference,
+        date: commitmentPayForm.date
+      }]);
+      if (payError) throw new Error(`Error al registrar abono en la cuenta por pagar: ${payError.message}`);
 
       // 2. Insert into project_costs
       const { error: costError } = await supabase.from('project_costs').insert([{
@@ -543,11 +579,11 @@ export default function ProjectDashboard() {
       const remainingBalance = totalAmount - previouslyPaid - monto;
 
       // Usamos una tolerancia de 0.01 por problemas de precision en decimales
-      if (remainingBalance <= 0.01 && commitmentToPay.payable_accounts?.[0]?.id) {
+      if (remainingBalance <= 0.01) {
         // Update payable account to 'paid' status
         await supabase.from('payable_accounts')
           .update({ status: 'paid' })
-          .eq('id', commitmentToPay.payable_accounts[0].id);
+          .eq('id', payableAccountId);
         
         // Delete the commitment
         await supabase.from('project_commitments')
@@ -978,7 +1014,22 @@ export default function ProjectDashboard() {
                     return (
                     <tr key={c.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
                       <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>{c.date}</td>
-                      <td style={{ padding: '1rem' }}>{c.description}<br/><span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{c.quantity} x ${Number(c.unit_price_usd).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></td>
+                      <td style={{ padding: '1rem' }}>
+                        {c.description}<br/>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{c.quantity} x ${Number(c.unit_price_usd).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                        {c.payable_accounts?.[0]?.payable_payments && c.payable_accounts[0].payable_payments.length > 0 && (
+                          <div style={{ marginTop: '0.5rem', fontSize: '0.75rem', color: 'var(--text-muted)', borderLeft: '2px solid var(--primary-color)', paddingLeft: '0.5rem' }}>
+                            <div style={{ fontWeight: '600', marginBottom: '0.2rem' }}>Historial de Abonos:</div>
+                            {c.payable_accounts[0].payable_payments.map((p: any) => (
+                              <div key={p.id} style={{ display: 'flex', gap: '0.5rem', marginTop: '0.1rem' }}>
+                                <span>• {p.date || 'Sin fecha'}:</span>
+                                <span style={{ color: 'white' }}>${Number(p.amount_usd).toLocaleString('es-VE', { minimumFractionDigits: 2 })}</span>
+                                {p.reference && <span>(Ref: {p.reference})</span>}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </td>
                       <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>{c.provider || 'N/A'}</td>
                       <td style={{ padding: '1rem', textAlign: 'right' }}>
                         {paid > 0 ? (
