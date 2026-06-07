@@ -127,6 +127,13 @@ export default function ProjectDashboard() {
   const [advanceForm, setAdvanceForm] = useState({ partner_name: 'Henry Peraza', amount_usd: '', description: '', date: new Date().toISOString().split('T')[0] });
   const [commitmentForm, setCommitmentForm] = useState({ description: '', provider: '', category: 'materials', quantity: 1, unit_price_usd: '', date: new Date().toISOString().split('T')[0] });
 
+  // Estado para pagos a compromisos
+  const [showCommitmentPayModal, setShowCommitmentPayModal] = useState(false);
+  const [commitmentToPay, setCommitmentToPay] = useState<any>(null);
+  const [commitmentPayForm, setCommitmentPayForm] = useState({
+    amount_usd: '', description: '', reference: '', date: new Date().toISOString().split('T')[0]
+  });
+
   // Estado para cerrar/archivar proyecto
   const [showCloseConfirm, setShowCloseConfirm] = useState(false);
   const [showArchiveConfirm, setShowArchiveConfirm] = useState(false);
@@ -492,6 +499,50 @@ export default function ProjectDashboard() {
       fetchProjectData();
     } else {
       alert(`Error al guardar compromiso: ${errorToReport.message}`);
+    }
+  }
+
+  async function handleCommitmentPayment(e: React.FormEvent) {
+    e.preventDefault();
+    if (isViewer || !commitmentToPay) return;
+
+    const monto = parseFloat(commitmentPayForm.amount_usd) || 0;
+    if (monto <= 0) return alert('El monto debe ser mayor a 0');
+
+    try {
+      // 1. Insert into payable_payments
+      if (commitmentToPay.payable_accounts?.[0]?.id) {
+        const { error: payError } = await supabase.from('payable_payments').insert([{
+          payable_account_id: commitmentToPay.payable_accounts[0].id,
+          amount_usd: monto,
+          description: commitmentPayForm.description,
+          reference: commitmentPayForm.reference,
+          date: commitmentPayForm.date
+        }]);
+        if (payError) throw new Error(`Error al registrar abono en la cuenta por pagar: ${payError.message}`);
+      } else {
+        alert('Advertencia: Este compromiso no tiene una cuenta por pagar vinculada. Solo se registrará como gasto.');
+      }
+
+      // 2. Insert into project_costs
+      const { error: costError } = await supabase.from('project_costs').insert([{
+        project_id: projectId,
+        description: `Abono: ${commitmentToPay.provider || 'Proveedor'} - ${commitmentPayForm.description}`,
+        provider: commitmentToPay.provider || 'N/A',
+        category: commitmentToPay.category, // using original category
+        quantity: 1,
+        unit_price_usd: monto,
+        total_usd: monto,
+        date: commitmentPayForm.date
+      }]);
+      if (costError) throw new Error(`Error al registrar como gasto: ${costError.message}`);
+
+      setShowCommitmentPayModal(false);
+      setCommitmentToPay(null);
+      setCommitmentPayForm({ amount_usd: '', description: '', reference: '', date: new Date().toISOString().split('T')[0] });
+      fetchProjectData();
+    } catch (err: any) {
+      alert(err.message);
     }
   }
 
@@ -923,6 +974,20 @@ export default function ProjectDashboard() {
                       </td>
                       <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold', color: 'var(--primary-color)' }}>- ${Number(balance).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                       <td style={{ padding: '1rem', textAlign: 'right', display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                        {!isViewer && balance > 0 && (
+                          <button 
+                            className="btn-primary" 
+                            style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem' }} 
+                            onClick={() => {
+                              setCommitmentToPay(c);
+                              setCommitmentPayForm({ amount_usd: '', description: '', reference: '', date: new Date().toISOString().split('T')[0] });
+                              setShowCommitmentPayModal(true);
+                            }} 
+                            title="Abonar al compromiso"
+                          >
+                            Abonar
+                          </button>
+                        )}
                         {!isViewer && (<button className="btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--primary-color)', borderColor: 'rgba(59,130,246,0.2)' }} onClick={() => initiateEditItem(c, 'commitment')} title="Editar compromiso"><Edit3 size={14} /></button>)}
                         {!isViewer && (<button className="btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--danger)', borderColor: 'rgba(239,68,68,0.2)' }} onClick={() => initiateDelete(c.id, 'commitment')}><Trash2 size={14} /></button>)}
                       </td>
@@ -1085,6 +1150,69 @@ export default function ProjectDashboard() {
         )}
       </div>
     </div>
+
+        {/* Modales de Formulario */}
+        
+        {/* Modal de Abono a Compromiso */}
+        {showCommitmentPayModal && commitmentToPay && (
+          <div className="modal-backdrop">
+            <div className="modal-content animate-scale">
+              <h2 style={{ fontSize: '1.5rem', fontWeight: 800, marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <CheckCircle size={24} color="var(--success)" /> Registrar Abono a Compromiso
+              </h2>
+              
+              <div style={{ background: 'rgba(0,0,0,0.2)', padding: '1rem', borderRadius: '8px', marginBottom: '1.5rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+                  <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Proveedor:</span>
+                  <span style={{ fontWeight: 'bold' }}>{commitmentToPay.provider || 'N/A'}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+                  <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Total Compromiso:</span>
+                  <span style={{ fontWeight: 'bold' }}>${Number(commitmentToPay.amount_usd).toLocaleString('es-VE', { minimumFractionDigits: 2 })}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Saldo Pendiente:</span>
+                  <span style={{ fontWeight: 'bold', color: 'var(--danger)' }}>
+                    ${(Number(commitmentToPay.amount_usd) - (commitmentToPay.payable_accounts?.[0]?.payable_payments?.reduce((s: any, p: any) => s + Number(p.amount_usd), 0) || 0)).toLocaleString('es-VE', { minimumFractionDigits: 2 })}
+                  </span>
+                </div>
+              </div>
+
+              <form onSubmit={handleCommitmentPayment}>
+                <div style={{ display: 'grid', gap: '1rem' }}>
+                  <div className="form-group">
+                    <label>Monto a Abonar (USD)</label>
+                    <input
+                      type="text"
+                      required
+                      className="input-field"
+                      value={commitmentPayForm.amount_usd}
+                      onChange={e => setCommitmentPayForm({...commitmentPayForm, amount_usd: handleMoneyInput(e.target.value)})}
+                      onBlur={e => setCommitmentPayForm({...commitmentPayForm, amount_usd: formatOnBlur(e.target.value)})}
+                      placeholder="Ej. 1500.00"
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label>Concepto / Descripción</label>
+                    <input type="text" required className="input-field" value={commitmentPayForm.description} onChange={e => setCommitmentPayForm({...commitmentPayForm, description: e.target.value})} placeholder="Ej. Pago primera parte" />
+                  </div>
+                  <div className="form-group">
+                    <label>Referencia / Recibo (Opcional)</label>
+                    <input type="text" className="input-field" value={commitmentPayForm.reference} onChange={e => setCommitmentPayForm({...commitmentPayForm, reference: e.target.value})} placeholder="Ej. Zelle 1234, Recibo 42" />
+                  </div>
+                  <div className="form-group">
+                    <label>Fecha de Abono</label>
+                    <input type="date" required className="input-field" value={commitmentPayForm.date} onChange={e => setCommitmentPayForm({...commitmentPayForm, date: e.target.value})} />
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: '1rem', marginTop: '2rem', justifyContent: 'flex-end' }}>
+                  <button type="button" className="btn-secondary" onClick={() => setShowCommitmentPayModal(false)}>Cancelar</button>
+                  <button type="submit" className="btn-primary">Confirmar Abono</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
 
       {showPaymentModal && (
         <div className="modal-overlay">
