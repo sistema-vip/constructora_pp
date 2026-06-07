@@ -469,7 +469,7 @@ export default function ProjectDashboard() {
         else if (data.category === 'equipment') payableType = 'alquiler';
         else if (data.category === 'subcontract') payableType = 'subcontratista';
 
-        await supabase.from('payable_accounts').insert([{
+        const { error: payableError } = await supabase.from('payable_accounts').insert([{
           name: data.provider || 'Proveedor sin nombre',
           type: payableType,
           total_amount_usd: data.amount_usd,
@@ -477,6 +477,11 @@ export default function ProjectDashboard() {
           commitment_id: newCommitment.id,
           description: data.description
         }]);
+        
+        if (payableError) {
+          console.error('Error creating payable account:', payableError);
+          alert(`Compromiso creado pero falló al generar la cuenta por pagar: ${payableError.message}. \n\nAsegúrate de haber ejecutado las migraciones SQL en Supabase.`);
+        }
       }
     }
 
