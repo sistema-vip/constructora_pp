@@ -5,7 +5,16 @@ export async function POST(req: NextRequest) {
   try {
     console.log('🔒 Iniciando configuración de RLS para OBSERVADOR...\n');
 
-    const tables = ['clients', 'projects', 'profiles', 'materials', 'project_costs', 'project_payments'];
+    const tables = [
+      'clients', 
+      'projects', 
+      'profiles', 
+      'materials', 
+      'project_costs', 
+      'project_payments',
+      'payable_accounts',
+      'payable_payments'
+    ];
 
     // 1. Habilitar RLS en todas las tablas
     console.log('1️⃣ Habilitando RLS...');

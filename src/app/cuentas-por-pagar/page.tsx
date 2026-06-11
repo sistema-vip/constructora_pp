@@ -4,11 +4,13 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency, handleMoneyInput, formatOnBlur } from '@/lib/formatters';
 import { useUser } from '@/lib/UserContext';
+import { useAdminAction } from '@/lib/useAdminAction';
 import { 
   Wallet, Users, DollarSign, TrendingDown, 
   PlusCircle, Edit3, Trash2, CheckCircle, 
-  ChevronDown, ChevronRight, AlertCircle, X
+  ChevronDown, ChevronRight, AlertCircle, X, Eye, Printer, FileText
 } from 'lucide-react';
+import Image from 'next/image';
 
 interface PayablePayment {
   id: string;
@@ -41,11 +43,26 @@ export default function CuentasPorPagarPage() {
   const [accounts, setAccounts] = useState<PayableAccount[]>([]);
   const [projects, setProjects] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   
   // Modals
   const [showAccountModal, setShowAccountModal] = useState(false);
+  const [selectedAccountForDetails, setSelectedAccountForDetails] = useState<any>(null);
+
+  // Print Job
+  const [activePrintJob, setActivePrintJob] = useState<'none' | 'payable-voucher'>('none');
+  const [printPayableData, setPrintPayableData] = useState<any>(null);
+
   const [showPaymentModal, setShowPaymentModal] = useState(false);
+
+  function handlePrintPayable(account: any) {
+    setPrintPayableData(account);
+    setActivePrintJob('payable-voucher');
+    setTimeout(() => {
+      window.print();
+      setActivePrintJob('none');
+      setPrintPayableData(null);
+    }, 300);
+  }
   
   // Forms
   const [accountForm, setAccountForm] = useState<any>({
@@ -65,7 +82,8 @@ export default function CuentasPorPagarPage() {
   const [deleting, setDeleting] = useState(false);
 
   const { role } = useUser();
-  const isViewer = role === 'viewer';
+  const { isObserver, isClient } = useAdminAction();
+  const isViewer = isObserver || isClient;
 
   useEffect(() => {
     fetchData();
@@ -95,6 +113,8 @@ export default function CuentasPorPagarPage() {
       setLoading(false);
     }
   }
+
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
 
   const toggleRow = (id: string) => {
     const newSet = new Set(expandedRows);
@@ -268,7 +288,6 @@ export default function CuentasPorPagarPage() {
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ background: 'rgba(0,0,0,0.2)', borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                  <th style={{ width: '40px', padding: '1rem' }}></th>
                   <th style={{ textAlign: 'left', padding: '1rem' }}>NOMBRE</th>
                   <th style={{ textAlign: 'left', padding: '1rem' }}>TIPO</th>
                   <th style={{ textAlign: 'left', padding: '1rem' }}>PROYECTO</th>
@@ -283,17 +302,11 @@ export default function CuentasPorPagarPage() {
                 {accounts.map(account => {
                   const paid = account.payable_payments?.reduce((s, p) => s + Number(p.amount_usd), 0) || 0;
                   const balance = Number(account.total_amount_usd) - paid;
-                  const isExpanded = expandedRows.has(account.id);
-                  const progress = account.total_amount_usd > 0 ? Math.min(100, Math.round((paid / account.total_amount_usd) * 100)) : 0;
                   const isFromCommitment = Boolean(account.commitment_id);
 
                   return (
-                    <React.Fragment key={account.id}>
-                      <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.05)', background: isExpanded ? 'rgba(255,255,255,0.02)' : 'transparent' }}>
-                        <td style={{ padding: '1rem', cursor: 'pointer' }} onClick={() => toggleRow(account.id)}>
-                          {isExpanded ? <ChevronDown size={18} className="text-muted" /> : <ChevronRight size={18} className="text-muted" />}
-                        </td>
-                        <td style={{ padding: '1rem' }}>
+                    <tr key={account.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                      <td style={{ padding: '1rem' }}>
                           <div style={{ fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                             {account.name}
                             {isFromCommitment && (
@@ -319,6 +332,22 @@ export default function CuentasPorPagarPage() {
                           </span>
                         </td>
                         <td style={{ padding: '1rem', textAlign: 'right', display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                          <button 
+                            className="btn-secondary" 
+                            style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--primary-color)', borderColor: 'rgba(59,130,246,0.2)' }}
+                            onClick={() => setSelectedAccountForDetails(account)}
+                            title="Ver detalles e imprimir"
+                          >
+                            <Eye size={14} /> Detalles
+                          </button>
+                          <button 
+                            className="btn-secondary" 
+                            style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'white', borderColor: 'rgba(255,255,255,0.2)' }}
+                            onClick={() => handlePrintPayable(account)}
+                            title="Imprimir"
+                          >
+                            <Printer size={14} />
+                          </button>
                           {!isViewer && account.status === 'active' && (
                             <button 
                               className="btn-primary" 
@@ -359,75 +388,7 @@ export default function CuentasPorPagarPage() {
                             </button>
                           )}
                         </td>
-                      </tr>
-
-                      {/* Expanded Details */}
-                      {isExpanded && (
-                        <tr style={{ background: 'rgba(0,0,0,0.15)' }}>
-                          <td colSpan={9} style={{ padding: '2rem' }}>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-                              
-                              <div style={{ display: 'flex', gap: '2rem' }}>
-                                <div style={{ flex: 1 }}>
-                                  <h4 style={{ margin: '0 0 0.5rem 0', color: 'var(--text-muted)', fontSize: '0.85rem', textTransform: 'uppercase' }}>Descripción del Contrato</h4>
-                                  <p style={{ margin: 0, fontSize: '0.95rem' }}>{account.description || 'Sin descripción'}</p>
-                                </div>
-                                <div style={{ flex: 1 }}>
-                                  <h4 style={{ margin: '0 0 0.5rem 0', color: 'var(--text-muted)', fontSize: '0.85rem', textTransform: 'uppercase' }}>Progreso de Pago ({progress}%)</h4>
-                                  <div style={{ height: '8px', background: 'rgba(255,255,255,0.1)', borderRadius: '4px', overflow: 'hidden' }}>
-                                    <div style={{ width: `${progress}%`, height: '100%', background: progress === 100 ? 'var(--success)' : 'var(--primary-color)' }}></div>
-                                  </div>
-                                </div>
-                              </div>
-
-                              <div>
-                                <h4 style={{ margin: '0 0 1rem 0', color: 'white', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                  <Wallet size={16} /> Historial de Abonos
-                                </h4>
-                                {!account.payable_payments || account.payable_payments.length === 0 ? (
-                                  <div style={{ padding: '1rem', textAlign: 'center', background: 'rgba(255,255,255,0.02)', borderRadius: '8px', color: 'var(--text-muted)' }}>
-                                    No hay abonos registrados.
-                                  </div>
-                                ) : (
-                                  <table style={{ width: '100%', borderCollapse: 'collapse', background: 'rgba(255,255,255,0.02)', borderRadius: '8px', overflow: 'hidden' }}>
-                                    <thead>
-                                      <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.05)', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
-                                        <th style={{ textAlign: 'left', padding: '0.75rem 1rem' }}>FECHA</th>
-                                        <th style={{ textAlign: 'left', padding: '0.75rem 1rem' }}>CONCEPTO</th>
-                                        <th style={{ textAlign: 'left', padding: '0.75rem 1rem' }}>REFERENCIA</th>
-                                        <th style={{ textAlign: 'right', padding: '0.75rem 1rem' }}>MONTO</th>
-                                        <th style={{ textAlign: 'right', padding: '0.75rem 1rem' }}></th>
-                                      </tr>
-                                    </thead>
-                                    <tbody>
-                                      {account.payable_payments.sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map(p => (
-                                        <tr key={p.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                                          <td style={{ padding: '0.75rem 1rem', color: 'var(--text-muted)' }}>{p.date}</td>
-                                          <td style={{ padding: '0.75rem 1rem' }}>{p.description}</td>
-                                          <td style={{ padding: '0.75rem 1rem', color: 'var(--text-muted)' }}>{p.reference || '-'}</td>
-                                          <td style={{ padding: '0.75rem 1rem', textAlign: 'right', fontWeight: 'bold', color: 'var(--success)' }}>+ ${formatCurrency(p.amount_usd)}</td>
-                                          <td style={{ padding: '0.75rem 1rem', textAlign: 'right' }}>
-                                            {!isViewer && (
-                                              <button 
-                                                className="btn-secondary" 
-                                                style={{ padding: '0.2rem 0.5rem', fontSize: '0.7rem', color: 'var(--danger)', borderColor: 'transparent' }}
-                                                onClick={() => initiateDelete(p.id, 'payment')}
-                                              >
-                                                <Trash2 size={12} />
-                                              </button>
-                                            )}
-                                          </td>
-                                        </tr>
-                                      ))}
-                                    </tbody>
-                                  </table>
-                                )}
-                              </div>
-                            </div>
-                          </td>
-                        </tr>
-                      )}
-                    </React.Fragment>
+                    </tr>
                   );
                 })}
               </tbody>
@@ -435,6 +396,132 @@ export default function CuentasPorPagarPage() {
           </div>
         )}
       </div>
+
+      {/* MODAL DETALLES DE CUENTA POR PAGAR */}
+      {selectedAccountForDetails && (
+        <div className="modal-overlay hide-on-print" style={{ zIndex: 1000 }}>
+          <div className="card modal-content animate-fade" style={{ maxWidth: '700px', width: '95%', padding: '2rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.5rem', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '1rem' }}>
+              <div>
+                <h2 style={{ fontSize: '1.4rem', color: 'white', margin: '0 0 0.5rem 0', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <FileText size={24} color="var(--primary-color)" /> Detalles de la Cuenta
+                </h2>
+                <div style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+                  <strong>Nombre:</strong> {selectedAccountForDetails.name} <br/>
+                  <strong>Proyecto:</strong> {selectedAccountForDetails.project ? `${selectedAccountForDetails.project.proposal_number ? `#${selectedAccountForDetails.project.proposal_number} ` : ''}${selectedAccountForDetails.project.title}` : 'General'}
+                </div>
+              </div>
+              <button onClick={() => setSelectedAccountForDetails(null)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}><X size={24} /></button>
+            </div>
+
+            {(() => {
+              const account = selectedAccountForDetails;
+              const paid = account.payable_payments?.reduce((s: any, p: any) => s + Number(p.amount_usd), 0) || 0;
+              const total = Number(account.total_amount_usd);
+              const balance = total - paid;
+              const progress = total > 0 ? Math.min(100, Math.round((paid / total) * 100)) : 0;
+
+              return (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem' }}>
+                    <div style={{ padding: '1rem', background: 'rgba(255,255,255,0.05)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)' }}>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '0.3rem' }}>Total Contrato</div>
+                      <div style={{ fontSize: '1.2rem', fontWeight: 800, color: 'white' }}>${formatCurrency(total)}</div>
+                    </div>
+                    <div style={{ padding: '1rem', background: 'rgba(16,185,129,0.05)', borderRadius: '8px', border: '1px solid rgba(16,185,129,0.2)' }}>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--success)', textTransform: 'uppercase', marginBottom: '0.3rem' }}>Total Abonado</div>
+                      <div style={{ fontSize: '1.2rem', fontWeight: 800, color: 'var(--success)' }}>${formatCurrency(paid)}</div>
+                    </div>
+                    <div style={{ padding: '1rem', background: balance > 0 ? 'rgba(239,68,68,0.05)' : 'rgba(255,255,255,0.05)', borderRadius: '8px', border: `1px solid ${balance > 0 ? 'rgba(239,68,68,0.2)' : 'rgba(255,255,255,0.1)'}` }}>
+                      <div style={{ fontSize: '0.75rem', color: balance > 0 ? 'var(--danger)' : 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '0.3rem' }}>Saldo Pendiente</div>
+                      <div style={{ fontSize: '1.2rem', fontWeight: 800, color: balance > 0 ? 'var(--danger)' : 'white' }}>${formatCurrency(balance)}</div>
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '2rem' }}>
+                    <div style={{ flex: 1 }}>
+                      <h4 style={{ margin: '0 0 0.5rem 0', color: 'var(--text-muted)', fontSize: '0.85rem', textTransform: 'uppercase' }}>Descripción del Contrato</h4>
+                      <p style={{ margin: 0, fontSize: '0.95rem' }}>{account.description || 'Sin descripción'}</p>
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <h4 style={{ margin: '0 0 0.5rem 0', color: 'var(--text-muted)', fontSize: '0.85rem', textTransform: 'uppercase' }}>Progreso de Pago ({progress}%)</h4>
+                      <div style={{ height: '8px', background: 'rgba(255,255,255,0.1)', borderRadius: '4px', overflow: 'hidden' }}>
+                        <div style={{ width: `${progress}%`, height: '100%', background: progress === 100 ? 'var(--success)' : 'var(--primary-color)' }}></div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <h4 style={{ margin: '0 0 1rem 0', color: 'white', display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1rem' }}>
+                      <Wallet size={18} /> Historial de Abonos
+                    </h4>
+                    {!account.payable_payments || account.payable_payments.length === 0 ? (
+                      <div style={{ padding: '1.5rem', textAlign: 'center', background: 'rgba(0,0,0,0.2)', borderRadius: '8px', color: 'var(--text-muted)' }}>
+                        No hay abonos registrados para esta cuenta.
+                      </div>
+                    ) : (
+                      <div style={{ overflowX: 'auto', background: 'rgba(0,0,0,0.2)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.05)' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                          <thead>
+                            <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)' }}>
+                              <th style={{ textAlign: 'left', padding: '0.75rem 1rem' }}>FECHA</th>
+                              <th style={{ textAlign: 'left', padding: '0.75rem 1rem' }}>CONCEPTO</th>
+                              <th style={{ textAlign: 'left', padding: '0.75rem 1rem' }}>REFERENCIA</th>
+                              <th style={{ textAlign: 'right', padding: '0.75rem 1rem' }}>MONTO</th>
+                              {!isViewer && <th style={{ textAlign: 'right', padding: '0.75rem 1rem' }}></th>}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {account.payable_payments.sort((a:any, b:any) => new Date(b.date).getTime() - new Date(a.date).getTime()).map((p: any) => (
+                              <tr key={p.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                                <td style={{ padding: '0.75rem 1rem', color: 'var(--text-muted)' }}>{p.date}</td>
+                                <td style={{ padding: '0.75rem 1rem' }}>{p.description}</td>
+                                <td style={{ padding: '0.75rem 1rem', color: 'var(--text-muted)' }}>{p.reference || '-'}</td>
+                                <td style={{ padding: '0.75rem 1rem', textAlign: 'right', fontWeight: 'bold', color: 'var(--success)' }}>+ ${formatCurrency(p.amount_usd)}</td>
+                                {!isViewer && (
+                                  <td style={{ padding: '0.75rem 1rem', textAlign: 'right' }}>
+                                    <button 
+                                      className="btn-secondary" 
+                                      style={{ padding: '0.2rem 0.5rem', fontSize: '0.7rem', color: 'var(--danger)', borderColor: 'transparent' }}
+                                      onClick={() => { setSelectedAccountForDetails(null); initiateDelete(p.id, 'payment'); }}
+                                    >
+                                      <Trash2 size={12} />
+                                    </button>
+                                  </td>
+                                )}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
+                    <button className="btn-secondary" style={{ flex: 1, justifyContent: 'center' }} onClick={() => setSelectedAccountForDetails(null)}>Cerrar</button>
+                    <button className="btn-secondary" style={{ flex: 1, justifyContent: 'center', borderColor: 'rgba(255,255,255,0.2)' }} onClick={() => handlePrintPayable(account)}>
+                      <Printer size={16} /> Imprimir Vale
+                    </button>
+                    {!isViewer && account.status === 'active' && (
+                      <button 
+                        className="btn-primary" 
+                        style={{ flex: 1, justifyContent: 'center' }} 
+                        onClick={() => {
+                          setSelectedAccountForDetails(null);
+                          setPaymentForm({ payable_account_id: account.id, amount_usd: '', description: '', reference: '', date: new Date().toISOString().split('T')[0] });
+                          setShowPaymentModal(true);
+                        }}
+                      >
+                        <DollarSign size={16} /> Abonar
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+      )}
 
       {/* Modals */}
       {showAccountModal && (
@@ -563,6 +650,123 @@ export default function CuentasPorPagarPage() {
           </div>
         </div>
       )}
+      {/* VALE DE CUENTA POR PAGAR DE IMPRESIÓN */}
+      {activePrintJob === 'payable-voucher' && printPayableData && (() => {
+        const account = printPayableData;
+        const paid = account.payable_payments?.reduce((s: any, p: any) => s + Number(p.amount_usd), 0) || 0;
+        const total = Number(account.total_amount_usd);
+        const balance = total - paid;
+
+        return (
+          <div className="show-only-on-print" style={{ display: 'none', color: 'black', background: 'white', padding: '2rem', width: '100%', maxWidth: '800px', margin: '0 auto', fontFamily: 'Arial, sans-serif' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #000', paddingBottom: '1rem', marginBottom: '2rem' }}>
+              <div>
+                <Image src="/logo_3d.png" alt="Logo" width={150} height={60} style={{ objectFit: 'contain' }} />
+                <div style={{ fontSize: '11px', color: '#555', marginTop: '0.5rem' }}>P&P Construye</div>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <h2 style={{ margin: 0, fontSize: '18px', color: '#000', textTransform: 'uppercase' }}>COMPROBANTE DE CUENTA POR PAGAR</h2>
+                <p style={{ margin: '0.2rem 0 0 0', fontSize: '12px', color: '#555' }}>Fecha Emisión: {new Date().toLocaleDateString('es-VE')}</p>
+                <p style={{ margin: '0', fontSize: '12px', color: '#555' }}>ID: {account.id.split('-')[0].toUpperCase()}</p>
+              </div>
+            </div>
+
+            <div style={{ marginBottom: '2rem', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', fontSize: '13px' }}>
+              <div style={{ padding: '1rem', border: '1px solid #ccc', borderRadius: '4px', background: '#f8f9fa' }}>
+                <div style={{ marginBottom: '0.5rem' }}><strong>Proyecto:</strong> {account.project ? account.project.title : 'General'}</div>
+                <div style={{ marginBottom: '0.5rem' }}><strong>Nombre:</strong> {account.name}</div>
+                <div><strong>Tipo:</strong> <span style={{ textTransform: 'capitalize' }}>{account.type}</span></div>
+              </div>
+              <div style={{ padding: '1rem', border: '1px solid #ccc', borderRadius: '4px', background: '#f8f9fa' }}>
+                <div style={{ marginBottom: '0.5rem' }}><strong>Contacto:</strong> {account.contact_info || 'N/A'}</div>
+                <div style={{ marginBottom: '0.5rem' }}><strong>Descripción:</strong> {account.description || 'N/A'}</div>
+                <div><strong>Estado:</strong> {account.status === 'active' ? 'Activa' : account.status === 'paid' ? 'Saldada' : 'Cancelada'}</div>
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem', marginBottom: '2rem', textAlign: 'center' }}>
+              <div style={{ padding: '1rem', border: '1px solid #ccc', borderRadius: '4px' }}>
+                <div style={{ fontSize: '10px', textTransform: 'uppercase', color: '#555' }}>Total Contrato</div>
+                <div style={{ fontSize: '18px', fontWeight: 'bold' }}>${formatCurrency(total)}</div>
+              </div>
+              <div style={{ padding: '1rem', border: '1px solid #ccc', borderRadius: '4px' }}>
+                <div style={{ fontSize: '10px', textTransform: 'uppercase', color: '#555' }}>Total Abonado</div>
+                <div style={{ fontSize: '18px', fontWeight: 'bold', color: 'green' }}>${formatCurrency(paid)}</div>
+              </div>
+              <div style={{ padding: '1rem', border: '2px solid #000', borderRadius: '4px', background: '#eee' }}>
+                <div style={{ fontSize: '10px', textTransform: 'uppercase', color: '#000' }}>Saldo Pendiente</div>
+                <div style={{ fontSize: '18px', fontWeight: 'bold', color: balance > 0 ? '#d32f2f' : '#000' }}>${formatCurrency(balance)}</div>
+              </div>
+            </div>
+
+            <h3 style={{ fontSize: '14px', borderBottom: '1px solid #ccc', paddingBottom: '0.5rem', marginBottom: '1rem' }}>HISTORIAL DE ABONOS</h3>
+            {(!account.payable_payments || account.payable_payments.length === 0) ? (
+              <p style={{ fontSize: '12px', color: '#555', textAlign: 'center', padding: '1rem', border: '1px dashed #ccc' }}>No hay abonos registrados.</p>
+            ) : (
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', marginBottom: '2rem' }}>
+                <thead>
+                  <tr style={{ background: '#eee' }}>
+                    <th style={{ textAlign: 'left', padding: '0.5rem', border: '1px solid #ccc' }}>FECHA</th>
+                    <th style={{ textAlign: 'left', padding: '0.5rem', border: '1px solid #ccc' }}>CONCEPTO</th>
+                    <th style={{ textAlign: 'left', padding: '0.5rem', border: '1px solid #ccc' }}>REFERENCIA</th>
+                    <th style={{ textAlign: 'right', padding: '0.5rem', border: '1px solid #ccc' }}>MONTO (USD)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {account.payable_payments.sort((a:any, b:any) => new Date(a.date).getTime() - new Date(b.date).getTime()).map((p: any) => (
+                    <tr key={p.id}>
+                      <td style={{ padding: '0.5rem', border: '1px solid #ccc' }}>{p.date}</td>
+                      <td style={{ padding: '0.5rem', border: '1px solid #ccc' }}>{p.description}</td>
+                      <td style={{ padding: '0.5rem', border: '1px solid #ccc' }}>{p.reference || '-'}</td>
+                      <td style={{ padding: '0.5rem', border: '1px solid #ccc', textAlign: 'right' }}>${formatCurrency(p.amount_usd)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4rem', marginTop: '5rem' }}>
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ borderBottom: '1px solid #000', marginBottom: '0.5rem' }}></div>
+                <div style={{ fontSize: '12px', fontWeight: 'bold' }}>Preparado Por</div>
+                <div style={{ fontSize: '10px', color: '#555' }}>Firma Autorizada</div>
+              </div>
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ borderBottom: '1px solid #000', marginBottom: '0.5rem' }}></div>
+                <div style={{ fontSize: '12px', fontWeight: 'bold' }}>Recibido Conforme</div>
+                <div style={{ fontSize: '10px', color: '#555' }}>Beneficiario / Proveedor</div>
+              </div>
+            </div>
+
+            <div style={{ marginTop: '3rem', textAlign: 'center', fontSize: '10px', color: '#777' }}>
+              <p>Documento generado por el Sistema Administrativo de P&P Construye</p>
+            </div>
+          </div>
+        );
+      })()}
+
+      <style dangerouslySetInnerHTML={{ __html: `
+        .show-only-on-print { display: none; }
+        @media print {
+          body { 
+            background: white !important; 
+            color: black !important; 
+            margin: 0 !important;
+            padding: 0 !important;
+            font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif !important;
+          }
+          .hide-on-print, nav, header, aside, .sidebar, .top-bar { display: none !important; }
+          .show-only-on-print { 
+            display: block !important; 
+            width: 100% !important;
+            position: absolute;
+            top: 0;
+            left: 0;
+          }
+          .card { border: none !important; box-shadow: none !important; background: transparent !important; }
+          @page { margin: 1cm; size: auto; }
+        }
+      `}} />
     </div>
   );
 }

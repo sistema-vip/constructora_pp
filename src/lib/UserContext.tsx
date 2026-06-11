@@ -1,19 +1,20 @@
 'use client';
 
-import { createContext, useContext, useState, useEffect, useRef } from 'react';
+import { createContext, useContext, useState, useEffect, useRef, ReactNode } from 'react';
 import { supabase } from '@/lib/supabase';
+import { User } from '@supabase/supabase-js';
 
 interface UserContextType {
-  user: any | null;
-  role: 'admin' | 'viewer' | null;
+  user: User | null;
+  role: 'admin' | 'viewer' | 'sales' | 'client' | null;
   loading: boolean;
 }
 
 const UserContext = createContext<UserContextType>({ user: null, role: null, loading: true });
 
-export function UserProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<any | null>(null);
-  const [role, setRole] = useState<'admin' | 'viewer' | null>(null);
+export function UserProvider({ children }: { children: ReactNode }) {
+  const [user, setUser] = useState<User | null>(null);
+  const [role, setRole] = useState<'admin' | 'viewer' | 'sales' | 'client' | null>(null);
   const [loading, setLoading] = useState(true);
   const mounted = useRef(true);
 
@@ -74,7 +75,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
         return;
       }
       if (data?.role && mounted.current) {
-        setRole(data.role as 'admin' | 'viewer');
+        setRole(data.role as 'admin' | 'viewer' | 'sales' | 'client');
       }
     } catch (err: any) {
       console.error('❌ fetchRole failed:', err.message);

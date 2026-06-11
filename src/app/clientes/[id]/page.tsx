@@ -40,6 +40,7 @@ import { supabase } from '@/lib/supabase';
 import { formatCurrency, handleMoneyInput, parseCurrency, formatOnBlur } from '@/lib/formatters';
 import NewProposalModal from '@/components/NewProposalModal';
 import { useUser } from '@/lib/UserContext';
+import { useAdminAction } from '@/lib/useAdminAction';
 
 interface Client {
   id: string;
@@ -86,6 +87,7 @@ export default function ClienteDashboard() {
 
   // Estados para Eliminación Protegida
   const [showAdminAuth, setShowAdminAuth] = useState(false);
+  const [authAction, setAuthAction] = useState<'delete' | 'edit_project'>('delete');
   const [adminPassword, setAdminPassword] = useState('');
   const [authError, setAuthError] = useState('');
   const [itemToDelete, setItemToDelete] = useState<{ id: string, type: 'project' | 'payment' | 'cost' | 'extra' | 'commitment' | 'advance' | 'payable_payment' } | null>(null);
@@ -97,7 +99,8 @@ export default function ClienteDashboard() {
   const [aiRefinement, setAiRefinement] = useState('');
   const [refining, setRefining] = useState(false);
   const { role } = useUser();
-  const isViewer = role === 'viewer';
+  const { isObserver, isClient, isAdmin, isSales } = useAdminAction();
+  const isViewer = isObserver || isClient; // Both act as viewers for financial transactions
   
   // Tabs State
   const [activeTab, setActiveTab] = useState<'proyectos' | 'pagos' | 'gastos' | 'adicionales' | 'compromisos' | 'cuentas_pagar' | 'retiros' | 'propuestas' | 'historial'>('proyectos');
@@ -249,17 +252,24 @@ export default function ClienteDashboard() {
   // Lógica de Eliminación Protegida
   const initiateDelete = (id: string, type: 'project' | 'payment' | 'cost' | 'extra' | 'commitment' | 'advance' | 'payable_payment') => {
     setItemToDelete({ id, type });
+    setAuthAction('delete');
     setShowAdminAuth(true);
     setAdminPassword('');
     setAuthError('');
   };
 
-  const handleConfirmDelete = async () => {
+  const handleConfirmAuth = async () => {
     // CLAVE MAESTRA (En un entorno real esto iría en el backend o en variables de entorno seguras)
     const MASTER_KEY = '080911'; 
 
     if (adminPassword !== MASTER_KEY) {
       setAuthError('Contraseña incorrecta. Solo administradores autorizados.');
+      return;
+    }
+
+    if (authAction === 'edit_project') {
+      setShowAdminAuth(false);
+      setShowEditProjectModal(true);
       return;
     }
 
@@ -426,7 +436,10 @@ export default function ClienteDashboard() {
       description: project.description || ''
     });
     setAiRefinement('');
-    setShowEditProjectModal(true);
+    setAuthAction('edit_project');
+    setShowAdminAuth(true);
+    setAdminPassword('');
+    setAuthError('');
   };
 
   const handleSaveEdit = async () => {
@@ -763,32 +776,36 @@ export default function ClienteDashboard() {
         </div>
 
       {/* ACTION BAR */}
-      {!isViewer && (
+      {!isObserver && (
         <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'nowrap', overflowX: 'auto', justifyContent: 'flex-start', alignItems: 'center', background: 'rgba(255,255,255,0.02)', padding: '0.75rem', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.05)' }}>
+          {/* Cliente, Sales y Admin pueden crear propuestas */}
           <button className="btn-primary" onClick={() => setShowProposalModal(true)} style={{ height: '38px', padding: '0 1.1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', boxShadow: '0 4px 12px rgba(245,158,11,0.2)' }}>
             <PlusCircle size={16} /> Nueva Propuesta
           </button>
-          {!isViewer && (
-            <button className="btn-primary" onClick={() => setShowMergeModal(true)} style={{ height: '38px', padding: '0 1.1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', background: '#8b5cf6', borderColor: '#8b5cf6' }}>
-              <PlusCircle size={16} /> Unificar Proyectos
-            </button>
+          
+          {/* Solo Admin o Sales pueden ver el resto de botones transaccionales */}
+          {!isClient && (
+            <>
+              <button className="btn-primary" onClick={() => setShowMergeModal(true)} style={{ height: '38px', padding: '0 1.1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', background: '#8b5cf6', borderColor: '#8b5cf6' }}>
+                <PlusCircle size={16} /> Unificar Proyectos
+              </button>
+              <button className="btn-primary" onClick={() => setShowPaymentModal(true)} style={{ height: '38px', padding: '0 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', background: 'var(--success)', borderColor: 'var(--success)', boxShadow: '0 4px 12px rgba(16,185,129,0.15)' }}>
+                <BriefcaseIcon size={15} /> Registrar Pago
+              </button>
+              <button className="btn-secondary" onClick={() => setShowAdvanceModal(true)} style={{ height: '38px', padding: '0 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', borderColor: '#8b5cf6', color: '#8b5cf6' }}>
+                <Users size={15} /> Retiro de Socio
+              </button>
+              <button className="btn-secondary" onClick={() => setShowCommitmentModal(true)} style={{ height: '38px', padding: '0 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', borderColor: 'var(--primary-color)', color: 'var(--primary-color)' }}>
+                <ClipboardList size={15} /> Registrar Compromiso
+              </button>
+              <button className="btn-secondary" onClick={() => setShowExtraModal(true)} style={{ height: '38px', padding: '0 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                <Plus size={15} /> Servicio Adicional
+              </button>
+              <button className="btn-secondary" onClick={() => setShowCostModal(true)} style={{ height: '38px', padding: '0 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', borderColor: 'var(--danger)', color: 'var(--danger)' }}>
+                <DollarIcon size={15} /> Registrar Gasto
+              </button>
+            </>
           )}
-
-          <button className="btn-primary" onClick={() => setShowPaymentModal(true)} style={{ height: '38px', padding: '0 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', background: 'var(--success)', borderColor: 'var(--success)', boxShadow: '0 4px 12px rgba(16,185,129,0.15)' }}>
-            <BriefcaseIcon size={15} /> Registrar Pago
-          </button>
-          <button className="btn-secondary" onClick={() => setShowAdvanceModal(true)} style={{ height: '38px', padding: '0 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', borderColor: '#8b5cf6', color: '#8b5cf6' }}>
-            <Users size={15} /> Retiro de Socio
-          </button>
-          <button className="btn-secondary" onClick={() => setShowCommitmentModal(true)} style={{ height: '38px', padding: '0 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', borderColor: 'var(--primary-color)', color: 'var(--primary-color)' }}>
-            <ClipboardList size={15} /> Registrar Compromiso
-          </button>
-          <button className="btn-secondary" onClick={() => setShowExtraModal(true)} style={{ height: '38px', padding: '0 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-            <Plus size={15} /> Servicio Adicional
-          </button>
-          <button className="btn-secondary" onClick={() => setShowCostModal(true)} style={{ height: '38px', padding: '0 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', borderColor: 'var(--danger)', color: 'var(--danger)' }}>
-            <DollarIcon size={15} /> Registrar Gasto
-          </button>
         </div>
       )}
 
@@ -2323,48 +2340,50 @@ export default function ClienteDashboard() {
         }
       `}} />
 
-      {/* Modal de Autenticación de Administrador para Eliminación */}
+      {/* Modal de Autenticación de Administrador para Eliminación o Edición */}
       {showAdminAuth && (
         <div className="modal-overlay">
-          <div className="card modal-content animate-fade" style={{ maxWidth: '400px', width: '90%', textAlign: 'center' }}>
-            <div style={{ color: 'var(--danger)', marginBottom: '1rem' }}>
-              <Trash2 size={48} style={{ margin: '0 auto' }} />
+          <div className="card modal-content animate-fade" style={{ maxWidth: '400px', width: '90%' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.5rem', color: authAction === 'delete' ? 'var(--danger)' : 'var(--primary-color)' }}>
+              {authAction === 'delete' ? <Trash2 size={28} /> : <AlertCircle size={28} />}
+              <h2 style={{ margin: 0, fontSize: '1.25rem', color: 'white' }}>
+                {authAction === 'delete' ? 'Confirmar Eliminación' : 'Autorizar Edición'}
+              </h2>
             </div>
-            <h2 style={{ marginBottom: '0.5rem', color: 'white' }}>Confirmar Eliminación</h2>
-            <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginBottom: '1.5rem' }}>
-              Esta acción es irreversible y requiere privilegios de administrador.
-            </p>
             
-            <div style={{ textAlign: 'left', marginBottom: '1.5rem' }}>
-              <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.85rem' }}>Contraseña Maestra</label>
-              <input 
-                type="password" 
-                className="input-field" 
-                style={{ width: '100%', textAlign: 'center', letterSpacing: '0.3em' }}
-                placeholder="••••••••"
-                value={adminPassword}
-                onChange={e => setAdminPassword(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && handleConfirmDelete()}
-                autoFocus
-              />
-              {authError && <div style={{ color: 'var(--danger)', fontSize: '0.8rem', marginTop: '0.5rem', textAlign: 'center' }}>{authError}</div>}
-            </div>
+            <p style={{ color: 'var(--text-muted)', marginBottom: '1.5rem', fontSize: '0.9rem' }}>
+              {authAction === 'delete' 
+                ? 'Esta acción es irreversible y requiere privilegios de administrador. Ingresa la contraseña maestra para continuar.'
+                : 'La modificación de una propuesta requiere privilegios de administrador. Ingresa la contraseña maestra.'}
+            </p>
 
-            <div style={{ display: 'flex', gap: '1rem' }}>
+            <input
+              type="password"
+              className="input-field"
+              placeholder="••••••••"
+              value={adminPassword}
+              onChange={e => setAdminPassword(e.target.value)}
+              style={{ marginBottom: '1rem', width: '100%', letterSpacing: '0.3em', textAlign: 'center' }}
+              onKeyDown={e => e.key === 'Enter' && handleConfirmAuth()}
+              autoFocus
+            />
+
+            {authError && <p style={{ color: 'var(--danger)', fontSize: '0.85rem', marginBottom: '1rem', textAlign: 'center' }}>{authError}</p>}
+
+            <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end' }}>
               <button 
                 className="btn-secondary" 
-                style={{ flex: 1 }} 
                 onClick={() => { setShowAdminAuth(false); setItemToDelete(null); }}
               >
                 Cancelar
               </button>
               <button 
                 className="btn-primary" 
-                style={{ flex: 1, background: 'var(--danger)', borderColor: 'var(--danger)', justifyContent: 'center' }} 
-                onClick={handleConfirmDelete}
+                onClick={handleConfirmAuth}
                 disabled={deleting}
+                style={{ background: authAction === 'delete' ? 'var(--danger)' : 'var(--primary-color)', borderColor: authAction === 'delete' ? 'var(--danger)' : 'var(--primary-color)' }}
               >
-                {deleting ? 'Eliminando...' : 'Eliminar'}
+                {deleting ? 'Procesando...' : authAction === 'delete' ? 'Eliminar' : 'Autorizar'}
               </button>
             </div>
           </div>

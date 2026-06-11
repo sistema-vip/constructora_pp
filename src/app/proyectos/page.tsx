@@ -39,8 +39,144 @@ interface Project {
 }
 
 export default function ProyectosPage() {
+  // Helper to parse simple **bold** markdown syntax
+  const parseBoldText = (text: string | null | undefined) => {
+    if (!text) return '';
+    const parts = text.split('**');
+    return parts.map((part, i) => {
+      if (i % 2 === 1) {
+        return <strong key={i} style={{ fontWeight: 'bold' }}>{part}</strong>;
+      }
+      return part;
+    });
+  };
+
+  const renderStructuredProposal = (text: string | null | undefined) => {
+    if (!text) return null;
+
+    const lines = text.split('\n');
+    const renderedElements: React.ReactNode[] = [];
+
+    const headers = [
+      'objetivo del proyecto',
+      'fases del trabajo (alcance técnico)',
+      'fases del trabajo',
+      'fases de trabajo',
+      'alcance técnico',
+      'tiempo de ejecución y entrega',
+      'presupuesto de inversión (a todo costo)',
+      'presupuesto de inversión (solo mano de obra)',
+      'presupuesto de inversión',
+      'condiciones y métodos de pago',
+      'resumen financiero y ejecución'
+    ];
+
+    const labels = [
+      'proyecto',
+      'fecha',
+      'para',
+      'área de ejecución',
+      'área',
+      'inversión total',
+      'inversión total (usd)',
+      'esquema de pago',
+      'moneda de pago',
+      'formas de pago',
+      'métodos de pago',
+      'tiempo estimado'
+    ];
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (!line) {
+        // Empty line, add a spacing div (compacted)
+        renderedElements.push(<div key={`empty-${i}`} style={{ height: '0.4rem' }} />);
+        continue;
+      }
+
+      const lowerLine = line.toLowerCase();
+
+      // Check if it's a section header
+      if (headers.includes(lowerLine)) {
+        renderedElements.push(
+          <h3 key={`header-${i}`} style={{ 
+            margin: '0.75rem 0 0.3rem 0', 
+            fontSize: '11.5pt', 
+            color: '#000', 
+            borderBottom: '1px solid #ccc', 
+            paddingBottom: '0.15rem', 
+            fontWeight: 'bold',
+            textTransform: 'none'
+          }}>
+            {line}
+          </h3>
+        );
+        continue;
+      }
+
+      // Check if it starts with a label and a colon
+      const colonIdx = line.indexOf(':');
+      if (colonIdx > 0 && colonIdx < 30) {
+        const possibleLabel = line.substring(0, colonIdx).trim();
+        const value = line.substring(colonIdx + 1).trim();
+        const lowerLabel = possibleLabel.toLowerCase();
+
+        if (labels.includes(lowerLabel) || lowerLabel.includes('inversión total') || lowerLabel.includes('proyecto') || lowerLabel.includes('para') || lowerLabel.includes('fecha')) {
+          // Render as styled key-value
+          renderedElements.push(
+            <div key={`kv-${i}`} style={{ marginBottom: '0.2rem', fontSize: '11pt', color: '#333' }}>
+              <strong style={{ color: '#000', fontWeight: 'bold' }}>{possibleLabel}:</strong> {parseBoldText(value)}
+            </div>
+          );
+          continue;
+        }
+      }
+
+      // Check if it's a numbered or bullet list item
+      const isListItem = /^[-\*•\d]+[\s\.-]/.test(line);
+      if (isListItem) {
+        // Extract number/bullet and content
+        const match = line.match(/^([-\*•\d]+[\s\.-]*)(.*)/);
+        const bullet = match ? match[1] : '';
+        const content = match ? match[2] : line;
+
+        renderedElements.push(
+          <div key={`li-${i}`} style={{ 
+            paddingLeft: '1.5rem', 
+            textIndent: '-1.5rem', 
+            margin: '0.2rem 0', 
+            textAlign: 'justify', 
+            lineHeight: '1.45', 
+            fontSize: '11pt',
+            color: '#333'
+          }}>
+            <strong style={{ color: '#000' }}>{bullet}</strong> {parseBoldText(content)}
+          </div>
+        );
+        continue;
+      }
+
+      // Regular paragraph
+      renderedElements.push(
+        <p key={`p-${i}`} style={{ 
+          margin: '0.2rem 0', 
+          textAlign: 'justify', 
+          lineHeight: '1.45', 
+          fontSize: '11pt',
+          color: '#333',
+          whiteSpace: 'pre-wrap'
+        }}>
+          {parseBoldText(line)}
+        </p>
+      );
+    }
+
+    return <div style={{ display: 'flex', flexDirection: 'column' }}>{renderedElements}</div>;
+  };
+
   const router = useRouter();
-  const { canEdit, canDelete, isObserver } = useAdminAction();
+  const { isAdmin, isSales, isObserver, isClient } = useAdminAction();
+  const isCreatorRole = isAdmin || isSales || isClient;
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -65,6 +201,35 @@ export default function ProyectosPage() {
   const [reopenTarget, setReopenTarget] = useState<Project | null>(null);
   const [reopenPassword, setReopenPassword] = useState('');
   const [reopenError, setReopenError] = useState('');
+
+  // Auth Modal state for non-admins
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [authPassword, setAuthPassword] = useState('');
+  const [authError, setAuthError] = useState('');
+  const [pendingAction, setPendingAction] = useState<(() => void) | null>(null);
+
+  function executeWithAuth(action: () => void) {
+    if (isAdmin) {
+      action();
+    } else {
+      setPendingAction(() => action);
+      setAuthPassword('');
+      setAuthError('');
+      setShowAuthModal(true);
+    }
+  }
+
+  function handleAuthSubmit() {
+    if (authPassword !== '080911') {
+      setAuthError('Contraseña incorrecta. Se requiere acceso de administrador.');
+      return;
+    }
+    setShowAuthModal(false);
+    if (pendingAction) {
+      pendingAction();
+      setPendingAction(null);
+    }
+  }
 
   useEffect(() => {
     fetchProjects();
@@ -141,12 +306,8 @@ export default function ProyectosPage() {
   }
 
   async function handleStatusUpdate(id: string, newStatus: string) {
-    if (!canEdit) {
-      alert('❌ Solo administradores pueden cambiar el estado de las propuestas');
-      return;
-    }
-
-    const statusText = newStatus === 'in_progress' ? 'aprobar' : 'rechazar';
+    executeWithAuth(async () => {
+      const statusText = newStatus === 'in_progress' ? 'aprobar' : 'rechazar';
     if (!confirm(`¿Estás seguro de que deseas ${statusText} esta propuesta?`)) return;
 
     const { error } = await supabase
@@ -162,15 +323,12 @@ export default function ProyectosPage() {
         setSelectedProject({ ...selectedProject, status: newStatus });
       }
     }
+    });
   }
 
   async function handleDelete(id: string) {
-    if (!canDelete) {
-      alert('❌ Solo administradores pueden eliminar propuestas');
-      return;
-    }
-
-    if (!confirm('¿ESTÁS SEGURO? Esta acción eliminará la propuesta de forma PERMANENTE y no se puede deshacer.')) return;
+    executeWithAuth(async () => {
+      if (!confirm('¿ESTÁS SEGURO? Esta acción eliminará la propuesta de forma PERMANENTE y no se puede deshacer.')) return;
 
     const { error } = await supabase
       .from('projects')
@@ -185,6 +343,7 @@ export default function ProyectosPage() {
         setSelectedProject(null);
       }
     }
+    });
   }
 
   const handlePrint = () => {
@@ -198,7 +357,8 @@ export default function ProyectosPage() {
   }
 
   async function handleMerge() {
-    if (!targetMergeId || selectedForMerge.length < 2) return;
+    executeWithAuth(async () => {
+      if (!targetMergeId || selectedForMerge.length < 2) return;
     setMerging(true);
     try {
       const sourcesIds = selectedForMerge.filter(id => id !== targetMergeId);
@@ -225,9 +385,10 @@ export default function ProyectosPage() {
       fetchProjects();
     } catch (err: any) {
       alert('Error al unificar: ' + err.message);
-    } finally {
-      setMerging(false);
-    }
+      } finally {
+        setMerging(false);
+      }
+    });
   }
 
   async function handleReopen() {
@@ -308,7 +469,7 @@ export default function ProyectosPage() {
         </div>
 
         {/* Barra de acción de unificación */}
-        {selectedForMerge.length >= 2 && view !== 'archived' && (
+        {!isObserver && selectedForMerge.length >= 2 && view !== 'archived' && (
           <div style={{ background: 'rgba(184,115,51,0.12)', border: '1px solid rgba(184,115,51,0.4)', borderRadius: '10px', padding: '0.75rem 1.25rem', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '1rem' }}>
             <GitMerge size={18} style={{ color: '#b87333' }} />
             <span style={{ color: 'var(--text-secondary)', flex: 1 }}>
@@ -418,19 +579,21 @@ export default function ProyectosPage() {
                           >
                             <Printer size={14} />
                           </button>
-                          <button
-                            className="btn-secondary"
-                            style={{ padding: '0.5rem', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#38bdf8' }}
-                            title="Reabrir proyecto (requiere clave admin)"
-                            onClick={() => {
-                              setReopenTarget(project);
-                              setReopenPassword('');
-                              setReopenError('');
-                              setShowReopenModal(true);
-                            }}
-                          >
-                            <RotateCcw size={14} /> Reabrir
-                          </button>
+                          {!isObserver && (
+                            <button
+                              className="btn-secondary"
+                              style={{ padding: '0.5rem', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#38bdf8' }}
+                              title="Reabrir proyecto (requiere clave admin)"
+                              onClick={() => {
+                                setReopenTarget(project);
+                                setReopenPassword('');
+                                setReopenError('');
+                                setShowReopenModal(true);
+                              }}
+                            >
+                              <RotateCcw size={14} /> Reabrir
+                            </button>
+                          )}
                         </>
                       ) : (
                         <>
@@ -467,19 +630,21 @@ export default function ProyectosPage() {
                               >
                                 <FileText size={14} /> Ver
                               </button>
-                              <button
-                                className="btn-secondary"
-                                style={{ padding: '0.5rem', fontSize: '0.8rem', color: 'var(--primary-color)' }}
-                                title="Editar Presupuesto y Texto"
-                                onClick={() => {
-                                  setSelectedProject(project);
-                                  setEditContent(project.description);
-                                  setEditBudget(formatCurrency(project.budget_usd));
-                                  setIsEditing(true);
-                                }}
-                              >
-                                <Edit3 size={14} /> Editar
-                              </button>
+                              {!isObserver && (
+                                <button
+                                  className="btn-secondary"
+                                  style={{ padding: '0.5rem', fontSize: '0.8rem', color: 'var(--primary-color)' }}
+                                  title="Editar Presupuesto y Texto"
+                                  onClick={() => executeWithAuth(() => {
+                                    setSelectedProject(project);
+                                    setEditContent(project.description);
+                                    setEditBudget(formatCurrency(project.budget_usd));
+                                    setIsEditing(true);
+                                  })}
+                                >
+                                  <Edit3 size={14} /> Editar
+                                </button>
+                              )}
                               <button
                                 className="btn-secondary"
                                 style={{ padding: '0.5rem', fontSize: '0.8rem' }}
@@ -509,7 +674,7 @@ export default function ProyectosPage() {
                             </div>
                           )}
 
-                          {project.status === 'proposal' && (
+                          {!isObserver && project.status === 'proposal' && (
                             <>
                               <button
                                 className="btn-primary"
@@ -530,14 +695,16 @@ export default function ProyectosPage() {
                             </>
                           )}
 
-                          <button
-                            className="btn-secondary"
-                            style={{ padding: '0.5rem', color: '#ff4444' }}
-                            title="Eliminar Permanente"
-                            onClick={() => handleDelete(project.id)}
-                          >
-                            <Trash2 size={14} />
-                          </button>
+                          {!isObserver && (
+                            <button
+                              className="btn-secondary"
+                              style={{ padding: '0.5rem', color: '#ff4444' }}
+                              title="Eliminar Permanente"
+                              onClick={() => handleDelete(project.id)}
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          )}
                         </>
                       )}
                     </div>
@@ -573,7 +740,7 @@ export default function ProyectosPage() {
               <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                 {!isEditing ? (
                   <>
-                    {selectedProject.status === 'proposal' && canEdit && (
+                    {selectedProject.status === 'proposal' && isCreatorRole && (
                       <>
                         <button className="btn-primary" style={{ background: 'var(--success)', borderColor: 'var(--success)' }} onClick={() => handleStatusUpdate(selectedProject.id, 'in_progress')}>
                           <Check size={16} /> Aprobar
@@ -583,15 +750,15 @@ export default function ProyectosPage() {
                         </button>
                       </>
                     )}
-                    {canEdit && (
-                      <button className="btn-secondary" onClick={() => setIsEditing(true)}>
+                    {isCreatorRole && (
+                      <button className="btn-secondary" onClick={() => executeWithAuth(() => setIsEditing(true))}>
                         <Edit3 size={16} /> Editar Texto
                       </button>
                     )}
                     <button className="btn-primary" onClick={handlePrint}>
                       <Printer size={16} /> Imprimir / PDF
                     </button>
-                    {canDelete && (
+                    {isCreatorRole && (
                       <button className="btn-secondary" style={{ color: '#ff4444' }} onClick={() => handleDelete(selectedProject.id)}>
                         <Trash2 size={16} />
                       </button>
@@ -623,13 +790,13 @@ export default function ProyectosPage() {
               
               {/* Header de la Propuesta (Solo se ve bien en blanco o al imprimir si no estamos editando) */}
               {!isEditing && (
-                <div style={{ marginBottom: '2rem', display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', borderBottom: '2px solid #b87333', paddingBottom: '1rem' }}>
-                  <Image src="/logo_3d.png" alt="P&P CONSTRUYE" width={200} height={100} style={{ objectFit: 'contain' }} priority />
+                <div style={{ marginBottom: '1.5rem', display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', borderBottom: '2px solid #b87333', paddingBottom: '0.5rem' }}>
+                  <Image src="/logo_3d.png" alt="P&P CONSTRUYE" width={160} height={80} style={{ objectFit: 'contain' }} priority />
                   <div style={{ textAlign: 'right', color: '#333' }}>
-                    <h3 style={{ margin: 0, fontSize: '1.4rem', color: '#b87333' }}>
+                    <h3 style={{ margin: 0, fontSize: '1.2rem', color: '#b87333' }}>
                       PROPUESTA {selectedProject.proposal_number ? `N° ${selectedProject.proposal_number}` : ''}
                     </h3>
-                    <p style={{ margin: '0.2rem 0 0 0', fontSize: '0.9rem' }}>Fecha: {new Date(selectedProject.created_at).toLocaleDateString()}</p>
+                    <p style={{ margin: '0.1rem 0 0 0', fontSize: '0.85rem' }}>Fecha: {new Date(selectedProject.created_at).toLocaleDateString()}</p>
                   </div>
                 </div>
               )}
@@ -692,8 +859,8 @@ export default function ProyectosPage() {
                   </div>
                 </div>
               ) : (
-                <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.6, color: '#000', fontSize: '14px', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
-                  {selectedProject.description}
+                <div style={{ lineHeight: 1.6, color: '#000', fontSize: '14px', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
+                  {renderStructuredProposal(selectedProject.description)}
                 </div>
               )}
             </div>
@@ -842,6 +1009,56 @@ export default function ProyectosPage() {
                 onClick={handleReopen}
               >
                 <RotateCcw size={15} /> Confirmar Reapertura
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Solicitar Contraseña para Sales */}
+      {showAuthModal && (
+        <div className="modal-overlay" style={{ zIndex: 1000 }}>
+          <div className="card animate-fade" style={{ maxWidth: '440px', width: '90%', padding: '2rem', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h2 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <Lock size={20} style={{ color: 'var(--primary-color)' }} /> Autorización Requerida
+              </h2>
+              <button className="btn-secondary" style={{ padding: '0.4rem' }} onClick={() => { setShowAuthModal(false); setPendingAction(null); }}>
+                <X size={18} />
+              </button>
+            </div>
+
+            <p style={{ color: 'var(--text-muted)', margin: 0, fontSize: '0.9rem' }}>
+              Esta acción requiere privilegios de administrador para modificar propuestas. Por favor ingresa la clave maestra.
+            </p>
+
+            <div>
+              <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                CLAVE DE ADMINISTRADOR
+              </label>
+              <input
+                type="password"
+                className="input-field"
+                style={{ width: '100%' }}
+                placeholder="••••••••"
+                value={authPassword}
+                onChange={e => { setAuthPassword(e.target.value); setAuthError(''); }}
+                onKeyDown={e => { if (e.key === 'Enter') handleAuthSubmit(); }}
+                autoFocus
+              />
+              {authError && (
+                <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.82rem', color: '#ff4444' }}>{authError}</p>
+              )}
+            </div>
+
+            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+              <button className="btn-secondary" onClick={() => { setShowAuthModal(false); setPendingAction(null); }}>Cancelar</button>
+              <button
+                className="btn-primary"
+                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                onClick={handleAuthSubmit}
+              >
+                <Check size={15} /> Confirmar
               </button>
             </div>
           </div>

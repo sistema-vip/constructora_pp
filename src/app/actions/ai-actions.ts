@@ -44,13 +44,13 @@ Basándote en la conversación proporcionada, redacta una propuesta profesional 
 Proyecto: [Nombre descriptivo del proyecto]
 Fecha: [Fecha de hoy]
 Para: [Nombre del cliente / familia]
-Área del Proyecto: [Si se menciona]
+Área de Ejecución: [Si se menciona]
 
 Objetivo del Proyecto
-[Descripción técnica clara del objetivo basada en la conversación]
+[Descripción técnica y formal del propósito fundamental de la obra, detallando de forma clara, profesional y explícita el resultado esperado y el alcance general, sin exagerar pero con un lenguaje ingenieril elegante y descriptivo (1 o 2 párrafos).]
 
 Fases del Trabajo (Alcance Técnico)
-[Lista numerada de fases técnicas. Cada fase con nombre en negrita y descripción]
+[Lista secuencial y ordenada de las fases de ejecución. Cada fase debe ir OBLIGATORIAMENTE en una nueva línea y estar enumerada (Ej: 1. **Nombre de Fase**: descripción), incluyendo una breve descripción técnica de la actividad a realizar.]
 
 Tiempo de Ejecución y Entrega
 [Tiempo estimado basado en lo discutido]
@@ -62,7 +62,7 @@ INVERSIÓN TOTAL: $[Monto calculado o "Por Definir"]
 
 Condiciones y Métodos de Pago
 Esquema de Pago: Anticipo del 60% para la adquisición de materiales y movilización; 40% restante al finalizar la obra.
-Tasa de Cambio: El presupuesto se mantiene en divisas. De realizarse el pago en moneda nacional, se aplicará la tasa Binance vigente para el día del pago.
+Tasa de Cambio: Este presupuesto está expresado en divisas. Métodos de pago: Efectivo, Zelle y Binance.
 
 TAMBIÉN incluye al inicio un bloque JSON (antes del texto de la propuesta):
 <JSON_DATA>
@@ -231,3 +231,216 @@ ${currentText}
     return { success: false, error: `Error al modificar propuesta: ${error.message}` };
   }
 }
+
+// ─────────────────────────────────────────────
+// AUTOFILL PROPOSAL FIELDS
+// ─────────────────────────────────────────────
+export async function autofillProposalFields(
+  userInput: string,
+  clients: { id: string; name: string; company_name?: string }[]
+): Promise<{ success: boolean; data?: any; error?: string }> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey || apiKey === 'TU_API_KEY_AQUI') {
+    return { success: false, error: 'API Key de Gemini no configurada.' };
+  }
+
+  try {
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+
+    const clientsListStr = clients.map(c => "ID: " + c.id + " | Nombre: " + c.name + (c.company_name ? " (" + c.company_name + ")" : "")).join('\n');
+
+    const prompt = `Eres un asistente inteligente para la constructora P&P CONSTRUYE.
+Tu objetivo es analizar las notas o descripción de un proyecto proporcionada por el usuario y extraer/generar los campos necesarios para un formulario de propuesta.
+
+Notas del usuario:
+"${userInput}"
+
+Lista de clientes registrados (ID | Nombre):
+${clientsListStr || 'No hay clientes registrados.'}
+
+Instrucciones:
+1. Extrae o deduce un título corto y descriptivo para el proyecto (title).
+2. Extrae el nombre del cliente (clientName).
+3. Busca en la lista de clientes registrados el que mejor coincida con el nombre mencionado. Si encuentras uno, pon su ID exacto en 'matchedClientId'. Si no hay coincidencia clara o no se menciona cliente, déjalo vacío ("").
+4. Genera una descripción técnica profesional como 'objective' (Objetivo del Proyecto).
+5. Genera un desglose numerado de las fases de trabajo técnico en 'phases' (Fases del Trabajo).
+6. Extrae o estima el tiempo de ejecución en 'time'.
+7. Extrae el monto total (solo números o formato de moneda) en 'amount'. Si no se menciona, pon "".
+8. Extrae las condiciones de pago en 'payment'. Si no se mencionan, pon "60% anticipo / 40% al finalizar".
+9. Extrae cualquier nota adicional en 'notes'.
+
+IMPORTANTE: Responde ÚNICAMENTE con un objeto JSON válido con las siguientes claves:
+{
+  "title": "",
+  "clientName": "",
+  "matchedClientId": "",
+  "objective": "",
+  "phases": "",
+  "time": "",
+  "amount": "",
+  "payment": "",
+  "notes": ""
+}`;
+
+    const result = await model.generateContent({
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      generationConfig: {
+        responseMimeType: "application/json",
+      }
+    });
+
+    const responseText = result.response.text();
+    const data = JSON.parse(responseText);
+
+    return { success: true, data };
+  } catch (error: any) {
+    return { success: false, error: `Error en autocompletado: ${error.message}` };
+  }
+}
+
+// ─────────────────────────────────────────────
+// REFINE PROPOSAL FIELD
+// ─────────────────────────────────────────────
+export async function refineProposalField(
+  fieldName: string,
+  currentText: string,
+  context: string
+): Promise<{ success: boolean; text?: string; error?: string }> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey || apiKey === 'TU_API_KEY_AQUI') {
+    return { success: false, error: 'API Key de Gemini no configurada.' };
+  }
+
+  try {
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+
+    const prompt = `Eres un ingeniero civil / arquitecto de la constructora P&P CONSTRUYE.
+Tu objetivo es redactar, mejorar y estructurar el texto para un campo específico de una propuesta.
+
+Contexto general del proyecto:
+"${context}"
+
+Campo a modificar: "${fieldName}"
+Texto actual o notas:
+"${currentText}"
+
+Instrucciones:
+- Mejora la redacción, ortografía y estructura técnica.
+- Usa lenguaje profesional y conciso, orientado a la construcción.
+- Devuelve ÚNICAMENTE el texto mejorado, sin introducciones ni comillas.`;
+
+    const result = await model.generateContent(prompt);
+    const text = result.response.text();
+
+    return { success: true, text: text.trim() };
+  } catch (error: any) {
+    return { success: false, error: `Error al refinar campo: ${error.message}` };
+  }
+}
+
+// ─────────────────────────────────────────────
+// CHAT WITH PEPE (AI ASSISTANT)
+// ─────────────────────────────────────────────
+export async function chatAndUpdateForm(
+  messages: ChatMessage[],
+  currentForm: {
+    title: string;
+    clientId: string;
+    clientName: string;
+    area: string;
+    objective: string;
+    phases: string;
+    investmentModality: string;
+    time: string;
+    amount: string;
+    payment: string;
+    currency?: string;
+    paymentMethods?: string;
+  },
+  clients: { id: string; name: string; company_name?: string }[]
+): Promise<{ success: boolean; reply?: string; form?: any; error?: string }> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey || apiKey === 'TU_API_KEY_AQUI') {
+    return { success: false, error: 'API Key de Gemini no configurada.' };
+  }
+
+  try {
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+
+    const clientsListStr = clients.map(c => "ID: " + c.id + " | Nombre: " + c.name + (c.company_name ? " (" + c.company_name + ")" : "")).join('\n');
+    const conversationHistory = messages.map(m => (m.role === 'user' ? 'Usuario' : 'Pepe') + ': ' + m.text).join('\n');
+
+    const prompt = `Eres Pepe, el asistente técnico de presupuestos de P&P CONSTRUYE. 
+Tu objetivo es ayudar al usuario a rellenar un formulario estructurado para una nueva propuesta de construcción a través de una conversación interactiva.
+
+El estado actual de los campos del formulario es el siguiente:
+- Título del proyecto (title): "${currentForm.title}"
+- ID del cliente registrado (clientId): "${currentForm.clientId}"
+- Nombre en propuesta (clientName): "${currentForm.clientName}"
+- Área de Ejecución (area): "${currentForm.area}"
+- Objetivo del proyecto (objective): "${currentForm.objective}"
+- Fases del trabajo (phases): "${currentForm.phases}"
+- Modalidad del presupuesto (investmentModality): "${currentForm.investmentModality}"
+- Tiempo de ejecución (time): "${currentForm.time}"
+- Monto total en USD (amount): "${currentForm.amount}"
+- Condiciones de pago (payment): "${currentForm.payment}"
+- Moneda de Pago (currency): "${currentForm.currency || 'Divisas'}"
+- Formas de Pago (paymentMethods): "${currentForm.paymentMethods || ''}"
+
+Lista de clientes registrados en el sistema (ID | Nombre):
+${clientsListStr || 'No hay clientes registrados.'}
+
+Historial de la conversación:
+${conversationHistory}
+
+Instrucciones:
+1. Analiza el último mensaje del usuario en el historial.
+2. Si el usuario proporciona información relevante sobre la obra (como qué se va a construir, el área o medidas, materiales, montos, tiempos, o cliente), actualiza o rellena el formulario correspondientemente.
+3. Si el usuario pide explícitamente modificar un campo o agregar un detalle (ej. "Ponle 1200 dólares", "Cambia el área a 50m2", "En las fases agrega pintar las vigas"), realiza esa modificación sobre el estado actual del formulario.
+4. Intenta buscar coincidencias claras en la lista de clientes registrados. Si encuentras una, coloca su ID en 'clientId' y su nombre exacto en 'clientName'. Si no hay cliente registrado pero se menciona un nombre, colócalo en 'clientName' y deja 'clientId' vacío.
+5. Si el usuario te pide que "hagas el presupuesto", "calcules" o "estimes", genera descripciones técnicas profesionales y estimaciones realistas basadas en tu conocimiento de ingeniería para rellenar los campos (objetivo, fases, tiempo, etc.), manteniendo siempre la coherencia.
+6. Formula una respuesta conversacional corta, amable y profesional firmada como Pepe (máximo 3 párrafos, sin adornos excesivos, explicando de manera resumida qué campos actualizaste o pidiendo aclaraciones si falta información clave).
+7. DEVUELVE TU RESPUESTA ESTRICTAMENTE EN FORMATO JSON con las siguientes dos claves:
+{
+  "reply": "Tu mensaje conversacional explicando qué hiciste o preguntando detalles...",
+  "form": {
+    "title": "...",
+    "clientId": "...",
+    "clientName": "...",
+    "area": "...",
+    "objective": "...",
+    "phases": "...",
+    "investmentModality": "...",
+    "time": "...",
+    "amount": "...",
+    "payment": "...",
+    "currency": "...",
+    "paymentMethods": "..."
+  }
+}
+
+IMPORTANTE: Responde ÚNICAMENTE con el objeto JSON anterior, sin markdown adicional, sin rodeos, sin el bloque de código \`\`\`json. Asegúrate de escapar TODAS las comillas dobles internas con \\" (ejemplo: \\"A Todo Costo\\") y los saltos de línea correctamente para que el JSON sea válido.`;
+
+    const result = await model.generateContent({
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      generationConfig: {
+        responseMimeType: "application/json",
+      }
+    });
+
+    const responseText = result.response.text();
+    const parsed = JSON.parse(responseText);
+
+    return { 
+      success: true, 
+      reply: parsed.reply, 
+      form: parsed.form 
+    };
+  } catch (error: any) {
+    return { success: false, error: `Error en chat de Pepe: ${error.message}` };
+  }
+}
+

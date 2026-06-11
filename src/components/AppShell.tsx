@@ -81,9 +81,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           <Link href="/materiales" className={`nav-link ${pathname.startsWith('/materiales') ? 'active' : ''}`}>
             <Package size={20} /> Materiales
           </Link>
-          <Link href="/administracion" className={`nav-link ${pathname === '/administracion' ? 'active' : ''}`}>
-            <BarChart3 size={20} /> Administración
-          </Link>
+          {role === 'admin' && (
+            <Link href="/administracion" className={`nav-link ${pathname === '/administracion' ? 'active' : ''}`}>
+              <BarChart3 size={20} /> Administración
+            </Link>
+          )}
         </nav>
 
         <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: '0.5rem', borderTop: '1px solid var(--border-color)', paddingTop: '1.5rem' }}>
@@ -98,7 +100,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                  {user?.user_metadata?.name || 'Usuario'}
                </div>
                <div style={{ fontSize: '0.7rem', color: role === 'admin' ? 'var(--primary-color)' : 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 'bold' }}>
-                 {role === 'admin' ? 'Administrador' : 'Observador'}
+                 {role === 'admin' ? 'Administrador' : role === 'client' ? 'Cliente / Generador' : role === 'sales' ? 'Ventas' : 'Observador'}
                </div>
              </div>
           </div>

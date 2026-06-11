@@ -82,7 +82,7 @@ export default function AdministracionDashboard() {
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [showApproveModal, setShowApproveModal] = useState(false);
   const [selectedRequest, setSelectedRequest] = useState<any | null>(null);
-  const [approveRole, setApproveRole] = useState<'viewer' | 'admin'>('viewer');
+  const [approveRole, setApproveRole] = useState<'viewer' | 'admin' | 'sales'>('viewer');
   const [tempPassword, setTempPassword] = useState<string | null>(null);
   const [approveError, setApproveError] = useState<string | null>(null);
   const [copiedPassword, setCopiedPassword] = useState(false);
@@ -224,7 +224,7 @@ export default function AdministracionDashboard() {
       alert('❌ Solo administradores pueden cambiar roles de usuarios');
       return;
     }
-    const newRole = currentRole === 'admin' ? 'viewer' : 'admin';
+    const newRole = currentRole === 'admin' ? 'viewer' : currentRole === 'viewer' ? 'sales' : 'admin';
     try {
       const { error } = await supabase
         .from('profiles')
@@ -913,10 +913,12 @@ export default function AdministracionDashboard() {
               </div>
             </div>
 
-            <div style={{ padding: '1.5rem', background: 'rgba(245,158,11,0.05)', borderBottom: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', gap: '1rem' }}>
+            <div style={{ padding: '1.5rem', background: 'rgba(245,158,11,0.05)', borderBottom: '1px solid var(--border-color)', display: 'flex', flexWrap: 'wrap', gap: '1rem', alignItems: 'center' }}>
               <AlertCircle size={20} color="var(--primary-color)" />
-              <div style={{ fontSize: '0.85rem', color: 'var(--text-main)' }}>
-                <strong>Modo Observador (Viewer):</strong> El usuario podrá entrar a todos los módulos y ver el historial, pero no podrá realizar cambios.
+              <div style={{ fontSize: '0.85rem', color: 'var(--text-main)', flex: 1 }}>
+                <div style={{ marginBottom: '0.5rem' }}><strong>Observador (Viewer):</strong> Acceso de solo lectura a todos los módulos.</div>
+                <div style={{ marginBottom: '0.5rem' }}><strong>Ventas / Cliente (Sales):</strong> Puede crear propuestas, pero requiere clave para editarlas. Solo lectura en finanzas.</div>
+                <div><strong>Administrador (Admin):</strong> Acceso total y control sobre el sistema.</div>
               </div>
             </div>
 
@@ -940,26 +942,26 @@ export default function AdministracionDashboard() {
                         <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>ID: {u.id}</div>
                       </td>
                       <td style={{ padding: '1.25rem 1.5rem', textAlign: 'center' }}>
-                        <span className={`badge ${u.role === 'admin' ? 'badge-active' : 'badge-pending'}`} style={{ minWidth: '100px', textAlign: 'center' }}>
-                          {u.role === 'admin' ? 'Administrador' : 'Observador'}
+                        <span className={`badge ${u.role === 'admin' ? 'badge-active' : u.role === 'sales' ? 'badge-warning' : 'badge-pending'}`} style={{ minWidth: '100px', textAlign: 'center' }}>
+                          {u.role === 'admin' ? 'Administrador' : u.role === 'sales' ? 'Ventas' : 'Observador'}
                         </span>
                       </td>
                       <td style={{ padding: '1.25rem 1.5rem', textAlign: 'right' }}>
                         <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', alignItems: 'center' }}>
                           {canEdit && (
                             <button
-                              className="btn-secondary"
-                              style={{
-                                fontSize: '0.8rem',
-                                padding: '0.4rem 0.8rem',
-                                borderColor: u.role === 'admin' ? 'rgba(239, 68, 68, 0.2)' : 'rgba(16, 185, 129, 0.2)',
-                                color: u.role === 'admin' ? 'var(--danger)' : 'var(--success)'
-                              }}
-                              onClick={() => handleToggleRole(u.id, u.role)}
-                              disabled={currentUser?.id === u.id}
-                            >
-                              {u.role === 'admin' ? 'Degradar a Observador' : 'Promover a Admin'}
-                            </button>
+                                className="btn-secondary"
+                                style={{
+                                  fontSize: '0.8rem',
+                                  padding: '0.4rem 0.8rem',
+                                  borderColor: u.role === 'admin' ? 'rgba(239, 68, 68, 0.2)' : u.role === 'viewer' ? 'rgba(245, 158, 11, 0.2)' : 'rgba(16, 185, 129, 0.2)',
+                                  color: u.role === 'admin' ? 'var(--danger)' : u.role === 'viewer' ? 'var(--primary-color)' : 'var(--success)'
+                                }}
+                                onClick={() => handleToggleRole(u.id, u.role)}
+                                disabled={currentUser?.id === u.id}
+                              >
+                                {u.role === 'admin' ? 'Degradar a Observador' : u.role === 'viewer' ? 'Promover a Ventas' : 'Promover a Admin'}
+                              </button>
                           )}
                           {canDelete && (
                             <button
@@ -1019,10 +1021,17 @@ export default function AdministracionDashboard() {
                   </button>
                   <button
                     type="button"
+                    onClick={() => setApproveRole('sales')}
+                    style={{ flex: 1, padding: '0.85rem', borderRadius: '8px', border: `2px solid ${approveRole === 'sales' ? 'var(--accent-blue)' : 'var(--border-color)'}`, background: approveRole === 'sales' ? 'rgba(56, 189, 248, 0.08)' : 'transparent', color: approveRole === 'sales' ? 'var(--accent-blue)' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 600, fontSize: '0.9rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}
+                  >
+                    <ClipboardList size={16} /> Ventas
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => setApproveRole('admin')}
                     style={{ flex: 1, padding: '0.85rem', borderRadius: '8px', border: `2px solid ${approveRole === 'admin' ? 'var(--primary-color)' : 'var(--border-color)'}`, background: approveRole === 'admin' ? 'rgba(245,158,11,0.08)' : 'transparent', color: approveRole === 'admin' ? 'var(--primary-color)' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 600, fontSize: '0.9rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}
                   >
-                    <ShieldCheck size={16} /> Administrador
+                    <ShieldCheck size={16} /> Admin
                   </button>
                 </div>
               </div>
@@ -1050,7 +1059,7 @@ export default function AdministracionDashboard() {
                 </div>
                 <h2 style={{ fontSize: '1.2rem', margin: '0 0 0.5rem 0' }}>¡Cuenta creada!</h2>
                 <p className="text-muted" style={{ fontSize: '0.85rem' }}>
-                  La cuenta de <strong style={{ color: 'white' }}>{selectedRequest.name}</strong> fue activada con rol <strong style={{ color: approveRole === 'admin' ? 'var(--primary-color)' : 'var(--success)' }}>{approveRole === 'admin' ? 'Administrador' : 'Observador'}</strong>.
+                  La cuenta de <strong style={{ color: 'white' }}>{selectedRequest.name}</strong> fue activada con rol <strong style={{ color: approveRole === 'admin' ? 'var(--primary-color)' : approveRole === 'sales' ? 'var(--accent-blue)' : 'var(--success)' }}>{approveRole === 'admin' ? 'Administrador' : approveRole === 'sales' ? 'Ventas' : 'Observador'}</strong>.
                 </p>
               </div>
 

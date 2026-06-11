@@ -23,7 +23,7 @@ export async function POST(req: NextRequest) {
     }
 
     const userId = authData.user.id;
-    const userRole = role === 'admin' ? 'admin' : 'viewer';
+    const userRole = role === 'admin' ? 'admin' : role === 'sales' ? 'sales' : 'viewer';
 
     // 2. Crear perfil en la tabla profiles
     const { error: profileError } = await supabaseAdmin

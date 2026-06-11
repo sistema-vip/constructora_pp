@@ -18,7 +18,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'ID de solicitud requerido.' }, { status: 400 });
     }
 
-    const userRole = role === 'admin' ? 'admin' : 'viewer';
+    const userRole = role === 'admin' ? 'admin' : role === 'sales' ? 'sales' : 'viewer';
 
     // 1. Obtener la solicitud de acceso
     const { data: request, error: fetchError } = await supabaseAdmin

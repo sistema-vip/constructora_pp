@@ -22,7 +22,8 @@ import {
   Trash2,
   AlertCircle,
   Briefcase as BriefcaseIcon,
-  DollarSign as DollarIcon
+  DollarSign as DollarIcon,
+  Eye
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency, handleMoneyInput, parseCurrency, formatOnBlur } from '@/lib/formatters';
@@ -82,6 +83,18 @@ interface Commitment {
 }
 
 export default function ProjectDashboard() {
+  // Helper to parse simple **bold** markdown syntax
+  const parseBoldText = (text: string | null | undefined) => {
+    if (!text) return '';
+    const parts = text.split('**');
+    return parts.map((part, i) => {
+      if (i % 2 === 1) {
+        return <strong key={i} style={{ fontWeight: 'bold' }}>{part}</strong>;
+      }
+      return part;
+    });
+  };
+
   const params = useParams();
   const router = useRouter();
   const projectId = params.id as string;
@@ -107,9 +120,14 @@ export default function ProjectDashboard() {
   const [isPrintingReport, setIsPrintingReport] = useState(false);
   const [activeTab, setActiveTab] = useState<'pagos' | 'gastos' | 'adicionales' | 'compromisos' | 'retiros' | 'detalles'>('pagos');
 
+  // Estado para impresión y detalles de compromiso
+  const [activePrintJob, setActivePrintJob] = useState<'none' | 'project-report' | 'commitment-voucher'>('none');
+  const [printCommitmentData, setPrintCommitmentData] = useState<any>(null);
+  const [selectedCommitmentForDetails, setSelectedCommitmentForDetails] = useState<any>(null);
+
   // Permisos
   const { role } = useUser();
-  const isViewer = role === 'viewer';
+  const isViewer = role === 'viewer' || role === 'sales';
   const canEdit = !isViewer;
 
   // Modals state
@@ -602,10 +620,22 @@ export default function ProjectDashboard() {
 
   function handlePrintReport() {
     setIsPrintingReport(true);
+    setActivePrintJob('project-report');
     setTimeout(() => {
       window.print();
       setIsPrintingReport(false);
+      setActivePrintJob('none');
     }, 500);
+  }
+
+  function handlePrintCommitment(c: any) {
+    setPrintCommitmentData(c);
+    setActivePrintJob('commitment-voucher');
+    setTimeout(() => {
+      window.print();
+      setActivePrintJob('none');
+      setPrintCommitmentData(null);
+    }, 300);
   }
 
   async function handleCloseProject() {
@@ -1017,18 +1047,6 @@ export default function ProjectDashboard() {
                       <td style={{ padding: '1rem' }}>
                         {c.description}<br/>
                         <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{c.quantity} x ${Number(c.unit_price_usd).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                        {c.payable_accounts?.[0]?.payable_payments && c.payable_accounts[0].payable_payments.length > 0 && (
-                          <div style={{ marginTop: '0.5rem', fontSize: '0.75rem', color: 'var(--text-muted)', borderLeft: '2px solid var(--primary-color)', paddingLeft: '0.5rem' }}>
-                            <div style={{ fontWeight: '600', marginBottom: '0.2rem' }}>Historial de Abonos:</div>
-                            {c.payable_accounts[0].payable_payments.map((p: any) => (
-                              <div key={p.id} style={{ display: 'flex', gap: '0.5rem', marginTop: '0.1rem' }}>
-                                <span>• {p.date || 'Sin fecha'}:</span>
-                                <span style={{ color: 'white' }}>${Number(p.amount_usd).toLocaleString('es-VE', { minimumFractionDigits: 2 })}</span>
-                                {p.reference && <span>(Ref: {p.reference})</span>}
-                              </div>
-                            ))}
-                          </div>
-                        )}
                       </td>
                       <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>{c.provider || 'N/A'}</td>
                       <td style={{ padding: '1rem', textAlign: 'right' }}>
@@ -1043,6 +1061,22 @@ export default function ProjectDashboard() {
                       </td>
                       <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold', color: 'var(--primary-color)' }}>- ${Number(balance).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                       <td style={{ padding: '1rem', textAlign: 'right', display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                        <button 
+                          className="btn-secondary" 
+                          style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--primary-color)', borderColor: 'rgba(59,130,246,0.2)' }}
+                          onClick={() => setSelectedCommitmentForDetails(c)}
+                          title="Ver detalles e imprimir"
+                        >
+                          <Eye size={14} /> Detalles
+                        </button>
+                        <button 
+                          className="btn-secondary" 
+                          style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'white', borderColor: 'rgba(255,255,255,0.2)' }}
+                          onClick={() => handlePrintCommitment(c)}
+                          title="Imprimir"
+                        >
+                          <Printer size={14} />
+                        </button>
                         {!isViewer && balance > 0 && (
                           <button 
                             className="btn-primary" 
@@ -1144,7 +1178,7 @@ export default function ProjectDashboard() {
               <div>
                 <h3 style={{ marginBottom: '1rem' }}>Propuesta Original</h3>
                 <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.6, color: 'var(--text-muted)', background: 'rgba(0,0,0,0.2)', padding: '1.5rem', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
-                  {project.description || 'Sin descripción detallada.'}
+                  {project.description ? parseBoldText(project.description) : 'Sin descripción detallada.'}
                 </div>
                 <div style={{ marginTop: '1rem', fontWeight: 'bold', fontSize: '1.1rem', padding: '1rem', background: 'rgba(255,255,255,0.02)', borderRadius: '8px' }}>
                   Presupuesto Base: ${baseBudget.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
@@ -1556,8 +1590,110 @@ export default function ProjectDashboard() {
         </div>
       )}
 
-      {/* REPORTE DE IMPRESIÓN (Estructuralmente igual al reporte de cliente) */}
-      <div className="show-only-on-print" style={{ display: 'none', color: 'black', background: 'white', padding: '1rem', width: '100%' }}>
+      {/* MODAL DETALLES DE COMPROMISO */}
+      {selectedCommitmentForDetails && (
+        <div className="modal-overlay hide-on-print" style={{ zIndex: 1000 }}>
+          <div className="card modal-content animate-fade" style={{ maxWidth: '650px', width: '95%', padding: '2rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.5rem', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '1rem' }}>
+              <div>
+                <h2 style={{ fontSize: '1.4rem', color: 'white', margin: '0 0 0.5rem 0', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <FileText size={24} color="var(--primary-color)" /> Detalles del Compromiso
+                </h2>
+                <div style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+                  <strong>Concepto:</strong> {selectedCommitmentForDetails.description} <br/>
+                  <strong>Proveedor:</strong> {selectedCommitmentForDetails.provider || 'N/A'} | <strong>Fecha:</strong> {selectedCommitmentForDetails.date}
+                </div>
+              </div>
+              <button onClick={() => setSelectedCommitmentForDetails(null)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}><X size={24} /></button>
+            </div>
+
+            {(() => {
+              const c = selectedCommitmentForDetails;
+              const paid = c.payable_accounts?.[0]?.payable_payments?.reduce((s: any, p: any) => s + Number(p.amount_usd), 0) || 0;
+              const total = Number(c.amount_usd);
+              const balance = total - paid;
+
+              return (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem' }}>
+                    <div style={{ padding: '1rem', background: 'rgba(255,255,255,0.05)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)' }}>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '0.3rem' }}>Total Pactado</div>
+                      <div style={{ fontSize: '1.2rem', fontWeight: 800, color: 'white' }}>${formatCurrency(total)}</div>
+                    </div>
+                    <div style={{ padding: '1rem', background: 'rgba(16,185,129,0.05)', borderRadius: '8px', border: '1px solid rgba(16,185,129,0.2)' }}>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--success)', textTransform: 'uppercase', marginBottom: '0.3rem' }}>Total Abonado</div>
+                      <div style={{ fontSize: '1.2rem', fontWeight: 800, color: 'var(--success)' }}>${formatCurrency(paid)}</div>
+                    </div>
+                    <div style={{ padding: '1rem', background: balance > 0 ? 'rgba(239,68,68,0.05)' : 'rgba(255,255,255,0.05)', borderRadius: '8px', border: `1px solid ${balance > 0 ? 'rgba(239,68,68,0.2)' : 'rgba(255,255,255,0.1)'}` }}>
+                      <div style={{ fontSize: '0.75rem', color: balance > 0 ? 'var(--danger)' : 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '0.3rem' }}>Saldo Pendiente</div>
+                      <div style={{ fontSize: '1.2rem', fontWeight: 800, color: balance > 0 ? 'var(--danger)' : 'white' }}>${formatCurrency(balance)}</div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <h4 style={{ margin: '0 0 1rem 0', color: 'white', display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1rem' }}>
+                      <Wallet size={18} /> Historial de Abonos
+                    </h4>
+                    {!c.payable_accounts?.[0]?.payable_payments || c.payable_accounts[0].payable_payments.length === 0 ? (
+                      <div style={{ padding: '1.5rem', textAlign: 'center', background: 'rgba(0,0,0,0.2)', borderRadius: '8px', color: 'var(--text-muted)' }}>
+                        No hay abonos registrados para este compromiso.
+                      </div>
+                    ) : (
+                      <div style={{ overflowX: 'auto', background: 'rgba(0,0,0,0.2)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.05)' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                          <thead>
+                            <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)' }}>
+                              <th style={{ textAlign: 'left', padding: '0.75rem 1rem' }}>FECHA</th>
+                              <th style={{ textAlign: 'left', padding: '0.75rem 1rem' }}>CONCEPTO</th>
+                              <th style={{ textAlign: 'left', padding: '0.75rem 1rem' }}>REFERENCIA</th>
+                              <th style={{ textAlign: 'right', padding: '0.75rem 1rem' }}>MONTO</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {c.payable_accounts[0].payable_payments.sort((a:any, b:any) => new Date(b.date).getTime() - new Date(a.date).getTime()).map((p: any) => (
+                              <tr key={p.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                                <td style={{ padding: '0.75rem 1rem', color: 'var(--text-muted)' }}>{p.date}</td>
+                                <td style={{ padding: '0.75rem 1rem' }}>{p.description}</td>
+                                <td style={{ padding: '0.75rem 1rem', color: 'var(--text-muted)' }}>{p.reference || '-'}</td>
+                                <td style={{ padding: '0.75rem 1rem', textAlign: 'right', fontWeight: 'bold', color: 'var(--success)' }}>+ ${formatCurrency(p.amount_usd)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
+                    <button className="btn-secondary" style={{ flex: 1, justifyContent: 'center' }} onClick={() => setSelectedCommitmentForDetails(null)}>Cerrar</button>
+                    <button className="btn-secondary" style={{ flex: 1, justifyContent: 'center', borderColor: 'rgba(255,255,255,0.2)' }} onClick={() => handlePrintCommitment(c)}>
+                      <Printer size={16} /> Imprimir Vale
+                    </button>
+                    {!isViewer && balance > 0 && (
+                      <button 
+                        className="btn-primary" 
+                        style={{ flex: 1, justifyContent: 'center' }} 
+                        onClick={() => {
+                          setSelectedCommitmentForDetails(null);
+                          setCommitmentToPay(c);
+                          setCommitmentPayForm({ amount_usd: '', description: '', reference: '', date: new Date().toISOString().split('T')[0] });
+                          setShowCommitmentPayModal(true);
+                        }}
+                      >
+                        <DollarSign size={16} /> Abonar
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+      )}
+
+      {/* REPORTE DE IMPRESIÓN DEL PROYECTO */}
+      {(!activePrintJob || activePrintJob === 'project-report') && (
+        <div className="show-only-on-print" style={{ display: 'none', color: 'black', background: 'white', padding: '1rem', width: '100%' }}>
         {/* Encabezado con Logo */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #000', paddingBottom: '1rem', marginBottom: '1.5rem' }}>
           <Image src="/logo_3d.png" alt="Logo" width={180} height={80} style={{ objectFit: 'contain' }} />
@@ -1744,6 +1880,102 @@ export default function ProjectDashboard() {
           <p>Documento generado por el Sistema Administrativo de P&P Construye</p>
         </div>
       </div>
+      )}
+
+      {/* VALE DE COMPROMISO DE IMPRESIÓN */}
+      {activePrintJob === 'commitment-voucher' && printCommitmentData && (() => {
+        const c = printCommitmentData;
+        const paid = c.payable_accounts?.[0]?.payable_payments?.reduce((s: any, p: any) => s + Number(p.amount_usd), 0) || 0;
+        const total = Number(c.amount_usd);
+        const balance = total - paid;
+
+        return (
+          <div className="show-only-on-print" style={{ display: 'none', color: 'black', background: 'white', padding: '2rem', width: '100%', maxWidth: '800px', margin: '0 auto', fontFamily: 'Arial, sans-serif' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #000', paddingBottom: '1rem', marginBottom: '2rem' }}>
+              <div>
+                <Image src="/logo_3d.png" alt="Logo" width={150} height={60} style={{ objectFit: 'contain' }} />
+                <div style={{ fontSize: '11px', color: '#555', marginTop: '0.5rem' }}>P&P Construye</div>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <h2 style={{ margin: 0, fontSize: '18px', color: '#000', textTransform: 'uppercase' }}>COMPROBANTE DE COMPROMISO</h2>
+                <p style={{ margin: '0.2rem 0 0 0', fontSize: '12px', color: '#555' }}>Fecha Emisión: {new Date().toLocaleDateString('es-VE')}</p>
+                <p style={{ margin: '0', fontSize: '12px', color: '#555' }}>ID: {c.id.split('-')[0].toUpperCase()}</p>
+              </div>
+            </div>
+
+            <div style={{ marginBottom: '2rem', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', fontSize: '13px' }}>
+              <div style={{ padding: '1rem', border: '1px solid #ccc', borderRadius: '4px', background: '#f8f9fa' }}>
+                <div style={{ marginBottom: '0.5rem' }}><strong>Proyecto:</strong> {project?.title}</div>
+                <div style={{ marginBottom: '0.5rem' }}><strong>Concepto:</strong> {c.description}</div>
+                <div><strong>Proveedor / Beneficiario:</strong> {c.provider || 'N/A'}</div>
+              </div>
+              <div style={{ padding: '1rem', border: '1px solid #ccc', borderRadius: '4px', background: '#f8f9fa' }}>
+                <div style={{ marginBottom: '0.5rem' }}><strong>Fecha de Compromiso:</strong> {c.date}</div>
+                <div style={{ marginBottom: '0.5rem' }}><strong>Cantidad:</strong> {c.quantity}</div>
+                <div><strong>Precio Unitario:</strong> ${Number(c.unit_price_usd).toLocaleString('es-VE', { minimumFractionDigits: 2 })}</div>
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem', marginBottom: '2rem', textAlign: 'center' }}>
+              <div style={{ padding: '1rem', border: '1px solid #ccc', borderRadius: '4px' }}>
+                <div style={{ fontSize: '10px', textTransform: 'uppercase', color: '#555' }}>Total Contratado</div>
+                <div style={{ fontSize: '18px', fontWeight: 'bold' }}>${formatCurrency(total)}</div>
+              </div>
+              <div style={{ padding: '1rem', border: '1px solid #ccc', borderRadius: '4px' }}>
+                <div style={{ fontSize: '10px', textTransform: 'uppercase', color: '#555' }}>Total Abonado</div>
+                <div style={{ fontSize: '18px', fontWeight: 'bold', color: 'green' }}>${formatCurrency(paid)}</div>
+              </div>
+              <div style={{ padding: '1rem', border: '2px solid #000', borderRadius: '4px', background: '#eee' }}>
+                <div style={{ fontSize: '10px', textTransform: 'uppercase', color: '#000' }}>Saldo Pendiente</div>
+                <div style={{ fontSize: '18px', fontWeight: 'bold', color: balance > 0 ? '#d32f2f' : '#000' }}>${formatCurrency(balance)}</div>
+              </div>
+            </div>
+
+            <h3 style={{ fontSize: '14px', borderBottom: '1px solid #ccc', paddingBottom: '0.5rem', marginBottom: '1rem' }}>HISTORIAL DE ABONOS</h3>
+            {(!c.payable_accounts?.[0]?.payable_payments || c.payable_accounts[0].payable_payments.length === 0) ? (
+              <p style={{ fontSize: '12px', color: '#555', textAlign: 'center', padding: '1rem', border: '1px dashed #ccc' }}>No hay abonos registrados.</p>
+            ) : (
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', marginBottom: '2rem' }}>
+                <thead>
+                  <tr style={{ background: '#eee' }}>
+                    <th style={{ textAlign: 'left', padding: '0.5rem', border: '1px solid #ccc' }}>FECHA</th>
+                    <th style={{ textAlign: 'left', padding: '0.5rem', border: '1px solid #ccc' }}>CONCEPTO</th>
+                    <th style={{ textAlign: 'left', padding: '0.5rem', border: '1px solid #ccc' }}>REFERENCIA</th>
+                    <th style={{ textAlign: 'right', padding: '0.5rem', border: '1px solid #ccc' }}>MONTO (USD)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {c.payable_accounts[0].payable_payments.sort((a:any, b:any) => new Date(a.date).getTime() - new Date(b.date).getTime()).map((p: any) => (
+                    <tr key={p.id}>
+                      <td style={{ padding: '0.5rem', border: '1px solid #ccc' }}>{p.date}</td>
+                      <td style={{ padding: '0.5rem', border: '1px solid #ccc' }}>{p.description}</td>
+                      <td style={{ padding: '0.5rem', border: '1px solid #ccc' }}>{p.reference || '-'}</td>
+                      <td style={{ padding: '0.5rem', border: '1px solid #ccc', textAlign: 'right' }}>${formatCurrency(p.amount_usd)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4rem', marginTop: '5rem' }}>
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ borderBottom: '1px solid #000', marginBottom: '0.5rem' }}></div>
+                <div style={{ fontSize: '12px', fontWeight: 'bold' }}>Preparado Por</div>
+                <div style={{ fontSize: '10px', color: '#555' }}>Firma Autorizada</div>
+              </div>
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ borderBottom: '1px solid #000', marginBottom: '0.5rem' }}></div>
+                <div style={{ fontSize: '12px', fontWeight: 'bold' }}>Recibido Conforme</div>
+                <div style={{ fontSize: '10px', color: '#555' }}>Beneficiario / Proveedor</div>
+              </div>
+            </div>
+
+            <div style={{ marginTop: '3rem', textAlign: 'center', fontSize: '10px', color: '#777' }}>
+              <p>Documento generado por el Sistema Administrativo de P&P Construye</p>
+            </div>
+          </div>
+        );
+      })()}
 
       <style dangerouslySetInnerHTML={{ __html: `
         .show-only-on-print { display: none; }

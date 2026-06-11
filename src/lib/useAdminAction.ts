@@ -6,10 +6,13 @@ export function useAdminAction() {
   const { role, loading } = useUser();
   const isAdmin = role === 'admin';
   const isObserver = role === 'viewer';
+  const isSales = role === 'sales';
+  const isClient = role === 'client';
 
-  const canCreate = isAdmin;
+  const canCreate = isAdmin; // Only admin can create clients and accounts globally
   const canEdit = isAdmin;
   const canDelete = isAdmin;
+  const canCreateProposal = isAdmin || isClient || isSales; // Client can create proposals
 
   const requireAdmin = (action: string) => {
     if (!isAdmin) {
@@ -22,9 +25,12 @@ export function useAdminAction() {
   return {
     isAdmin,
     isObserver,
+    isSales,
+    isClient,
     canCreate,
     canEdit,
     canDelete,
+    canCreateProposal,
     requireAdmin,
     loading,
   };

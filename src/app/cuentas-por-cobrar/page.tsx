@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency, handleMoneyInput, formatOnBlur } from '@/lib/formatters';
 import { useUser } from '@/lib/UserContext';
+import { useAdminAction } from '@/lib/useAdminAction';
 import { 
   TrendingUp, CheckCircle, TrendingDown, 
   ChevronDown, ChevronRight, Briefcase
@@ -52,7 +53,8 @@ export default function CuentasPorCobrarPage() {
   });
 
   const { role } = useUser();
-  const isViewer = role === 'viewer';
+  const { isObserver, isClient } = useAdminAction();
+  const isViewer = isObserver || isClient;
 
   useEffect(() => {
     fetchData();
