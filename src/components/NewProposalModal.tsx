@@ -2,25 +2,42 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { X, Sparkles, Send, Loader2, CheckCircle, Save, FileText, User, DollarSign, Clock, HardHat, MessageSquare, Eye } from 'lucide-react';
-import { modifyProposalText, refineProposalField, chatAndUpdateForm, ChatMessage, ProposalData } from '@/app/actions/ai-actions';
+import { modifyProposalText, refineProposalField, chatAndUpdateForm, ChatMessage, ProposalData, parseProposalTextToForm } from '@/app/actions/ai-actions';
 import { supabase } from '@/lib/supabase';
-import { handleMoneyInput, formatOnBlur } from '@/lib/formatters';
+import { handleMoneyInput, formatOnBlur, formatCurrency } from '@/lib/formatters';
+import { useAdminAction } from '@/lib/useAdminAction';
 
 interface Client { id: string; name: string; company_name?: string; }
-interface Props { isOpen: boolean; onClose: () => void; onSaved?: () => void; onOpenAI?: () => void; initialClientId?: string; }
+interface Props { isOpen: boolean; onClose: () => void; onSaved?: () => void; onOpenAI?: () => void; initialClientId?: string; existingProposal?: any; }
 type Mode = 'manual' | 'ai';
 type Step = 'chat' | 'preview' | 'done';
 
 const INITIAL_FORM_CHAT_MSG: ChatMessage = { role: 'model', text: '¡Hola! Soy Pepe. Escribe los detalles del proyecto y yo rellenaré el formulario por ti. También puedes modificar los campos a la izquierda manualmente.' };
+const TEMPLATE_TODO_COSTO = 'La presente propuesta técnica y económica ha sido estructurada bajo la modalidad "A Todo Costo". Esta condición establece que el monto total presupuestado contempla el suministro integral de la totalidad de los materiales requeridos para la ejecución (tales como mantos, láminas de fibrocemento, cemento, pintura, etc.), así como los costos de fletes, maquinarias, herramientas menores, consumibles y la disposición de mano de obra altamente calificada. Nuestro compromiso es entregar el proyecto 100% terminado, operativo y con los más altos estándares de calidad, relevando al cliente de cualquier gestión de procura o gastos operativos adicionales.';
+const TEMPLATE_MANO_OBRA = 'La presente propuesta técnica y económica ha sido estructurada bajo la modalidad de "Solo Mano de Obra". Bajo esta condición, P&P CONSTRUYE se encarga exclusivamente de la disposición de mano de obra altamente calificada y las herramientas necesarias para la ejecución del proyecto. El suministro integral de todos los materiales requeridos (tales como lajas, cemento, adhesivos, etc.), así como los costos de fletes de materiales, son responsabilidad directa del cliente.';
+const TEMPLATE_MATERIALES = 'La presente propuesta técnica y económica ha sido estructurada bajo la modalidad de "Solo Materiales" (Suministro de Materiales). Bajo esta condición, P&P CONSTRUYE se encarga exclusivamente de la procura, suministro y entrega en obra de la totalidad de los materiales especificados en la propuesta técnica. La contratación, supervisión y pago de la mano de obra para la ejecución, así como las herramientas y equipos necesarios para la instalación de los mismos, son responsabilidad directa y exclusiva del cliente.';
+
 const INIT_FORM = { 
   title: '', clientId: '', clientName: '', area: '', objective: '', phases: '', 
-  investmentModality: 'La presente propuesta técnica y económica ha sido estructurada bajo la modalidad "A Todo Costo". Esta condición establece que el monto total presupuestado contempla el suministro integral de la totalidad de los materiales requeridos para la ejecución (tales como mantos, láminas de fibrocemento, cemento, pintura, etc.), así como los costos de fletes, maquinarias, herramientas menores, consumibles y la disposición de mano de obra altamente calificada. Nuestro compromiso es entregar el proyecto 100% terminado, operativo y con los más altos estándares de calidad, relevando al cliente de cualquier gestión de procura o gastos operativos adicionales.', 
+  investmentModality: TEMPLATE_TODO_COSTO, 
   time: '', amount: '', payment: '60% anticipo / 40% al finalizar',
   currency: 'Divisas',
   paymentMethods: 'Este presupuesto está expresado en divisas. Métodos de pago: Efectivo, Zelle y Binance.'
 };
 
-export default function NewProposalModal({ isOpen, onClose, onSaved, initialClientId }: Props) {
+type ModalityType = 'todo-costo' | 'mano-obra' | 'materiales' | 'personalizado';
+
+function detectModalityType(text: string): ModalityType {
+  if (!text) return 'todo-costo';
+  const lower = text.toLowerCase();
+  if (lower.includes('todo costo')) return 'todo-costo';
+  if (lower.includes('mano de obra')) return 'mano-obra';
+  if (lower.includes('materiales')) return 'materiales';
+  return 'personalizado';
+}
+
+export default function NewProposalModal({ isOpen, onClose, onSaved, initialClientId, existingProposal }: Props) {
+  const { isSales } = useAdminAction();
   // Helper to parse simple **bold** markdown syntax
   const parseBoldText = (text: string | null | undefined) => {
     if (!text) return '';
@@ -35,6 +52,7 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
 
   const [mode, setMode] = useState<Mode>('manual');
   const [step, setStep] = useState<Step>('chat');
+  const [selectedModality, setSelectedModality] = useState<ModalityType>('todo-costo');
   const [showPreviewModal, setShowPreviewModal] = useState(false);
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(false);
@@ -52,8 +70,48 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (isOpen) { fetchClients(); reset(); }
-  }, [isOpen]);
+    if (isOpen) { 
+      fetchClients(); 
+      if (existingProposal) {
+        loadExistingProposal();
+      } else {
+        reset(); 
+      }
+    }
+  }, [isOpen, existingProposal]);
+
+  async function loadExistingProposal() {
+    setMode('manual'); setStep('chat'); setShowPreviewModal(false); setError(''); setInput('');
+    setProposal({
+       title: existingProposal.title,
+       clientName: '',
+       clientContact: '',
+       date: '',
+       area: '',
+       investmentAmount: existingProposal.budget_usd?.toString() || '',
+       executionTime: '',
+       fullProposalText: existingProposal.description || ''
+    } as any);
+    setEditableText(existingProposal.description || '');
+    setLinkedClientId(existingProposal.client_id || '');
+    setMessages([{ role: 'model', text: '¡Hola! He cargado la propuesta existente. Puedes editarla en el formulario o pedirme cambios.' }]);
+    
+    if (existingProposal.description) {
+      setLoading(true);
+      const res = await parseProposalTextToForm(existingProposal.description);
+      if (res.success && res.form) {
+        setForm({ ...INIT_FORM, ...res.form, clientId: existingProposal.client_id || '', title: existingProposal.title || res.form.title, amount: existingProposal.budget_usd?.toString() || res.form.amount });
+        setSelectedModality(detectModalityType(res.form.investmentModality || ''));
+      } else {
+        setForm({ ...INIT_FORM, title: existingProposal.title, clientId: existingProposal.client_id || '' });
+        setSelectedModality('todo-costo');
+      }
+      setLoading(false);
+    } else {
+      setForm({ ...INIT_FORM, title: existingProposal.title, clientId: existingProposal.client_id || '' });
+      setSelectedModality('todo-costo');
+    }
+  }
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -64,6 +122,7 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
     setProposal(null); setEditableText(''); 
     setLinkedClientId(initialClientId || '');
     setMessages([INITIAL_FORM_CHAT_MSG]); 
+    setSelectedModality('todo-costo');
     
     const initialClient = clients.find(c => c.id === initialClientId);
     setForm({ ...INIT_FORM, clientId: initialClientId || '', clientName: initialClient?.name || '' });
@@ -98,24 +157,32 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
 
   async function handleSave() {
     if (!proposal) return;
+    if (isSales && existingProposal && existingProposal.status !== 'proposal') {
+      return alert('Ventas no puede modificar proyectos aprobados.');
+    }
     setLoading(true); setError('');
     try {
       const amountStr = String(proposal.investmentAmount ?? '');
       const amount = parseFloat(amountStr.replace(/[^0-9.]/g, '')) || 0;
 
-      let proposalNumber = 1;
-      const { data: maxRow } = await supabase
-        .from('projects')
-        .select('proposal_number')
-        .not('proposal_number', 'is', null)
-        .order('proposal_number', { ascending: false })
-        .limit(1);
-      if (maxRow && maxRow.length > 0) {
-        proposalNumber = (maxRow[0].proposal_number || 0) + 1;
-      }
+      if (existingProposal) {
+        const { error: err } = await supabase.from('projects').update({ client_id: linkedClientId || null, title: proposal.title, description: editableText, budget_usd: amount }).eq('id', existingProposal.id);
+        if (err) throw new Error(err.message);
+      } else {
+        let proposalNumber = 1;
+        const { data: maxRow } = await supabase
+          .from('projects')
+          .select('proposal_number')
+          .not('proposal_number', 'is', null)
+          .order('proposal_number', { ascending: false })
+          .limit(1);
+        if (maxRow && maxRow.length > 0) {
+          proposalNumber = (maxRow[0].proposal_number || 0) + 1;
+        }
 
-      const { error: err } = await supabase.from('projects').insert([{ client_id: linkedClientId || null, title: proposal.title, description: editableText, status: 'proposal', budget_usd: amount, proposal_number: proposalNumber }]);
-      if (err) throw new Error(err.message);
+        const { error: err } = await supabase.from('projects').insert([{ client_id: linkedClientId || null, title: proposal.title, description: editableText, status: 'proposal', budget_usd: amount, proposal_number: proposalNumber }]);
+        if (err) throw new Error(err.message);
+      }
       setStep('done'); onSaved?.();
     } catch (e: any) { setError(e.message); }
     finally { setLoading(false); }
@@ -124,7 +191,12 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
   async function handleSaveManual() {
     setLoading(true); setError('');
     try {
-      const fullText = `Proyecto: ${form.title}\nFecha: ${new Date().toLocaleDateString()}\nPara: ${form.clientName}\nÁrea de Ejecución: ${form.area}\n\nObjetivo del Proyecto\n${form.objective}\n\nFases del Trabajo (Alcance Técnico)\n${form.phases}\n\nTiempo de Ejecución y Entrega\n${form.time}\n\nPresupuesto de Inversión (A Todo Costo)\n${form.investmentModality}\n\nINVERSIÓN TOTAL: $${form.amount}\n\nCondiciones y Métodos de Pago\nEsquema de Pago: ${form.payment}\nMoneda de Pago: ${form.currency}\nFormas de Pago: ${form.paymentMethods}`;
+      let modalityHeader = 'Presupuesto de Inversión (A Todo Costo)';
+      if (selectedModality === 'mano-obra') modalityHeader = 'Presupuesto de Inversión (Solo Mano de Obra)';
+      else if (selectedModality === 'materiales') modalityHeader = 'Presupuesto de Inversión (Materiales)';
+      else if (selectedModality === 'personalizado') modalityHeader = 'Presupuesto de Inversión';
+
+      const fullText = `Proyecto: ${form.title}\nFecha: ${new Date().toLocaleDateString()}\nPara: ${form.clientName}\nÁrea de Ejecución: ${form.area}\n\nObjetivo del Proyecto\n${form.objective}\n\nFases del Trabajo (Alcance Técnico)\n${form.phases}\n\nTiempo de Ejecución y Entrega\n${form.time}\n\n${modalityHeader}\n${form.investmentModality}\n\nINVERSIÓN TOTAL: $${form.amount}\n\nCondiciones y Métodos de Pago\nEsquema de Pago: ${form.payment}\nMoneda de Pago: ${form.currency}\nFormas de Pago: ${form.paymentMethods}`;
       setProposal({
         title: form.title,
         clientName: form.clientName,
@@ -185,7 +257,7 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
             <FileText size={18} style={{ color: 'var(--primary-color)' }} />
           </div>
           <div>
-            <h2 style={{ margin: 0, fontSize: '1.1rem' }}>Nueva Propuesta</h2>
+            <h2 style={{ margin: 0, fontSize: '1.1rem' }}>{existingProposal ? 'Editar Propuesta' : 'Nueva Propuesta'}</h2>
             <p className="text-muted" style={{ margin: 0, fontSize: '.78rem' }}>
               {mode === 'manual' ? 'Completa los campos o conversa con Pepe para que lo haga por ti.'
                 : mode === 'ai' && step === 'preview' ? 'Revisa y edita antes de formalizar' : ''}
@@ -206,7 +278,7 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
             <div style={{ background: 'rgba(16,185,129,.1)', width: 72, height: 72, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <CheckCircle size={36} style={{ color: 'var(--success)' }} />
             </div>
-            <h3 style={{ color: 'white' }}>¡Propuesta Formalizada!</h3>
+            <h3 style={{ color: 'white' }}>{existingProposal ? '¡Propuesta Actualizada!' : '¡Propuesta Formalizada!'}</h3>
             <p className="text-muted">Guardada con estado <strong style={{ color: 'var(--primary-color)' }}>Propuesta Pendiente</strong>.<br />Puedes hacerle seguimiento desde Proyectos.</p>
             <button className="btn-primary" onClick={onClose}>Cerrar</button>
           </div>
@@ -381,28 +453,56 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
                   </div>
 
                   <div style={{ gridColumn: 'span 2' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '.4rem' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', marginBottom: '0.6rem' }}>
                       <label style={{ fontSize: '.85rem', color: 'var(--text-muted)' }}>Modalidad del Presupuesto</label>
-                      <select 
-                        className="input-field" 
-                        style={{ padding: '.15rem .4rem', fontSize: '.75rem', width: 'auto', minHeight: 'auto', background: 'rgba(255,255,255,0.05)' }}
-                        onChange={e => {
-                          const val = e.target.value;
-                          let text = form.investmentModality;
-                          if (val === 'A Todo Costo') {
-                            text = 'La presente propuesta técnica y económica ha sido estructurada bajo la modalidad "A Todo Costo". Esta condición establece que el monto total presupuestado contempla el suministro integral de la totalidad de los materiales requeridos para la ejecución (tales como mantos, láminas de fibrocemento, cemento, pintura, etc.), así como los costos de fletes, maquinarias, herramientas menores, consumibles y la disposición de mano de obra altamente calificada. Nuestro compromiso es entregar el proyecto 100% terminado, operativo y con los más altos estándares de calidad, relevando al cliente de cualquier gestión de procura o gastos operativos adicionales.';
-                          } else if (val === 'Solo Mano de Obra') {
-                            text = 'La presente propuesta técnica y económica ha sido estructurada bajo la modalidad de "Solo Mano de Obra". Bajo esta condición, P&P CONSTRUYE se encarga exclusivamente de la disposición de mano de obra altamente calificada y las herramientas necesarias para la ejecución del proyecto. El suministro integral de todos los materiales requeridos (tales como lajas, cemento, adhesivos, etc.), así como los costos de fletes de materiales, son responsabilidad directa del cliente.';
-                          }
-                          setForm(prev => ({ ...prev, investmentModality: text }));
-                        }}
-                      >
-                        <option value="A Todo Costo">A Todo Costo</option>
-                        <option value="Solo Mano de Obra">Solo Mano de Obra</option>
-                        <option value="Personalizado">Personalizado</option>
-                      </select>
+                      <div style={{ display: 'flex', background: 'rgba(0,0,0,0.2)', padding: '4px', borderRadius: '8px', border: '1px solid var(--border-color)', gap: '4px' }}>
+                        {[
+                          { id: 'todo-costo', label: 'Todo costo', template: TEMPLATE_TODO_COSTO },
+                          { id: 'mano-obra', label: 'Mano de obra', template: TEMPLATE_MANO_OBRA },
+                          { id: 'materiales', label: 'Materiales', template: TEMPLATE_MATERIALES },
+                          { id: 'personalizado', label: 'Personalizado', template: null }
+                        ].map(tab => (
+                          <button
+                            key={tab.id}
+                            type="button"
+                            onClick={() => {
+                              setSelectedModality(tab.id as ModalityType);
+                              if (tab.template !== null) {
+                                setForm(prev => ({ ...prev, investmentModality: tab.template }));
+                              }
+                            }}
+                            style={{
+                              flex: 1,
+                              padding: '0.4rem 0.6rem',
+                              borderRadius: '6px',
+                              border: 'none',
+                              fontSize: '0.78rem',
+                              fontWeight: '600',
+                              cursor: 'pointer',
+                              background: selectedModality === tab.id ? 'var(--primary-color)' : 'transparent',
+                              color: selectedModality === tab.id ? '#000' : 'var(--text-muted)',
+                              transition: 'all 0.2s ease',
+                            }}
+                          >
+                            {tab.label}
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                    <textarea className="input-field" style={{ minHeight: 70, resize: 'vertical', transition: 'all 0.3s', boxShadow: highlightedFields.investmentModality ? '0 0 0 2px var(--primary-color)' : 'none' }} value={form.investmentModality} onChange={e => setForm({ ...form, investmentModality: e.target.value })} />
+                    <textarea 
+                      className="input-field" 
+                      style={{ minHeight: 70, resize: 'vertical', transition: 'all 0.3s', boxShadow: highlightedFields.investmentModality ? '0 0 0 2px var(--primary-color)' : 'none' }} 
+                      value={form.investmentModality} 
+                      onChange={e => {
+                        const val = e.target.value;
+                        setForm({ ...form, investmentModality: val });
+                        if (val !== TEMPLATE_TODO_COSTO && val !== TEMPLATE_MANO_OBRA && val !== TEMPLATE_MATERIALES) {
+                          setSelectedModality('personalizado');
+                        } else {
+                          setSelectedModality(detectModalityType(val));
+                        }
+                      }} 
+                    />
                   </div>
                   {error && <div style={{ gridColumn: 'span 2', ...cardStyle, background: 'rgba(239,68,68,.08)', borderColor: 'rgba(239,68,68,.3)' }}><p style={{ margin: 0, fontSize: '.85rem', color: 'var(--danger)' }}>{error}</p></div>}
                 </div>
@@ -472,7 +572,7 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
             <>
               <button className="btn-secondary" onClick={() => { setMode('manual'); setStep('chat'); }}>← Seguir editando</button>
               <button className="btn-primary" onClick={handleSave} disabled={loading} style={{ display: 'flex', alignItems: 'center', gap: '.5rem', minWidth: 195, justifyContent: 'center' }}>
-                {loading ? <><Loader2 size={15} style={{ animation: 'spin 1s linear infinite' }} /> Guardando...</> : <><Save size={15} /> Confirmar Guardado</>}
+                {loading ? <><Loader2 size={15} style={{ animation: 'spin 1s linear infinite' }} /> Guardando...</> : <><Save size={15} /> {existingProposal ? 'Guardar Cambios' : 'Confirmar Guardado'}</>}
               </button>
             </>
           ) : mode === 'manual' && step === 'chat' && (
@@ -482,7 +582,7 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
                 <Eye size={15} /> Previsualización
               </button>
               <button className="btn-primary" onClick={handleSaveManual} disabled={loading || !form.title.trim()} style={{ display: 'flex', alignItems: 'center', gap: '.5rem', minWidth: 195, justifyContent: 'center' }}>
-                {loading ? <><Loader2 size={15} style={{ animation: 'spin 1s linear infinite' }} /> Preparando...</> : <><FileText size={15} /> Formalizar Propuesta</>}
+                {loading ? <><Loader2 size={15} style={{ animation: 'spin 1s linear infinite' }} /> Preparando...</> : <><FileText size={15} /> {existingProposal ? 'Guardar Cambios' : 'Formalizar Propuesta'}</>}
               </button>
             </>
           )}
@@ -575,7 +675,7 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
                   <h3 style={{ margin: '0 0 1rem 0', fontSize: '12pt', color: '#000', textAlign: 'center' }}>Resumen Financiero y Ejecución</h3>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1rem' }}>
                     <div style={{ flex: 1 }}>
-                      <p style={{ margin: '0 0 0.5rem 0' }}><strong style={{ color: '#000' }}>Inversión Total (USD):</strong> ${form.amount ? Number(form.amount).toLocaleString('es-VE', {minimumFractionDigits:2, maximumFractionDigits:2}) : '0,00'}</p>
+                      <p style={{ margin: '0 0 0.5rem 0' }}><strong style={{ color: '#000' }}>Inversión Total (USD):</strong> ${form.amount ? formatCurrency(form.amount) : '0,00'}</p>
                       <p style={{ margin: '0 0 0.5rem 0' }}><strong style={{ color: '#000' }}>Condiciones de Pago:</strong> {form.payment}</p>
                       <p style={{ margin: '0 0 0.5rem 0' }}><strong style={{ color: '#000' }}>Tiempo Estimado:</strong> {form.time || '_______________'}</p>
                       {form.currency && <p style={{ margin: '0 0 0.5rem 0' }}><strong style={{ color: '#000' }}>Moneda de Pago:</strong> {form.currency}</p>}
