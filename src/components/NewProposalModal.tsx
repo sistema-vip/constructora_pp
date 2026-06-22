@@ -655,18 +655,7 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
                 {form.phases && (
                   <div style={{ marginBottom: '1.5rem' }}>
                     <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '11pt', color: '#000', borderBottom: '1px solid #ccc', paddingBottom: '0.25rem' }}>Fases del Trabajo (Alcance Técnico)</h3>
-                    {(() => {
-                      const items = form.phases.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-                      return items.length > 0 ? (
-                        <ol style={{ margin: 0, paddingLeft: '1.25rem', listStyleType: 'decimal' }}>
-                          {items.map((item, idx) => (
-                            <li key={idx} style={{ marginBottom: '0.5rem', textAlign: 'justify' }}>
-                              {parseBoldText(item.replace(/^[-*•\d]+[\s.-]*/, '').trim())}
-                            </li>
-                          ))}
-                        </ol>
-                      ) : null;
-                    })()}
+                    <p style={{ margin: 0, textAlign: 'justify', whiteSpace: 'pre-wrap' }}>{parseBoldText(form.phases)}</p>
                   </div>
                 )}
 
