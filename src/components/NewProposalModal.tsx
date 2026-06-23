@@ -50,6 +50,14 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
     });
   };
 
+  /**
+   * ⚠️ PROTECTED COMPONENT BLOCK — CORPORATE IDENTITY ⚠️
+   * 
+   * The following parsing and rendering logic (renderTextWithSpacing) defines the 
+   * OFFICIAL print design of the proposals. 
+   * DO NOT MODIFY the visual structure, fonts, margins, or rendering rules 
+   * without explicit approval from the client.
+   */
   const renderTextWithSpacing = (text: string | null | undefined) => {
     if (!text) return null;
     return text.split(/\n{2,}/).map((paragraph, idx) => (
@@ -675,6 +683,11 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
             </div>
 
             <div style={{ padding: '2rem' }}>
+              {/* 
+                ⚠️ PROTECTED COMPONENT BLOCK — CORPORATE IDENTITY ⚠️
+                DO NOT MODIFY the visual structure, fonts, margins, or rendering rules 
+                of this print layout without explicit approval from the client.
+              */}
               {/* Contenedor del documento imprimible estilo A4 */}
               <div id="printable-draft" style={{ 
                 background: 'white', 

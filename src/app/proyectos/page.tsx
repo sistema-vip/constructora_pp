@@ -46,6 +46,14 @@ export default function ProyectosPage() {
     return text.replace(/\*\*/g, '');
   };
 
+  /**
+   * ⚠️ PROTECTED COMPONENT BLOCK — CORPORATE IDENTITY ⚠️
+   * 
+   * The following parsing and rendering logic (renderStructuredProposal) defines the 
+   * OFFICIAL print design of the proposals. 
+   * DO NOT MODIFY the visual structure, fonts, margins, or rendering rules 
+   * without explicit approval from the client.
+   */
   const renderStructuredProposal = (text: string | null | undefined) => {
     if (!text) return null;
 
@@ -769,6 +777,11 @@ export default function ProyectosPage() {
             {/* Contenido (Visible al imprimir) */}
             <div className="print-area" style={{ padding: '2rem', overflowY: 'auto', flex: 1, background: '#ffffff' }}>
               
+              {/* 
+                ⚠️ PROTECTED COMPONENT BLOCK — CORPORATE IDENTITY ⚠️
+                DO NOT MODIFY the visual structure, fonts, margins, or rendering rules 
+                of this print layout without explicit approval from the client.
+              */}
               {/* Header de la Propuesta (Solo se ve bien en blanco o al imprimir si no estamos editando) */}
                 <div style={{ marginBottom: '1.5rem', display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', borderBottom: '2px solid #b87333', paddingBottom: '0.5rem' }}>
                   <Image src="/logo_3d.png" alt="P&P CONSTRUYE" width={160} height={80} style={{ objectFit: 'contain' }} priority />
