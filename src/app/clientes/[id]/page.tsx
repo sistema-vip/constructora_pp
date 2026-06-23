@@ -34,7 +34,12 @@ import {
   Loader2,
   Archive,
   ChevronDown,
-  ChevronRight
+  ChevronRight,
+  Eye,
+  Wallet,
+  RotateCcw,
+  Check,
+  Ban
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency, handleMoneyInput, parseCurrency, formatOnBlur } from '@/lib/formatters';
@@ -87,7 +92,8 @@ export default function ClienteDashboard() {
 
   // Estados para Eliminación Protegida
   const [showAdminAuth, setShowAdminAuth] = useState(false);
-  const [authAction, setAuthAction] = useState<'delete' | 'edit_project'>('delete');
+  const [authAction, setAuthAction] = useState<'delete' | 'edit_project' | 'approve_proposal' | 'reject_proposal'>('delete');
+  const [projectToUpdateStatus, setProjectToUpdateStatus] = useState<string | null>(null);
   const [adminPassword, setAdminPassword] = useState('');
   const [authError, setAuthError] = useState('');
   const [itemToDelete, setItemToDelete] = useState<{ id: string, type: 'project' | 'payment' | 'cost' | 'extra' | 'commitment' | 'advance' | 'payable_payment' } | null>(null);
@@ -101,6 +107,12 @@ export default function ClienteDashboard() {
   const { role } = useUser();
   const { isObserver, isClient, isAdmin, isSales } = useAdminAction();
   const isViewer = isObserver || isClient; // Both act as viewers for financial transactions
+
+  const isActionDisabledForSales = (projectId: string) => {
+    if (!isSales) return false;
+    const p = projects.find(x => x.id === projectId);
+    return p ? p.status !== 'proposal' : true;
+  };
   
   // Tabs State
   const [activeTab, setActiveTab] = useState<'proyectos' | 'pagos' | 'gastos' | 'adicionales' | 'compromisos' | 'cuentas_pagar' | 'retiros' | 'propuestas' | 'historial'>('proyectos');
@@ -118,6 +130,10 @@ export default function ClienteDashboard() {
   const [commitmentForm, setCommitmentForm] = useState({ project_id: '', description: '', provider: '', category: 'materials', quantity: 1, unit_price_usd: '', date: new Date().toISOString().split('T')[0] });
   const [showAdvanceModal, setShowAdvanceModal] = useState(false);
   const [advanceForm, setAdvanceForm] = useState({ project_id: '', partner_name: 'Henry Peraza', amount_usd: '', description: '', date: new Date().toISOString().split('T')[0] });
+  const [showCommitmentPayModal, setShowCommitmentPayModal] = useState(false);
+  const [commitmentToPay, setCommitmentToPay] = useState<any>(null);
+  const [selectedCommitmentForDetails, setSelectedCommitmentForDetails] = useState<any>(null);
+  const [commitmentPayForm, setCommitmentPayForm] = useState({ amount_usd: '', description: '', reference: '', date: new Date().toISOString().split('T')[0] });
 
   // Cuentas por Pagar state
   const [clientPayableAccounts, setClientPayableAccounts] = useState<any[]>([]);
@@ -269,7 +285,29 @@ export default function ClienteDashboard() {
 
     if (authAction === 'edit_project') {
       setShowAdminAuth(false);
-      setShowEditProjectModal(true);
+      setShowProposalModal(true);
+      return;
+    }
+
+    if (authAction === 'approve_proposal' || authAction === 'reject_proposal') {
+      if (!projectToUpdateStatus) return;
+      const newStatus = authAction === 'approve_proposal' ? 'in_progress' : 'cancelled';
+      setDeleting(true);
+      try {
+        const { error } = await supabase
+          .from('projects')
+          .update({ status: newStatus })
+          .eq('id', projectToUpdateStatus);
+        
+        if (error) throw error;
+        setShowAdminAuth(false);
+        setProjectToUpdateStatus(null);
+        await fetchClientData();
+      } catch (error: any) {
+        alert('Error al actualizar estado: ' + error.message);
+      } finally {
+        setDeleting(false);
+      }
       return;
     }
 
@@ -316,16 +354,56 @@ export default function ClienteDashboard() {
     e.preventDefault();
     if (isViewer) return;
 
+    const account = clientPayableAccounts.find(a => a.id === payablePaymentForm.payable_account_id);
+    if (account && isActionDisabledForSales(account.project_id)) {
+      return alert('Ventas no puede modificar proyectos aprobados.');
+    }
+
     try {
+      const paymentAmount = parseFloat(payablePaymentForm.amount_usd) || 0;
       const { error } = await supabase.from('payable_payments').insert([{
         payable_account_id: payablePaymentForm.payable_account_id,
-        amount_usd: parseFloat(payablePaymentForm.amount_usd) || 0,
+        amount_usd: paymentAmount,
         description: payablePaymentForm.description,
         reference: payablePaymentForm.reference,
         date: payablePaymentForm.date
       }]);
 
       if (error) throw error;
+
+      if (account && account.project_id) {
+        // Registrar el gasto en project_costs
+        let costCategory = 'materials';
+        if (account.type === 'obrero') costCategory = 'labor';
+        else if (account.type === 'alquiler') costCategory = 'equipment';
+        else if (account.type === 'subcontratista') costCategory = 'subcontract';
+
+        const { error: costError } = await supabase.from('project_costs').insert([{
+          project_id: account.project_id,
+          description: `Abono a CxP: ${account.name} - ${payablePaymentForm.description}`,
+          provider: account.name,
+          category: costCategory,
+          quantity: 1,
+          unit_price_usd: paymentAmount,
+          total_usd: paymentAmount,
+          date: payablePaymentForm.date
+        }]);
+
+        if (costError) console.error("Error al registrar gasto:", costError);
+
+        // Verificar si la deuda está saldada y actualizar estado
+        const previouslyPaid = account.payable_payments?.reduce((sum: number, p: any) => sum + Number(p.amount_usd), 0) || 0;
+        const totalAmount = Number(account.total_amount_usd);
+        const remainingBalance = totalAmount - previouslyPaid - paymentAmount;
+
+        if (remainingBalance <= 0.01) {
+          const { error: statusError } = await supabase.from('payable_accounts')
+            .update({ status: 'paid' })
+            .eq('id', account.id);
+          if (statusError) console.error("Error al actualizar estado CxP:", statusError);
+        }
+      }
+
       setShowPayablePaymentModal(false);
       setPayablePaymentForm({ payable_account_id: '', amount_usd: '', description: '', reference: '', date: new Date().toISOString().split('T')[0] });
       fetchClientData();
@@ -411,9 +489,15 @@ export default function ClienteDashboard() {
 
     setReopening(true);
     try {
+      const targetProject = projects.find(p => p.id === projectToReopen);
+      const isRevert = targetProject?.status === 'in_progress';
+      const updateData = isRevert 
+        ? { status: 'proposal' } 
+        : { archived_at: null, status: 'in_progress' };
+
       const { error } = await supabase
         .from('projects')
-        .update({ archived_at: null, status: 'in_progress' })
+        .update(updateData)
         .eq('id', projectToReopen);
       
       if (error) throw error;
@@ -429,6 +513,8 @@ export default function ClienteDashboard() {
   };
 
   const initiateEdit = (project: any) => {
+    if (isSales && project.status !== 'proposal') return alert('Ventas no puede modificar proyectos aprobados.');
+
     setProjectToEdit(project);
     setEditForm({
       title: project.title || '',
@@ -436,6 +522,12 @@ export default function ClienteDashboard() {
       description: project.description || ''
     });
     setAiRefinement('');
+
+    if (isSales && project.status === 'proposal') {
+      setShowProposalModal(true);
+      return;
+    }
+
     setAuthAction('edit_project');
     setShowAdminAuth(true);
     setAdminPassword('');
@@ -487,6 +579,7 @@ export default function ClienteDashboard() {
   async function handleAddPayment(e: React.FormEvent) {
     e.preventDefault();
     if (!paymentForm.project_id) return alert('Seleccione un proyecto origen.');
+    if (isActionDisabledForSales(paymentForm.project_id)) return alert('Ventas no puede modificar proyectos aprobados.');
     const { error } = await supabase.from('project_payments').insert([{
       project_id: paymentForm.project_id,
       amount_usd: parseCurrency(paymentForm.amount_usd),
@@ -504,6 +597,7 @@ export default function ClienteDashboard() {
   async function handleAddCost(e: React.FormEvent) {
     e.preventDefault();
     if (!costForm.project_id) return alert('Seleccione un proyecto destino.');
+    if (isActionDisabledForSales(costForm.project_id)) return alert('Ventas no puede modificar proyectos aprobados.');
     const unitPrice = parseCurrency(costForm.unit_price_usd);
     const { error } = await supabase.from('project_costs').insert([{
       project_id: costForm.project_id,
@@ -525,6 +619,7 @@ export default function ClienteDashboard() {
   async function handleAddExtra(e: React.FormEvent) {
     e.preventDefault();
     if (!extraForm.project_id) return alert('Seleccione un proyecto origen.');
+    if (isActionDisabledForSales(extraForm.project_id)) return alert('Ventas no puede modificar proyectos aprobados.');
     const { error } = await supabase.from('project_extras').insert([{
       project_id: extraForm.project_id,
       description: extraForm.description,
@@ -540,6 +635,7 @@ export default function ClienteDashboard() {
   async function handleAddCommitment(e: React.FormEvent) {
     e.preventDefault();
     if (!commitmentForm.project_id) return alert('Seleccione un proyecto origen.');
+    if (isActionDisabledForSales(commitmentForm.project_id)) return alert('Ventas no puede modificar proyectos aprobados.');
     
     const data = {
       project_id: commitmentForm.project_id,
@@ -583,6 +679,7 @@ export default function ClienteDashboard() {
 
   const initiateEditItem = (item: any, type: 'payment' | 'cost' | 'commitment') => {
     if (isViewer) return;
+    if (isActionDisabledForSales(item.project_id)) return alert('Ventas no puede modificar proyectos aprobados.');
     setEditingItem(item);
     setEditItemType(type);
     setEditItemForm({ ...item });
@@ -663,9 +760,85 @@ export default function ClienteDashboard() {
     }
   };
 
+  async function handleCommitmentPayment(e: React.FormEvent) {
+    e.preventDefault();
+    if (isViewer || !commitmentToPay) return;
+
+    const monto = parseFloat(commitmentPayForm.amount_usd) || 0;
+    if (monto <= 0) return alert('El monto debe ser mayor a 0');
+
+    try {
+      let payableAccountId = commitmentToPay.payable_accounts?.[0]?.id;
+
+      if (!payableAccountId) {
+        let payableType = 'otro';
+        if (commitmentToPay.category === 'materials') payableType = 'proveedor';
+        else if (commitmentToPay.category === 'labor') payableType = 'obrero';
+        else if (commitmentToPay.category === 'equipment') payableType = 'alquiler';
+        else if (commitmentToPay.category === 'subcontract') payableType = 'subcontratista';
+
+        const { data: newPayable, error: payableError } = await supabase.from('payable_accounts').insert([{
+          name: commitmentToPay.provider || 'Proveedor sin nombre',
+          type: payableType,
+          total_amount_usd: commitmentToPay.amount_usd || (commitmentToPay.quantity * commitmentToPay.unit_price_usd),
+          project_id: commitmentToPay.project_id,
+          commitment_id: commitmentToPay.id,
+          description: commitmentToPay.description
+        }]).select().single();
+
+        if (payableError) throw new Error(`Error al crear la cuenta por pagar vinculada: ${payableError.message}`);
+        payableAccountId = newPayable.id;
+        commitmentToPay.payable_accounts = [{ id: payableAccountId, payable_payments: [] }];
+      }
+
+      // 1. Insert into payable_payments
+      const { error: payError } = await supabase.from('payable_payments').insert([{
+        payable_account_id: payableAccountId,
+        amount_usd: monto,
+        description: commitmentPayForm.description,
+        reference: commitmentPayForm.reference,
+        date: commitmentPayForm.date
+      }]);
+      if (payError) throw new Error(`Error al registrar abono en la cuenta por pagar: ${payError.message}`);
+
+      // 2. Insert into project_costs
+      const { error: costError } = await supabase.from('project_costs').insert([{
+        project_id: commitmentToPay.project_id,
+        description: `Abono: ${commitmentToPay.provider || 'Proveedor'} - ${commitmentPayForm.description}`,
+        provider: commitmentToPay.provider || 'N/A',
+        category: commitmentToPay.category, // using original category
+        quantity: 1,
+        unit_price_usd: monto,
+        total_usd: monto,
+        date: commitmentPayForm.date
+      }]);
+      if (costError) throw new Error(`Error al registrar como gasto: ${costError.message}`);
+
+      // 3. Update status if fully paid
+      const previouslyPaid = commitmentToPay.payable_accounts?.[0]?.payable_payments?.reduce((s: any, p: any) => s + Number(p.amount_usd), 0) || 0;
+      const totalAmount = Number(commitmentToPay.amount_usd || (commitmentToPay.quantity * commitmentToPay.unit_price_usd));
+      const remainingBalance = totalAmount - previouslyPaid - monto;
+
+      if (remainingBalance <= 0.01) {
+        await supabase.from('payable_accounts')
+          .update({ status: 'paid' })
+          .eq('id', payableAccountId);
+      }
+
+      setShowCommitmentPayModal(false);
+      setCommitmentToPay(null);
+      setCommitmentPayForm({ amount_usd: '', description: '', reference: '', date: new Date().toISOString().split('T')[0] });
+      fetchClientData();
+    } catch (err: any) {
+      alert(err.message);
+    }
+  }
+
+
   async function handleAddAdvance(e: React.FormEvent) {
     e.preventDefault();
     if (!advanceForm.project_id) return alert('Seleccione un proyecto relacionado.');
+    if (isActionDisabledForSales(advanceForm.project_id)) return alert('Ventas no puede modificar proyectos aprobados.');
 
     const { error } = await supabase.from('partner_advances').insert([{
       project_id: advanceForm.project_id,
@@ -712,13 +885,17 @@ export default function ClienteDashboard() {
   const allPayments = financialProjects.flatMap(p => p.project_payments.map(x => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })));
   const allCosts = financialProjects.flatMap(p => p.project_costs.map(x => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })));
   const allExtras = financialProjects.flatMap(p => p.project_extras.map(x => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })));
-  const allCommitments = financialProjects.flatMap(p => p.project_commitments.map(x => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })));
+  const allCommitments = projects.flatMap(p => p.project_commitments?.map(x => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })) || []);
   const allAdvances = financialProjects.flatMap(p => p.partner_advances.map(x => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })));
 
   const totalContracted = financialProjects.reduce((sum, p) => sum + Number(p.budget_usd), 0) + allExtras.reduce((sum, e) => sum + Number(e.amount_usd), 0);
   const totalPaid = allPayments.reduce((sum, p) => sum + Number(p.amount_usd), 0);
   const totalCostsValue = allCosts.reduce((sum, c) => sum + (Number(c.quantity) * Number(c.unit_price_usd)), 0);
-  const totalCommitted = allCommitments.reduce((sum, c) => sum + Number(c.amount_usd), 0);
+  const totalCommitted = allCommitments.reduce((sum, c) => {
+    const paid = c.payable_accounts?.[0]?.payable_payments?.reduce((s: any, p: any) => s + Number(p.amount_usd), 0) || 0;
+    const balance = Number(c.amount_usd || (c.quantity * c.unit_price_usd)) - paid;
+    return sum + Math.max(0, balance);
+  }, 0);
   const totalAdvances = allAdvances.reduce((sum, a) => sum + Number(a.amount_usd), 0);
 
   const balanceDue = totalContracted - totalPaid;
@@ -783,8 +960,8 @@ export default function ClienteDashboard() {
             <PlusCircle size={16} /> Nueva Propuesta
           </button>
           
-          {/* Solo Admin o Sales pueden ver el resto de botones transaccionales */}
-          {!isClient && (
+          {/* Solo Admin pueden ver el resto de botones transaccionales */}
+          {!isClient && !isSales && (
             <>
               <button className="btn-primary" onClick={() => setShowMergeModal(true)} style={{ height: '38px', padding: '0 1.1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', background: '#8b5cf6', borderColor: '#8b5cf6' }}>
                 <PlusCircle size={16} /> Unificar Proyectos
@@ -989,8 +1166,7 @@ export default function ClienteDashboard() {
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead>
                       <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                        <th style={{ textAlign: 'left', padding: '1rem' }}>FECHA</th>
-                        <th style={{ textAlign: 'left', padding: '1rem' }}>TÍTULO</th>
+                        <th style={{ textAlign: 'left', padding: '1rem' }}>PROPUESTA</th>
                         <th style={{ textAlign: 'right', padding: '1rem' }}>MONTO PROPUESTO</th>
                         <th style={{ textAlign: 'right', padding: '1rem' }}>ACCIONES</th>
                       </tr>
@@ -998,10 +1174,18 @@ export default function ClienteDashboard() {
                     <tbody>
                       {pendingProposals.map(p => (
                         <tr key={p.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                          <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>{new Date(p.created_at).toLocaleDateString()}</td>
                           <td style={{ padding: '1rem' }}>
-                            <div style={{ fontWeight: 'bold' }}>{p.title}</div>
-                            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', maxWidth: '300px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.description}</div>
+                            <div style={{ fontWeight: 'bold', color: 'white', marginBottom: '0.2rem' }}>
+                              {p.title}
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                              {p.proposal_number && (
+                                <span style={{ background: 'rgba(59,130,246,0.1)', color: 'var(--primary-color)', padding: '0.1rem 0.4rem', borderRadius: '4px', border: '1px solid rgba(59,130,246,0.2)' }}>
+                                  Propuesta #{p.proposal_number}
+                                </span>
+                              )}
+                              <span>📅 {new Date(p.created_at).toLocaleDateString()}</span>
+                            </div>
                           </td>
                           <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold' }}>${formatCurrency(p.budget_usd)}</td>
                           <td style={{ padding: '1rem', textAlign: 'right' }}>
@@ -1026,6 +1210,38 @@ export default function ClienteDashboard() {
                             <button className="btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', marginRight: '0.5rem' }} onClick={() => router.push(`/proyectos?print=${p.id}`)}>
                               <Printer size={14} /> Imprimir
                             </button>
+                            {!isObserver && (
+                              <>
+                                <button
+                                  className="btn-primary"
+                                  style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', marginRight: '0.5rem', background: 'var(--success)', borderColor: 'var(--success)' }}
+                                  title="Aprobar Propuesta"
+                                  onClick={() => {
+                                    setProjectToUpdateStatus(p.id);
+                                    setAuthAction('approve_proposal');
+                                    setShowAdminAuth(true);
+                                    setAdminPassword('');
+                                    setAuthError('');
+                                  }}
+                                >
+                                  <Check size={14} />
+                                </button>
+                                <button
+                                  className="btn-secondary"
+                                  style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', marginRight: '0.5rem', color: '#ffcc00' }}
+                                  title="Rechazar Propuesta"
+                                  onClick={() => {
+                                    setProjectToUpdateStatus(p.id);
+                                    setAuthAction('reject_proposal');
+                                    setShowAdminAuth(true);
+                                    setAdminPassword('');
+                                    setAuthError('');
+                                  }}
+                                >
+                                  <Ban size={14} />
+                                </button>
+                              </>
+                            )}
                             {!isViewer && (
                               <button 
                                 className="btn-secondary" 
@@ -1072,8 +1288,17 @@ export default function ClienteDashboard() {
                         return (
                           <tr key={project.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
                             <td style={{ padding: '1rem' }}>
-                              <div style={{ fontWeight: 'bold' }}>{project.proposal_number ? `#${project.proposal_number} - ` : ''}{project.title}</div>
-                              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{new Date(project.created_at).toLocaleDateString()}</div>
+                              <div style={{ fontWeight: 'bold', color: 'white', marginBottom: '0.2rem' }}>
+                                {project.title}
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                                {project.proposal_number && (
+                                  <span style={{ background: 'rgba(59,130,246,0.1)', color: 'var(--primary-color)', padding: '0.1rem 0.4rem', borderRadius: '4px', border: '1px solid rgba(59,130,246,0.2)' }}>
+                                    Propuesta #{project.proposal_number}
+                                  </span>
+                                )}
+                                <span>📅 {new Date(project.created_at).toLocaleDateString()}</span>
+                              </div>
                             </td>
                             <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold' }}>${formatCurrency(pContratado)}</td>
                             <td style={{ padding: '1rem', textAlign: 'right', color: 'var(--danger)' }}>${formatCurrency(pEgresos)}</td>
@@ -1092,6 +1317,16 @@ export default function ClienteDashboard() {
                               <button className="btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', marginRight: '0.5rem' }} onClick={() => router.push(`/proyectos?print=${project.id}`)} title="Imprimir reporte">
                                 <Printer size={14} />
                               </button>
+                              {!isObserver && project.status === 'in_progress' && (
+                                <button
+                                  className="btn-secondary"
+                                  style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', marginRight: '0.5rem', color: '#ffcc00', borderColor: 'rgba(255, 204, 0, 0.2)' }}
+                                  title="Retornar a Propuesta (requiere clave admin)"
+                                  onClick={() => initiateReopen(project.id)}
+                                >
+                                  <RotateCcw size={14} />
+                                </button>
+                              )}
                               <button
                                 className="btn-secondary"
                                 style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--danger)', borderColor: 'rgba(239, 68, 68, 0.2)' }}
@@ -1112,23 +1347,29 @@ export default function ClienteDashboard() {
 
           {activeTab === 'compromisos' && (
             <div>
-              {allCommitments.length === 0 ? (
-                <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>No hay compromisos (gastos por ejecutar) registrados.</div>
-              ) : (
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                  <thead>
-                    <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                      <th style={{ textAlign: 'left', padding: '1rem' }}>FECHA</th>
-                      <th style={{ textAlign: 'left', padding: '1rem' }}>CONCEPTO</th>
-                      <th style={{ textAlign: 'left', padding: '1rem' }}>PROVEEDOR</th>
-                      <th style={{ textAlign: 'left', padding: '1rem' }}>PROYECTO</th>
-                      <th style={{ textAlign: 'right', padding: '1rem' }}>ESTADO</th>
-                      <th style={{ textAlign: 'right', padding: '1rem' }}>SALDO (USD)</th>
-                      <th style={{ textAlign: 'right', padding: '1rem' }}></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {allCommitments.map(c => {
+              {(() => {
+                const activeCommitments = allCommitments.filter(c => {
+                  const paid = c.payable_accounts?.[0]?.payable_payments?.reduce((s: any, p: any) => s + Number(p.amount_usd), 0) || 0;
+                  const balance = Number(c.amount_usd || (c.quantity * c.unit_price_usd)) - paid;
+                  return balance > 0.01;
+                });
+                return activeCommitments.length === 0 ? (
+                  <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>No hay compromisos (gastos por ejecutar) registrados.</div>
+                ) : (
+                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                        <th style={{ textAlign: 'left', padding: '1rem' }}>FECHA</th>
+                        <th style={{ textAlign: 'left', padding: '1rem' }}>CONCEPTO</th>
+                        <th style={{ textAlign: 'left', padding: '1rem' }}>PROVEEDOR</th>
+                        <th style={{ textAlign: 'left', padding: '1rem' }}>PROYECTO</th>
+                        <th style={{ textAlign: 'right', padding: '1rem' }}>ESTADO</th>
+                        <th style={{ textAlign: 'right', padding: '1rem' }}>SALDO (USD)</th>
+                        <th style={{ textAlign: 'right', padding: '1rem' }}></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {activeCommitments.map(c => {
                       const paid = c.payable_accounts?.[0]?.payable_payments?.reduce((s: any, p: any) => s + Number(p.amount_usd), 0) || 0;
                       const balance = Number(c.amount_usd || (c.quantity * c.unit_price_usd)) - paid;
                       const isPaid = paid >= Number(c.amount_usd || (c.quantity * c.unit_price_usd));
@@ -1150,7 +1391,29 @@ export default function ClienteDashboard() {
                         </td>
                         <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold', color: 'var(--primary-color)' }}>- ${formatCurrency(balance)}</td>
                         <td style={{ padding: '1rem', textAlign: 'right', display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
-                          {!isViewer && (
+                          <button 
+                            className="btn-secondary" 
+                            style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--primary-color)', borderColor: 'rgba(59,130,246,0.2)' }}
+                            onClick={() => setSelectedCommitmentForDetails(c)}
+                            title="Ver detalles"
+                          >
+                            <Eye size={14} /> Detalles
+                          </button>
+                          {!isViewer && balance > 0 && !isActionDisabledForSales(c.project_id) && (
+                            <button
+                              className="btn-primary"
+                              style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem' }}
+                              onClick={() => {
+                                setCommitmentToPay(c);
+                                setCommitmentPayForm({ amount_usd: '', description: '', reference: '', date: new Date().toISOString().split('T')[0] });
+                                setShowCommitmentPayModal(true);
+                              }}
+                              title="Abonar al compromiso"
+                            >
+                              Abonar
+                            </button>
+                          )}
+                          {!isViewer && !isActionDisabledForSales(c.project_id) && (
                             <button
                               className="btn-secondary"
                               style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--primary-color)', borderColor: 'rgba(59, 130, 246, 0.2)' }}
@@ -1160,7 +1423,7 @@ export default function ClienteDashboard() {
                               <Edit3 size={14} />
                             </button>
                           )}
-                          {!isViewer && (
+                          {!isViewer && !isActionDisabledForSales(c.project_id) && (
                             <button
                               className="btn-secondary"
                               style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--danger)', borderColor: 'rgba(239, 68, 68, 0.2)' }}
@@ -1175,7 +1438,8 @@ export default function ClienteDashboard() {
                     })}
                   </tbody>
                 </table>
-              )}
+              );
+            })()}
             </div>
           )}
 
@@ -1246,7 +1510,7 @@ export default function ClienteDashboard() {
                               <td style={{ padding: '1rem', textAlign: 'right', color: 'var(--success)' }}>${formatCurrency(paid)}</td>
                               <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold', color: 'var(--danger)' }}>${formatCurrency(balance)}</td>
                               <td style={{ padding: '1rem', textAlign: 'right' }}>
-                                {!isViewer && (
+                                {!isViewer && !isActionDisabledForSales(account.project_id) && (
                                   <button 
                                     className="btn-primary" 
                                     style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem' }}
@@ -1301,7 +1565,7 @@ export default function ClienteDashboard() {
                                               <td style={{ padding: '0.5rem', color: 'var(--primary-color)' }}>{p.reference || '-'}</td>
                                               <td style={{ padding: '0.5rem', textAlign: 'right', fontWeight: 'bold' }}>${formatCurrency(p.amount_usd)}</td>
                                               <td style={{ padding: '0.5rem', textAlign: 'right' }}>
-                                                {!isViewer && (
+                                                {!isViewer && !isActionDisabledForSales(account.project_id) && (
                                                   <button 
                                                     className="btn-secondary"
                                                     style={{ padding: '0.2rem 0.5rem', color: 'var(--danger)', borderColor: 'transparent' }}
@@ -1353,7 +1617,7 @@ export default function ClienteDashboard() {
                         <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>{p.proposal_number ? `#${p.proposal_number} - ` : ''}{p.project_title}</td>
                         <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold', color: 'var(--success)' }}>+ ${formatCurrency(p.amount_usd)}</td>
                         <td style={{ padding: '1rem', textAlign: 'right', display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
-                          {!isViewer && (
+                          {!isViewer && !isActionDisabledForSales(p.project_id) && (
                             <button
                               className="btn-secondary"
                               style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--primary-color)', borderColor: 'rgba(59, 130, 246, 0.2)' }}
@@ -1363,7 +1627,7 @@ export default function ClienteDashboard() {
                               <Edit3 size={14} />
                             </button>
                           )}
-                          {!isViewer && (
+                          {!isViewer && !isActionDisabledForSales(p.project_id) && (
                             <button
                               className="btn-secondary"
                               style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--danger)', borderColor: 'rgba(239, 68, 68, 0.2)' }}
@@ -1406,7 +1670,7 @@ export default function ClienteDashboard() {
                         <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>{c.proposal_number ? `#${c.proposal_number} - ` : ''}{c.project_title}</td>
                         <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold', color: 'var(--danger)' }}>- ${formatCurrency(c.quantity * c.unit_price_usd)}</td>
                         <td style={{ padding: '1rem', textAlign: 'right', display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
-                          {!isViewer && (
+                          {!isViewer && !isActionDisabledForSales(c.project_id) && (
                             <button
                               className="btn-secondary"
                               style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--primary-color)', borderColor: 'rgba(59, 130, 246, 0.2)' }}
@@ -1416,7 +1680,7 @@ export default function ClienteDashboard() {
                               <Edit3 size={14} />
                             </button>
                           )}
-                          {!isViewer && (
+                          {!isViewer && !isActionDisabledForSales(c.project_id) && (
                             <button
                               className="btn-secondary"
                               style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--danger)', borderColor: 'rgba(239, 68, 68, 0.2)' }}
@@ -1455,7 +1719,7 @@ export default function ClienteDashboard() {
                         <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>{e.proposal_number ? `#${e.proposal_number} - ` : ''}{e.project_title}</td>
                         <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold', color: 'var(--primary-color)' }}>+ ${formatCurrency(e.amount_usd)}</td>
                         <td style={{ padding: '1rem', textAlign: 'right' }}>
-                          {!isViewer && (
+                          {!isViewer && !isActionDisabledForSales(e.project_id) && (
                             <button 
                               className="btn-secondary" 
                               style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--danger)', borderColor: 'rgba(239, 68, 68, 0.2)' }} 
@@ -1537,7 +1801,7 @@ export default function ClienteDashboard() {
                           <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>{a.proposal_number ? `#${a.proposal_number} - ` : ''}{a.project_title}</td>
                           <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold', color: '#a78bfa' }}>${formatCurrency(a.amount_usd)}</td>
                           <td style={{ padding: '1rem', textAlign: 'right' }}>
-                            {!isViewer && (
+                            {!isViewer && !isActionDisabledForSales(a.project_id) && (
                               <button 
                                 className="btn-secondary" 
                                 style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--danger)', borderColor: 'rgba(239, 68, 68, 0.2)' }} 
@@ -2346,15 +2610,17 @@ export default function ClienteDashboard() {
           <div className="card modal-content animate-fade" style={{ maxWidth: '400px', width: '90%' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.5rem', color: authAction === 'delete' ? 'var(--danger)' : 'var(--primary-color)' }}>
               {authAction === 'delete' ? <Trash2 size={28} /> : <AlertCircle size={28} />}
-              <h2 style={{ margin: 0, fontSize: '1.25rem', color: 'white' }}>
-                {authAction === 'delete' ? 'Confirmar Eliminación' : 'Autorizar Edición'}
-              </h2>
+              <h3 style={{ marginBottom: '0.5rem', color: authAction === 'delete' ? 'var(--danger)' : authAction === 'approve_proposal' ? 'var(--success)' : authAction === 'reject_proposal' ? '#ffcc00' : 'var(--primary-color)' }}>
+                {authAction === 'delete' ? '🗑️ Eliminar Renglón' : authAction === 'approve_proposal' ? '✅ Aprobar Propuesta' : authAction === 'reject_proposal' ? '🚫 Rechazar Propuesta' : '🔐 Acción Protegida'}
+              </h3>
             </div>
             
             <p style={{ color: 'var(--text-muted)', marginBottom: '1.5rem', fontSize: '0.9rem' }}>
-              {authAction === 'delete' 
-                ? 'Esta acción es irreversible y requiere privilegios de administrador. Ingresa la contraseña maestra para continuar.'
-                : 'La modificación de una propuesta requiere privilegios de administrador. Ingresa la contraseña maestra.'}
+              {authAction === 'approve_proposal' 
+                ? 'El proyecto pasará a estado En Ejecución. Ingrese la contraseña de administrador para continuar.' 
+                : authAction === 'reject_proposal'
+                ? 'La propuesta será rechazada y enviada al historial. Ingrese la contraseña de administrador.'
+                : 'Esta acción requiere autorización de administrador. Ingrese la contraseña de sistema para continuar.'}
             </p>
 
             <input
@@ -2381,9 +2647,9 @@ export default function ClienteDashboard() {
                 className="btn-primary" 
                 onClick={handleConfirmAuth}
                 disabled={deleting}
-                style={{ background: authAction === 'delete' ? 'var(--danger)' : 'var(--primary-color)', borderColor: authAction === 'delete' ? 'var(--danger)' : 'var(--primary-color)' }}
+                style={{ background: authAction === 'delete' ? 'var(--danger)' : authAction === 'approve_proposal' ? 'var(--success)' : authAction === 'reject_proposal' ? '#ffcc00' : 'var(--primary-color)', borderColor: authAction === 'delete' ? 'var(--danger)' : authAction === 'approve_proposal' ? 'var(--success)' : authAction === 'reject_proposal' ? '#ffcc00' : 'var(--primary-color)', color: authAction === 'reject_proposal' ? '#000' : '#fff' }}
               >
-                {deleting ? 'Procesando...' : authAction === 'delete' ? 'Eliminar' : 'Autorizar'}
+                {deleting ? 'Procesando...' : authAction === 'delete' ? 'Eliminar' : authAction === 'approve_proposal' ? 'Confirmar Aprobación' : authAction === 'reject_proposal' ? 'Confirmar Rechazo' : 'Autorizar'}
               </button>
             </div>
           </div>
@@ -2395,12 +2661,20 @@ export default function ClienteDashboard() {
         <div className="modal-overlay" style={{ zIndex: 1000 }}>
           <div className="card modal-content animate-fade" style={{ maxWidth: '400px', width: '90%', padding: '2rem' }}>
             <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
-              <div style={{ width: '60px', height: '60px', borderRadius: '50%', background: 'rgba(16, 185, 129, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1rem auto' }}>
-                <CheckCircle size={30} color="var(--success)" />
+              <div style={{ width: '60px', height: '60px', borderRadius: '50%', background: projects.find(p => p.id === projectToReopen)?.status === 'in_progress' ? 'rgba(255, 204, 0, 0.1)' : 'rgba(16, 185, 129, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1rem auto' }}>
+                {projects.find(p => p.id === projectToReopen)?.status === 'in_progress' ? (
+                  <RotateCcw size={30} color="#ffcc00" />
+                ) : (
+                  <CheckCircle size={30} color="var(--success)" />
+                )}
               </div>
-              <h2 style={{ fontSize: '1.25rem', color: 'white', margin: '0 0 0.5rem 0' }}>Reabrir Proyecto</h2>
+              <h2 style={{ fontSize: '1.25rem', color: 'white', margin: '0 0 0.5rem 0' }}>
+                {projects.find(p => p.id === projectToReopen)?.status === 'in_progress' ? 'Retornar a Propuesta' : 'Reabrir Proyecto'}
+              </h2>
               <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', margin: 0 }}>
-                Esta acción restaurará el proyecto a la pestaña "Proyectos". Ingresa la clave maestra.
+                {projects.find(p => p.id === projectToReopen)?.status === 'in_progress' 
+                  ? 'Esta acción restaurará el proyecto a la pestaña "Propuestas". Ingresa la clave maestra.'
+                  : 'Esta acción restaurará el proyecto a la pestaña "Proyectos". Ingresa la clave maestra.'}
               </p>
             </div>
             
@@ -2427,11 +2701,11 @@ export default function ClienteDashboard() {
               </button>
               <button 
                 className="btn-primary" 
-                style={{ flex: 1, background: 'var(--success)', borderColor: 'var(--success)', justifyContent: 'center' }} 
+                style={{ flex: 1, background: projects.find(p => p.id === projectToReopen)?.status === 'in_progress' ? '#ffcc00' : 'var(--success)', borderColor: projects.find(p => p.id === projectToReopen)?.status === 'in_progress' ? '#ffcc00' : 'var(--success)', color: projects.find(p => p.id === projectToReopen)?.status === 'in_progress' ? '#000' : '#fff', justifyContent: 'center' }} 
                 onClick={handleConfirmReopen}
                 disabled={reopening}
               >
-                {reopening ? 'Reabriendo...' : 'Reabrir'}
+                {reopening ? 'Procesando...' : projects.find(p => p.id === projectToReopen)?.status === 'in_progress' ? 'Confirmar Retorno' : 'Reabrir'}
               </button>
             </div>
           </div>
@@ -2488,8 +2762,9 @@ export default function ClienteDashboard() {
 
       <NewProposalModal 
         isOpen={showProposalModal}
-        onClose={() => setShowProposalModal(false)}
-        onSaved={() => { setShowProposalModal(false); fetchClientData(); }}
+        existingProposal={projectToEdit}
+        onClose={() => { setShowProposalModal(false); setProjectToEdit(null); }}
+        onSaved={() => { setShowProposalModal(false); setProjectToEdit(null); fetchClientData(); }}
         initialClientId={clientId}
         onOpenAI={() => {
           setShowProposalModal(false);
@@ -2499,85 +2774,6 @@ export default function ClienteDashboard() {
         }}
       />
 
-      {/* Modal de Edición de Propuesta/Proyecto */}
-      {showEditProjectModal && (
-        <div className="modal-overlay">
-          <div className="card modal-content animate-fade" style={{ maxWidth: '800px', width: '95%', maxHeight: '90vh' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-              <h2 style={{ margin: 0, color: 'white', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <Edit3 size={20} /> Editar Propuesta
-              </h2>
-              <button onClick={() => setShowEditProjectModal(false)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>
-                <X size={24} />
-              </button>
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.5rem' }}>
-              <div style={{ gridColumn: 'span 2' }}>
-                <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.85rem' }}>Título</label>
-                <input 
-                  type="text" 
-                  className="input-field" 
-                  value={editForm.title}
-                  onChange={e => setEditForm({ ...editForm, title: e.target.value })}
-                />
-              </div>
-              <div>
-                <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.85rem' }}>Monto (USD)</label>
-                <input 
-                  type="text" 
-                  className="input-field" 
-                  value={editForm.budget_usd}
-                  onChange={e => setEditForm({ ...editForm, budget_usd: handleMoneyInput(e.target.value) })}
-                  onBlur={e => setEditForm({ ...editForm, budget_usd: formatOnBlur(e.target.value) })}
-                />
-              </div>
-            </div>
-
-            <div style={{ marginBottom: '1.5rem' }}>
-              <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.85rem' }}>Descripción / Texto de la Propuesta</label>
-              <textarea 
-                className="input-field" 
-                style={{ width: '100%', minHeight: '300px', fontFamily: 'monospace', fontSize: '0.9rem', lineHeight: '1.6' }}
-                value={editForm.description}
-                onChange={e => setEditForm({ ...editForm, description: e.target.value })}
-              />
-            </div>
-
-            <div style={{ background: 'rgba(245,158,11,0.05)', border: '1px dashed var(--primary-color)', padding: '1rem', borderRadius: '12px', marginBottom: '1.5rem' }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem', fontSize: '0.85rem', color: 'var(--primary-color)', fontWeight: 600 }}>
-                <Sparkles size={14} /> Refinar con Pepe (IA)
-              </label>
-              <div style={{ display: 'flex', gap: '0.5rem' }}>
-                <input 
-                  type="text" 
-                  className="input-field" 
-                  placeholder="Ej: 'Corrige la ortografía' o 'Añade una sección de garantía'..." 
-                  style={{ flex: 1, fontSize: '0.85rem' }}
-                  value={aiRefinement}
-                  onChange={e => setAiRefinement(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && handleAiRefineEdit()}
-                />
-                <button 
-                  className="btn-primary" 
-                  onClick={handleAiRefineEdit}
-                  disabled={refining || !aiRefinement.trim()}
-                  style={{ padding: '0 1rem', minWidth: 'auto', background: 'var(--primary-color)', color: 'black' }}
-                >
-                  {refining ? <Loader2 size={16} className="animate-spin" /> : 'Aplicar'}
-                </button>
-              </div>
-            </div>
-
-            <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end' }}>
-              <button className="btn-secondary" onClick={() => setShowEditProjectModal(false)}>Cancelar</button>
-              <button className="btn-primary" onClick={handleSaveEdit} disabled={loading}>
-                {loading ? 'Guardando...' : 'Guardar Cambios'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Modal de Edición de Items (Pagos, Gastos, Compromisos) */}
       {showEditItemModal && editingItem && editItemType && (
@@ -2820,6 +3016,169 @@ export default function ClienteDashboard() {
                 {loading ? 'Guardando...' : 'Guardar Cambios'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Abono a Compromiso */}
+      {showCommitmentPayModal && commitmentToPay && (
+        <div className="modal-overlay hide-on-print" style={{ zIndex: 1000 }}>
+          <div className="card modal-content animate-fade" style={{ maxWidth: '400px', width: '90%', padding: '2rem' }}>
+            <h2 style={{ fontSize: '1.2rem', color: 'white', margin: '0 0 1rem 0' }}>Abonar a Compromiso</h2>
+            <div style={{ marginBottom: '1.5rem', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+              <div><strong>Concepto:</strong> {commitmentToPay.description}</div>
+              <div><strong>Proveedor:</strong> {commitmentToPay.provider || 'N/A'}</div>
+              <div><strong>Restante:</strong> ${formatCurrency(Number(commitmentToPay.amount_usd || (commitmentToPay.quantity * commitmentToPay.unit_price_usd)) - (commitmentToPay.payable_accounts?.[0]?.payable_payments?.reduce((s: any, p: any) => s + Number(p.amount_usd), 0) || 0))}</div>
+            </div>
+            <form onSubmit={handleCommitmentPayment} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div>
+                <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-muted)' }}>Monto a Abonar (USD)</label>
+                <div style={{ position: 'relative' }}>
+                  <span style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }}>$</span>
+                  <input
+                    type="text"
+                    required
+                    value={commitmentPayForm.amount_usd}
+                    onChange={(e) => setCommitmentPayForm({ ...commitmentPayForm, amount_usd: handleMoneyInput(e.target.value) })}
+                    onBlur={(e) => setCommitmentPayForm({ ...commitmentPayForm, amount_usd: formatOnBlur(e.target.value) })}
+                    className="input-field"
+                    style={{ paddingLeft: '2rem' }}
+                    placeholder="0.00"
+                  />
+                </div>
+              </div>
+              <div>
+                <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-muted)' }}>Descripción del Abono (Opcional)</label>
+                <input
+                  type="text"
+                  value={commitmentPayForm.description}
+                  onChange={(e) => setCommitmentPayForm({ ...commitmentPayForm, description: e.target.value })}
+                  className="input-field"
+                  placeholder="Ej: Pago parcial factura #123"
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-muted)' }}>Referencia (Opcional)</label>
+                <input
+                  type="text"
+                  value={commitmentPayForm.reference}
+                  onChange={(e) => setCommitmentPayForm({ ...commitmentPayForm, reference: e.target.value })}
+                  className="input-field"
+                  placeholder="Zelle, Transferencia, Efectivo..."
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-muted)' }}>Fecha del Abono</label>
+                <input
+                  type="date"
+                  required
+                  value={commitmentPayForm.date}
+                  onChange={(e) => setCommitmentPayForm({ ...commitmentPayForm, date: e.target.value })}
+                  className="input-field"
+                />
+              </div>
+              <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
+                <button type="button" className="btn-secondary" style={{ flex: 1 }} onClick={() => setShowCommitmentPayModal(false)}>Cancelar</button>
+                <button type="submit" className="btn-primary" style={{ flex: 1 }}>Procesar Pago</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {selectedCommitmentForDetails && (
+        <div className="modal-overlay hide-on-print" style={{ zIndex: 1000 }}>
+          <div className="card modal-content animate-fade" style={{ maxWidth: '650px', width: '95%', padding: '2rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.5rem', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '1rem' }}>
+              <div>
+                <h2 style={{ fontSize: '1.4rem', color: 'white', margin: '0 0 0.5rem 0', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <ClipboardList size={24} color="var(--primary-color)" /> Detalles del Compromiso
+                </h2>
+                <div style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+                  <strong>Concepto:</strong> {selectedCommitmentForDetails.description} <br/>
+                  <strong>Proveedor:</strong> {selectedCommitmentForDetails.provider || 'N/A'} | <strong>Fecha:</strong> {selectedCommitmentForDetails.date || new Date(selectedCommitmentForDetails.created_at).toISOString().split('T')[0]}
+                </div>
+              </div>
+              <button onClick={() => setSelectedCommitmentForDetails(null)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}><X size={24} /></button>
+            </div>
+
+            {(() => {
+              const c = selectedCommitmentForDetails;
+              const paid = c.payable_accounts?.[0]?.payable_payments?.reduce((s: any, p: any) => s + Number(p.amount_usd), 0) || 0;
+              const total = Number(c.amount_usd || (c.quantity * c.unit_price_usd));
+              const balance = total - paid;
+
+              return (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem' }}>
+                    <div style={{ padding: '1rem', background: 'rgba(255,255,255,0.05)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)' }}>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '0.3rem' }}>Total Pactado</div>
+                      <div style={{ fontSize: '1.2rem', fontWeight: 800, color: 'white' }}>${formatCurrency(total)}</div>
+                    </div>
+                    <div style={{ padding: '1rem', background: 'rgba(16,185,129,0.05)', borderRadius: '8px', border: '1px solid rgba(16,185,129,0.2)' }}>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--success)', textTransform: 'uppercase', marginBottom: '0.3rem' }}>Total Abonado</div>
+                      <div style={{ fontSize: '1.2rem', fontWeight: 800, color: 'var(--success)' }}>${formatCurrency(paid)}</div>
+                    </div>
+                    <div style={{ padding: '1rem', background: balance > 0 ? 'rgba(239,68,68,0.05)' : 'rgba(255,255,255,0.05)', borderRadius: '8px', border: `1px solid ${balance > 0 ? 'rgba(239,68,68,0.2)' : 'rgba(255,255,255,0.1)'}` }}>
+                      <div style={{ fontSize: '0.75rem', color: balance > 0 ? 'var(--danger)' : 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '0.3rem' }}>Saldo Pendiente</div>
+                      <div style={{ fontSize: '1.2rem', fontWeight: 800, color: balance > 0 ? 'var(--danger)' : 'white' }}>${formatCurrency(balance)}</div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <h4 style={{ margin: '0 0 1rem 0', color: 'white', display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1rem' }}>
+                      <Wallet size={18} /> Historial de Abonos
+                    </h4>
+                    {!c.payable_accounts?.[0]?.payable_payments || c.payable_accounts[0].payable_payments.length === 0 ? (
+                      <div style={{ padding: '1.5rem', textAlign: 'center', background: 'rgba(0,0,0,0.2)', borderRadius: '8px', color: 'var(--text-muted)' }}>
+                        No hay abonos registrados para este compromiso.
+                      </div>
+                    ) : (
+                      <div style={{ overflowX: 'auto', background: 'rgba(0,0,0,0.2)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.05)' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                          <thead>
+                            <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)' }}>
+                              <th style={{ textAlign: 'left', padding: '0.75rem 1rem' }}>FECHA</th>
+                              <th style={{ textAlign: 'left', padding: '0.75rem 1rem' }}>CONCEPTO</th>
+                              <th style={{ textAlign: 'left', padding: '0.75rem 1rem' }}>REFERENCIA</th>
+                              <th style={{ textAlign: 'right', padding: '0.75rem 1rem' }}>MONTO</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {c.payable_accounts[0].payable_payments.sort((a:any, b:any) => new Date(b.date).getTime() - new Date(a.date).getTime()).map((p: any) => (
+                              <tr key={p.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                                <td style={{ padding: '0.75rem 1rem', color: 'var(--text-muted)' }}>{p.date}</td>
+                                <td style={{ padding: '0.75rem 1rem' }}>{p.description}</td>
+                                <td style={{ padding: '0.75rem 1rem', color: 'var(--text-muted)' }}>{p.reference || '-'}</td>
+                                <td style={{ padding: '0.75rem 1rem', textAlign: 'right', fontWeight: 'bold', color: 'var(--success)' }}>+ ${formatCurrency(p.amount_usd)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
+                    <button className="btn-secondary" style={{ flex: 1, justifyContent: 'center' }} onClick={() => setSelectedCommitmentForDetails(null)}>Cerrar</button>
+                    {!isViewer && balance > 0 && !isActionDisabledForSales(c.project_id) && (
+                      <button 
+                        className="btn-primary" 
+                        style={{ flex: 1, justifyContent: 'center' }} 
+                        onClick={() => {
+                          setSelectedCommitmentForDetails(null);
+                          setCommitmentToPay(c);
+                          setCommitmentPayForm({ amount_usd: '', description: '', reference: '', date: new Date().toISOString().split('T')[0] });
+                          setShowCommitmentPayModal(true);
+                        }}
+                      >
+                        Abonar
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         </div>
       )}

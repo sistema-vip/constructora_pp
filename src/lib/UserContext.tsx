@@ -18,6 +18,31 @@ export function UserProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const mounted = useRef(true);
 
+  async function fetchRole(userId: string) {
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('fetchRole timeout')), 8000)
+    );
+
+    const queryPromise = supabase
+      .from('profiles')
+      .select('role')
+      .eq('id', userId)
+      .single();
+
+    try {
+      const { data, error } = await Promise.race([queryPromise, timeoutPromise]);
+      if (error) {
+        console.error('❌ fetchRole error:', error.message, error.code);
+        return;
+      }
+      if (data?.role && mounted.current) {
+        setRole(data.role as 'admin' | 'viewer' | 'sales' | 'client');
+      }
+    } catch (err: any) {
+      console.error('❌ fetchRole failed:', err.message);
+    }
+  }
+
   useEffect(() => {
     mounted.current = true;
 
@@ -57,30 +82,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  async function fetchRole(userId: string) {
-    const timeoutPromise = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error('fetchRole timeout')), 8000)
-    );
 
-    const queryPromise = supabase
-      .from('profiles')
-      .select('role')
-      .eq('id', userId)
-      .single();
-
-    try {
-      const { data, error } = await Promise.race([queryPromise, timeoutPromise]);
-      if (error) {
-        console.error('❌ fetchRole error:', error.message, error.code);
-        return;
-      }
-      if (data?.role && mounted.current) {
-        setRole(data.role as 'admin' | 'viewer' | 'sales' | 'client');
-      }
-    } catch (err: any) {
-      console.error('❌ fetchRole failed:', err.message);
-    }
-  }
 
   return (
     <UserContext.Provider value={{ user, role, loading }}>

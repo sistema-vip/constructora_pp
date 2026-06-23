@@ -23,7 +23,10 @@ import {
   AlertCircle,
   Briefcase as BriefcaseIcon,
   DollarSign as DollarIcon,
-  Eye
+  Eye,
+  RotateCcw,
+  Check,
+  Ban
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency, handleMoneyInput, parseCurrency, formatOnBlur } from '@/lib/formatters';
@@ -127,7 +130,7 @@ export default function ProjectDashboard() {
 
   // Permisos
   const { role } = useUser();
-  const isViewer = role === 'viewer' || role === 'sales';
+  const isViewer = role === 'viewer' || (role === 'sales' && !!project && project.status !== 'proposal');
   const canEdit = !isViewer;
 
   // Modals state
@@ -163,15 +166,17 @@ export default function ProjectDashboard() {
   // Estados para edición inline (estilo clientes)
   const [showEditItemModal, setShowEditItemModal] = useState(false);
   const [editingItem, setEditingItem] = useState<any>(null);
-  const [editItemType, setEditItemType] = useState<'payment' | 'cost' | 'commitment' | null>(null);
+  const [editItemType, setEditItemType] = useState<'payment' | 'cost' | 'commitment' | 'advance' | null>(null);
   const [editItemForm, setEditItemForm] = useState<any>({});
 
   // Estados para eliminación protegida (estilo clientes)
   const [showAdminAuth, setShowAdminAuth] = useState(false);
   const [adminPassword, setAdminPassword] = useState('');
   const [authError, setAuthError] = useState('');
-  const [itemToDelete, setItemToDelete] = useState<{ id: string, type: 'payment' | 'cost' | 'extra' | 'commitment' | 'advance' } | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [adminActionType, setAdminActionType] = useState<'delete' | 'edit' | 'revert' | 'approve_proposal' | 'reject_proposal'>('delete');
+  const [itemToDelete, setItemToDelete] = useState<{ id: string, type: 'payment' | 'cost' | 'extra' | 'commitment' | 'advance' } | null>(null);
+  const [pendingEditItem, setPendingEditItem] = useState<{ item: any, type: 'payment' | 'cost' | 'commitment' | 'advance' } | null>(null);
 
   useEffect(() => {
     if (projectId) {
@@ -179,8 +184,14 @@ export default function ProjectDashboard() {
       console.log('Current Role:', role);
       console.log('Is Viewer:', isViewer);
       fetchProjectData();
+      
+      const urlParams = new URLSearchParams(window.location.search);
+      const tabParam = urlParams.get('tab');
+      if (tabParam === 'compromisos' || tabParam === 'gastos' || tabParam === 'pagos' || tabParam === 'adicionales' || tabParam === 'retiros' || tabParam === 'detalles') {
+        setActiveTab(tabParam as any);
+      }
     }
-  }, [projectId, role, isViewer]);
+  }, [projectId, role]); // removed isViewer to prevent infinite loops when project.status changes
 
   async function fetchProjectData() {
     setLoading(true);
@@ -234,7 +245,11 @@ export default function ProjectDashboard() {
   const baseBudget = Number(project?.budget_usd || 0);
   const totalExtra = extras.reduce((sum, e) => sum + (Number(e.amount_usd) || 0), 0);
   const totalAdvances = advances.reduce((sum, a) => sum + (Number(a.amount_usd) || 0), 0);
-  const totalCommitments = commitments.reduce((sum, c) => sum + (Number(c.quantity || 0) * (Number(c.unit_price_usd) || 0)), 0);
+  const totalCommitments = commitments.reduce((sum, c) => {
+    const paid = c.payable_accounts?.[0]?.payable_payments?.reduce((s: any, p: any) => s + Number(p.amount_usd), 0) || 0;
+    const balance = Number(c.amount_usd || (c.quantity * c.unit_price_usd)) - paid;
+    return sum + Math.max(0, balance);
+  }, 0);
   const totalBudget = baseBudget + totalExtra;
   const totalPaid = payments.reduce((sum, p) => sum + (Number(p.amount_usd) || 0), 0);
   const balanceDue = totalBudget - totalPaid;
@@ -338,42 +353,72 @@ export default function ProjectDashboard() {
 
   const initiateDelete = (id: string, type: 'payment' | 'cost' | 'extra' | 'commitment' | 'advance') => {
     setItemToDelete({ id, type });
+    setAdminActionType('delete');
     setShowAdminAuth(true);
     setAdminPassword('');
     setAuthError('');
   };
 
-  const handleConfirmDelete = async () => {
+  const handleConfirmAdminAuth = async () => {
     const MASTER_KEY = '080911';
     if (adminPassword !== MASTER_KEY) {
       setAuthError('Contraseña incorrecta. Solo administradores autorizados.');
       return;
     }
-    if (!itemToDelete) return;
-    setDeleting(true);
-    try {
-      const tableMap: Record<string, string> = {
-        payment: 'project_payments', cost: 'project_costs',
-        extra: 'project_extras', commitment: 'project_commitments', advance: 'partner_advances'
-      };
-      const { error } = await supabase.from(tableMap[itemToDelete.type]).delete().eq('id', itemToDelete.id);
-      if (error) throw error;
+    
+    if (adminActionType === 'delete') {
+      if (!itemToDelete) return;
+      setDeleting(true);
+      try {
+        const tableMap: Record<string, string> = {
+          payment: 'project_payments', cost: 'project_costs',
+          extra: 'project_extras', commitment: 'project_commitments', advance: 'partner_advances'
+        };
+        const { error } = await supabase.from(tableMap[itemToDelete.type]).delete().eq('id', itemToDelete.id);
+        if (error) throw error;
+        setShowAdminAuth(false);
+        setItemToDelete(null);
+        fetchProjectData();
+      } catch (err: any) {
+        alert('Error al eliminar: ' + err.message);
+      } finally {
+        setDeleting(false);
+      }
+    } else if (adminActionType === 'revert' || adminActionType === 'approve_proposal' || adminActionType === 'reject_proposal') {
       setShowAdminAuth(false);
-      setItemToDelete(null);
-      fetchProjectData();
-    } catch (err: any) {
-      alert('Error al eliminar: ' + err.message);
-    } finally {
-      setDeleting(false);
+      try {
+        let newStatus = 'proposal';
+        if (adminActionType === 'approve_proposal') newStatus = 'in_progress';
+        if (adminActionType === 'reject_proposal') newStatus = 'cancelled';
+        
+        const { error } = await supabase
+          .from('projects')
+          .update({ status: newStatus })
+          .eq('id', projectId);
+        if (error) throw error;
+        fetchProjectData();
+      } catch (err: any) {
+        alert('Error al actualizar estado: ' + err.message);
+      }
+    } else if (adminActionType === 'edit') {
+      setShowAdminAuth(false);
+      if (pendingEditItem) {
+        setEditingItem(pendingEditItem.item);
+        setEditItemType(pendingEditItem.type);
+        setEditItemForm({ ...pendingEditItem.item });
+        setShowEditItemModal(true);
+        setPendingEditItem(null);
+      }
     }
   };
 
-  const initiateEditItem = (item: any, type: 'payment' | 'cost' | 'commitment') => {
+  const initiateEditItem = (item: any, type: 'payment' | 'cost' | 'commitment' | 'advance') => {
     if (isViewer) return;
-    setEditingItem(item);
-    setEditItemType(type);
-    setEditItemForm({ ...item });
-    setShowEditItemModal(true);
+    setPendingEditItem({ item, type });
+    setAdminActionType('edit');
+    setShowAdminAuth(true);
+    setAdminPassword('');
+    setAuthError('');
   };
 
   const handleSaveEditItem = async () => {
@@ -389,6 +434,14 @@ export default function ProjectDashboard() {
         table = 'project_costs';
         const up = parseCurrency(editItemForm.unit_price_usd);
         updateData = { description: editItemForm.description, provider: editItemForm.provider, category: editItemForm.category, quantity: editItemForm.quantity, unit_price_usd: up, total_usd: editItemForm.quantity * up, date: editItemForm.date };
+      } else if (editItemType === 'advance') {
+        table = 'partner_advances';
+        updateData = {
+          partner_name: editItemForm.partner_name,
+          amount_usd: parseCurrency(editItemForm.amount_usd),
+          description: editItemForm.description,
+          date: editItemForm.date
+        };
       } else if (editItemType === 'commitment') {
         table = 'project_commitments';
         const up = parseCurrency(editItemForm.unit_price_usd);
@@ -591,9 +644,9 @@ export default function ProjectDashboard() {
       }]);
       if (costError) throw new Error(`Error al registrar como gasto: ${costError.message}`);
 
-      // 3. Delete commitment if fully paid
+      // 3. Update status if fully paid
       const previouslyPaid = commitmentToPay.payable_accounts?.[0]?.payable_payments?.reduce((s: any, p: any) => s + Number(p.amount_usd), 0) || 0;
-      const totalAmount = Number(commitmentToPay.amount_usd);
+      const totalAmount = Number(commitmentToPay.amount_usd || (commitmentToPay.quantity * commitmentToPay.unit_price_usd));
       const remainingBalance = totalAmount - previouslyPaid - monto;
 
       // Usamos una tolerancia de 0.01 por problemas de precision en decimales
@@ -602,11 +655,6 @@ export default function ProjectDashboard() {
         await supabase.from('payable_accounts')
           .update({ status: 'paid' })
           .eq('id', payableAccountId);
-        
-        // Delete the commitment
-        await supabase.from('project_commitments')
-          .delete()
-          .eq('id', commitmentToPay.id);
       }
 
       setShowCommitmentPayModal(false);
@@ -753,14 +801,61 @@ export default function ProjectDashboard() {
             <FileText size={18} /> Imprimir Reporte
           </button>
           {project.status === 'in_progress' && (
-            <button
-              className="btn-primary"
-              onClick={() => setShowCloseConfirm(true)}
-              title="Cerrar proyecto"
-              style={{ padding: '0.75rem 1.5rem', display: 'flex', gap: '0.5rem', alignItems: 'center', background: 'var(--success)', borderColor: 'var(--success)' }}
-            >
-              <CheckCircle size={18} /> Cerrar Proyecto
-            </button>
+            <>
+              <button
+                className="btn-primary"
+                onClick={() => setShowCloseConfirm(true)}
+                title="Cerrar proyecto"
+                style={{ padding: '0.75rem 1.5rem', display: 'flex', gap: '0.5rem', alignItems: 'center', background: 'var(--success)', borderColor: 'var(--success)' }}
+              >
+                <CheckCircle size={18} /> Cerrar Proyecto
+              </button>
+              {!isViewer && (
+                <button
+                  className="btn-secondary"
+                  onClick={() => {
+                    setAdminActionType('revert');
+                    setShowAdminAuth(true);
+                    setAdminPassword('');
+                    setAuthError('');
+                  }}
+                  title="Retornar a Propuesta (requiere clave admin)"
+                  style={{ padding: '0.75rem 1.5rem', display: 'flex', gap: '0.5rem', alignItems: 'center', color: '#ffcc00', borderColor: '#ffcc00' }}
+                >
+                  <RotateCcw size={18} /> Retornar a Propuesta
+                </button>
+              )}
+            </>
+          )}
+          {project.status === 'proposal' && !isViewer && (
+            <>
+              <button
+                className="btn-primary"
+                onClick={() => {
+                  setAdminActionType('approve_proposal');
+                  setShowAdminAuth(true);
+                  setAdminPassword('');
+                  setAuthError('');
+                }}
+                title="Aprobar Propuesta (requiere clave admin)"
+                style={{ padding: '0.75rem 1.5rem', display: 'flex', gap: '0.5rem', alignItems: 'center', background: 'var(--success)', borderColor: 'var(--success)' }}
+              >
+                <Check size={18} /> Aprobar Propuesta
+              </button>
+              <button
+                className="btn-secondary"
+                onClick={() => {
+                  setAdminActionType('reject_proposal');
+                  setShowAdminAuth(true);
+                  setAdminPassword('');
+                  setAuthError('');
+                }}
+                title="Rechazar Propuesta (requiere clave admin)"
+                style={{ padding: '0.75rem 1.5rem', display: 'flex', gap: '0.5rem', alignItems: 'center', color: '#ffcc00', borderColor: '#ffcc00' }}
+              >
+                <Ban size={18} /> Rechazar Propuesta
+              </button>
+            </>
           )}
           {project.status === 'completed' && !project.archived_at && (
             <button
@@ -781,9 +876,11 @@ export default function ProjectDashboard() {
           <button className="btn-primary" onClick={() => setShowPaymentModal(true)} style={{ height: '38px', padding: '0 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', background: 'var(--success)', borderColor: 'var(--success)', boxShadow: '0 4px 12px rgba(16,185,129,0.15)' }}>
             <BriefcaseIcon size={15} /> Registrar Pago
           </button>
-          <button className="btn-secondary" onClick={() => setShowAdvanceModal(true)} style={{ height: '38px', padding: '0 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', borderColor: '#8b5cf6', color: '#8b5cf6' }}>
-            <Users size={15} /> Retiro de Socio
-          </button>
+          {!isViewer && (
+            <button className="btn-secondary" onClick={() => setShowAdvanceModal(true)} style={{ height: '38px', padding: '0 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', borderColor: '#8b5cf6', color: '#8b5cf6' }}>
+              <Users size={15} /> Retiro de Socio
+            </button>
+          )}
           <button className="btn-secondary" onClick={() => setShowCommitmentModal(true)} style={{ height: '38px', padding: '0 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', borderColor: 'var(--primary-color)', color: 'var(--primary-color)' }}>
             <ClipboardList size={15} /> Registrar Compromiso
           </button>
@@ -1021,85 +1118,95 @@ export default function ProjectDashboard() {
         {/* TAB: COMPROMISOS */}
         {activeTab === 'compromisos' && (
           <div className="animate-fade">
-            {commitments.length === 0 ? (
-              <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>No hay compromisos (gastos por ejecutar) registrados.</div>
-            ) : (
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                    <th style={{ textAlign: 'left', padding: '1rem' }}>FECHA</th>
-                    <th style={{ textAlign: 'left', padding: '1rem' }}>CONCEPTO</th>
-                    <th style={{ textAlign: 'left', padding: '1rem' }}>PROVEEDOR</th>
-                    <th style={{ textAlign: 'right', padding: '1rem' }}>ESTADO</th>
-                    <th style={{ textAlign: 'right', padding: '1rem' }}>SALDO (USD)</th>
-                    <th style={{ textAlign: 'right', padding: '1rem' }}></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {commitments.map(c => {
-                    const paid = c.payable_accounts?.[0]?.payable_payments?.reduce((s, p) => s + Number(p.amount_usd), 0) || 0;
-                    const balance = Number(c.amount_usd) - paid;
-                    const isPaid = paid >= Number(c.amount_usd);
-                    
-                    return (
-                    <tr key={c.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                      <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>{c.date}</td>
-                      <td style={{ padding: '1rem' }}>
-                        {c.description}<br/>
-                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{c.quantity} x ${Number(c.unit_price_usd).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                      </td>
-                      <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>{c.provider || 'N/A'}</td>
-                      <td style={{ padding: '1rem', textAlign: 'right' }}>
-                        {paid > 0 ? (
-                          <div style={{ fontSize: '0.8rem' }}>
-                            <div style={{ color: isPaid ? 'var(--success)' : 'var(--warning)', fontWeight: 'bold' }}>{isPaid ? 'Pagado' : 'Abonado'}</div>
-                            <div style={{ color: 'var(--text-muted)' }}>${paid.toLocaleString('es-VE', { minimumFractionDigits: 2 })} / ${Number(c.amount_usd).toLocaleString('es-VE', { minimumFractionDigits: 2 })}</div>
-                          </div>
-                        ) : (
-                          <span style={{ fontSize: '0.8rem', color: 'var(--danger)', fontWeight: 'bold', padding: '0.2rem 0.5rem', background: 'rgba(239,68,68,0.1)', borderRadius: '4px' }}>Pendiente</span>
-                        )}
-                      </td>
-                      <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold', color: 'var(--primary-color)' }}>- ${Number(balance).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                      <td style={{ padding: '1rem', textAlign: 'right', display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
-                        <button 
-                          className="btn-secondary" 
-                          style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--primary-color)', borderColor: 'rgba(59,130,246,0.2)' }}
-                          onClick={() => setSelectedCommitmentForDetails(c)}
-                          title="Ver detalles e imprimir"
-                        >
-                          <Eye size={14} /> Detalles
-                        </button>
-                        <button 
-                          className="btn-secondary" 
-                          style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'white', borderColor: 'rgba(255,255,255,0.2)' }}
-                          onClick={() => handlePrintCommitment(c)}
-                          title="Imprimir"
-                        >
-                          <Printer size={14} />
-                        </button>
-                        {!isViewer && balance > 0 && (
-                          <button 
-                            className="btn-primary" 
-                            style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem' }} 
-                            onClick={() => {
-                              setCommitmentToPay(c);
-                              setCommitmentPayForm({ amount_usd: '', description: '', reference: '', date: new Date().toISOString().split('T')[0] });
-                              setShowCommitmentPayModal(true);
-                            }} 
-                            title="Abonar al compromiso"
-                          >
-                            Abonar
-                          </button>
-                        )}
-                        {!isViewer && (<button className="btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--primary-color)', borderColor: 'rgba(59,130,246,0.2)' }} onClick={() => initiateEditItem(c, 'commitment')} title="Editar compromiso"><Edit3 size={14} /></button>)}
-                        {!isViewer && (<button className="btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--danger)', borderColor: 'rgba(239,68,68,0.2)' }} onClick={() => initiateDelete(c.id, 'commitment')}><Trash2 size={14} /></button>)}
-                      </td>
+            {(() => {
+              const activeCommitments = commitments.filter(c => {
+                const paid = c.payable_accounts?.[0]?.payable_payments?.reduce((s: any, p: any) => s + Number(p.amount_usd), 0) || 0;
+                const cTotal = Number(c.amount_usd || (c.quantity * c.unit_price_usd));
+                const balance = Math.max(0, cTotal - paid);
+                return balance > 0.01;
+              });
+
+              return activeCommitments.length === 0 ? (
+                <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>No hay compromisos (gastos por ejecutar) registrados.</div>
+              ) : (
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                      <th style={{ textAlign: 'left', padding: '1rem' }}>FECHA</th>
+                      <th style={{ textAlign: 'left', padding: '1rem' }}>CONCEPTO</th>
+                      <th style={{ textAlign: 'left', padding: '1rem' }}>PROVEEDOR</th>
+                      <th style={{ textAlign: 'right', padding: '1rem' }}>ESTADO</th>
+                      <th style={{ textAlign: 'right', padding: '1rem' }}>SALDO (USD)</th>
+                      <th style={{ textAlign: 'right', padding: '1rem' }}></th>
                     </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            )}
+                  </thead>
+                  <tbody>
+                    {activeCommitments.map(c => {
+                    const paid = c.payable_accounts?.[0]?.payable_payments?.reduce((s: any, p: any) => s + Number(p.amount_usd), 0) || 0;
+                    const cTotal = Number(c.amount_usd || (c.quantity * c.unit_price_usd));
+                    const balance = Math.max(0, cTotal - paid);
+                    const isPaid = paid >= cTotal - 0.01;
+                    
+                      return (
+                        <tr key={c.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                          <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>{c.date}</td>
+                          <td style={{ padding: '1rem' }}>
+                            {c.description}<br/>
+                            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{c.quantity} x ${Number(c.unit_price_usd).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                          </td>
+                          <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>{c.provider || 'N/A'}</td>
+                          <td style={{ padding: '1rem', textAlign: 'right' }}>
+                            {paid > 0 ? (
+                              <div style={{ fontSize: '0.8rem' }}>
+                                <div style={{ color: isPaid ? 'var(--success)' : 'var(--warning)', fontWeight: 'bold' }}>{isPaid ? 'Pagado' : 'Abonado'}</div>
+                                <div style={{ color: 'var(--text-muted)' }}>${paid.toLocaleString('es-VE', { minimumFractionDigits: 2 })} / ${cTotal.toLocaleString('es-VE', { minimumFractionDigits: 2 })}</div>
+                              </div>
+                            ) : (
+                              <span style={{ fontSize: '0.8rem', color: 'var(--danger)', fontWeight: 'bold', padding: '0.2rem 0.5rem', background: 'rgba(239,68,68,0.1)', borderRadius: '4px' }}>Pendiente</span>
+                            )}
+                          </td>
+                          <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold', color: 'var(--primary-color)' }}>- ${Number(balance).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                          <td style={{ padding: '1rem', textAlign: 'right', display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                            <button 
+                              className="btn-secondary" 
+                              style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--primary-color)', borderColor: 'rgba(59,130,246,0.2)' }}
+                              onClick={() => setSelectedCommitmentForDetails(c)}
+                              title="Ver detalles e imprimir"
+                            >
+                              <Eye size={14} /> Detalles
+                            </button>
+                            <button 
+                              className="btn-secondary" 
+                              style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'white', borderColor: 'rgba(255,255,255,0.2)' }}
+                              onClick={() => handlePrintCommitment(c)}
+                              title="Imprimir"
+                            >
+                              <Printer size={14} />
+                            </button>
+                            {!isViewer && balance > 0 && (
+                              <button 
+                                className="btn-primary" 
+                                style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem' }} 
+                                onClick={() => {
+                                  setCommitmentToPay(c);
+                                  setCommitmentPayForm({ amount_usd: '', description: '', reference: '', date: new Date().toISOString().split('T')[0] });
+                                  setShowCommitmentPayModal(true);
+                                }} 
+                                title="Abonar al compromiso"
+                              >
+                                Abonar
+                              </button>
+                            )}
+                            {!isViewer && (<button className="btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--primary-color)', borderColor: 'rgba(59,130,246,0.2)' }} onClick={() => initiateEditItem(c, 'commitment')} title="Editar compromiso"><Edit3 size={14} /></button>)}
+                            {!isViewer && (<button className="btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--danger)', borderColor: 'rgba(239,68,68,0.2)' }} onClick={() => initiateDelete(c.id, 'commitment')}><Trash2 size={14} /></button>)}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              );
+            })()}
           </div>
         )}
 
@@ -1161,7 +1268,12 @@ export default function ProjectDashboard() {
                       <td style={{ padding: '1rem' }}>{a.description || 'Sin descripción'}</td>
                       <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold', color: '#a78bfa' }}>${Number(a.amount_usd).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                       <td style={{ padding: '1rem', textAlign: 'right' }}>
-                        {!isViewer && (<button className="btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--danger)', borderColor: 'rgba(239,68,68,0.2)' }} onClick={() => initiateDelete(a.id, 'advance')}><Trash2 size={14} /></button>)}
+                        {!isViewer && (
+                          <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                            <button className="btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--primary-color)', borderColor: 'rgba(59,130,246,0.2)' }} onClick={() => initiateEditItem(a, 'advance')} title="Editar retiro"><Edit3 size={14} /></button>
+                            <button className="btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--danger)', borderColor: 'rgba(239,68,68,0.2)' }} onClick={() => initiateDelete(a.id, 'advance')}><Trash2 size={14} /></button>
+                          </div>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -1271,12 +1383,12 @@ export default function ProjectDashboard() {
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
                   <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Total Compromiso:</span>
-                  <span style={{ fontWeight: 'bold' }}>${Number(commitmentToPay.amount_usd).toLocaleString('es-VE', { minimumFractionDigits: 2 })}</span>
+                  <span style={{ fontWeight: 'bold' }}>${Number(commitmentToPay.amount_usd || (commitmentToPay.quantity * commitmentToPay.unit_price_usd)).toLocaleString('es-VE', { minimumFractionDigits: 2 })}</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                   <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Saldo Pendiente:</span>
                   <span style={{ fontWeight: 'bold', color: 'var(--danger)' }}>
-                    ${(Number(commitmentToPay.amount_usd) - (commitmentToPay.payable_accounts?.[0]?.payable_payments?.reduce((s: any, p: any) => s + Number(p.amount_usd), 0) || 0)).toLocaleString('es-VE', { minimumFractionDigits: 2 })}
+                    ${(Number(commitmentToPay.amount_usd || (commitmentToPay.quantity * commitmentToPay.unit_price_usd)) - (commitmentToPay.payable_accounts?.[0]?.payable_payments?.reduce((s: any, p: any) => s + Number(p.amount_usd), 0) || 0)).toLocaleString('es-VE', { minimumFractionDigits: 2 })}
                   </span>
                 </div>
               </div>
@@ -1610,7 +1722,7 @@ export default function ProjectDashboard() {
             {(() => {
               const c = selectedCommitmentForDetails;
               const paid = c.payable_accounts?.[0]?.payable_payments?.reduce((s: any, p: any) => s + Number(p.amount_usd), 0) || 0;
-              const total = Number(c.amount_usd);
+              const total = Number(c.amount_usd || (c.quantity * c.unit_price_usd));
               const balance = total - paid;
 
               return (
@@ -1836,7 +1948,7 @@ export default function ProjectDashboard() {
                   <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{c.date}</td>
                   <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{c.provider || 'N/A'}</td>
                   <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{c.description}</td>
-                  <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>${formatCurrency(c.amount_usd)}</td>
+                  <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>${formatCurrency(c.amount_usd || (c.quantity * c.unit_price_usd))}</td>
                 </tr>
               ))}
               <tr style={{ background: '#f8f9fa', fontWeight: 'bold' }}>
@@ -1886,7 +1998,7 @@ export default function ProjectDashboard() {
       {activePrintJob === 'commitment-voucher' && printCommitmentData && (() => {
         const c = printCommitmentData;
         const paid = c.payable_accounts?.[0]?.payable_payments?.reduce((s: any, p: any) => s + Number(p.amount_usd), 0) || 0;
-        const total = Number(c.amount_usd);
+        const total = Number(c.amount_usd || (c.quantity * c.unit_price_usd));
         const balance = total - paid;
 
         return (
@@ -2007,9 +2119,22 @@ export default function ProjectDashboard() {
       {showAdminAuth && (
         <div className="modal-overlay">
           <div className="card modal-content animate-fade" style={{ maxWidth: '400px', width: '90%' }}>
-            <h3 style={{ marginBottom: '0.5rem', color: 'var(--danger)' }}>🔐 Acción Protegida</h3>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.5rem', color: adminActionType === 'delete' ? 'var(--danger)' : 'var(--primary-color)' }}>
+              {adminActionType === 'delete' ? <Trash2 size={28} /> : <AlertCircle size={28} />}
+              <h3 style={{ marginBottom: '0.5rem', color: adminActionType === 'delete' ? 'var(--danger)' : adminActionType === 'revert' ? '#ffcc00' : adminActionType === 'approve_proposal' ? 'var(--success)' : adminActionType === 'reject_proposal' ? '#ffcc00' : 'var(--primary-color)' }}>
+                {adminActionType === 'delete' ? '🗑️ Eliminar Renglón' : adminActionType === 'revert' ? '🔄 Retornar a Propuesta' : adminActionType === 'approve_proposal' ? '✅ Aprobar Propuesta' : adminActionType === 'reject_proposal' ? '🚫 Rechazar Propuesta' : '🔐 Acción Protegida'}
+              </h3>
+            </div>
             <p style={{ color: 'var(--text-muted)', marginBottom: '1.5rem', fontSize: '0.9rem' }}>
-              Esta acción requiere autorización de administrador. Ingrese la contraseña de sistema para continuar.
+              {adminActionType === 'revert' 
+                ? 'El proyecto regresará al estado de Propuesta. Ingrese la contraseña de administrador para continuar.'
+                : adminActionType === 'approve_proposal'
+                ? 'El proyecto pasará a estado En Ejecución. Ingrese la contraseña de administrador para continuar.'
+                : adminActionType === 'reject_proposal'
+                ? 'La propuesta será rechazada y enviada al historial. Ingrese la contraseña de administrador.'
+                : adminActionType === 'delete' 
+                ? 'Esta acción requiere autorización de administrador. Ingrese la contraseña de sistema para continuar.'
+                : 'Esta acción requiere autorización de administrador. Ingrese la contraseña de sistema para continuar.'}
             </p>
             <div>
               <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Contraseña de Administrador</label>
@@ -2018,7 +2143,7 @@ export default function ProjectDashboard() {
                 className="input-field"
                 value={adminPassword}
                 onChange={e => setAdminPassword(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && handleConfirmDelete()}
+                onKeyDown={e => e.key === 'Enter' && handleConfirmAdminAuth()}
                 placeholder="••••••••"
                 autoFocus
               />
@@ -2026,8 +2151,8 @@ export default function ProjectDashboard() {
             {authError && <p style={{ color: 'var(--danger)', fontSize: '0.85rem', marginTop: '0.5rem' }}>{authError}</p>}
             <div style={{ display: 'flex', gap: '1rem', marginTop: '1.5rem' }}>
               <button className="btn-secondary" style={{ flex: 1 }} onClick={() => { setShowAdminAuth(false); setAdminPassword(''); setAuthError(''); }}>Cancelar</button>
-              <button className="btn-primary" style={{ flex: 1, background: 'var(--danger)', borderColor: 'var(--danger)' }} onClick={handleConfirmDelete} disabled={deleting}>
-                {deleting ? 'Eliminando...' : 'Confirmar Eliminación'}
+              <button className="btn-primary" style={{ flex: 1, background: adminActionType === 'delete' ? 'var(--danger)' : adminActionType === 'revert' || adminActionType === 'reject_proposal' ? '#ffcc00' : adminActionType === 'approve_proposal' ? 'var(--success)' : 'var(--primary-color)', borderColor: adminActionType === 'delete' ? 'var(--danger)' : adminActionType === 'revert' || adminActionType === 'reject_proposal' ? '#ffcc00' : adminActionType === 'approve_proposal' ? 'var(--success)' : 'var(--primary-color)', color: adminActionType === 'revert' || adminActionType === 'reject_proposal' ? '#000' : '#fff' }} onClick={handleConfirmAdminAuth} disabled={deleting}>
+                {adminActionType === 'delete' ? (deleting ? 'Eliminando...' : 'Confirmar Eliminación') : adminActionType === 'revert' ? 'Confirmar Retorno' : adminActionType === 'approve_proposal' ? 'Confirmar Aprobación' : adminActionType === 'reject_proposal' ? 'Confirmar Rechazo' : 'Autorizar Edición'}
               </button>
             </div>
           </div>
@@ -2039,7 +2164,7 @@ export default function ProjectDashboard() {
         <div className="modal-overlay">
           <div className="card modal-content animate-fade" style={{ maxWidth: '520px', width: '90%' }}>
             <h3 style={{ marginBottom: '1.5rem' }}>
-              {editItemType === 'payment' ? '✏️ Editar Pago' : editItemType === 'cost' ? '✏️ Editar Gasto' : '✏️ Editar Compromiso'}
+              {editItemType === 'payment' ? '✏️ Editar Pago' : editItemType === 'cost' ? '✏️ Editar Gasto' : editItemType === 'advance' ? '✏️ Editar Retiro' : '✏️ Editar Compromiso'}
             </h3>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               {editItemType === 'payment' && (
@@ -2055,6 +2180,29 @@ export default function ProjectDashboard() {
                   <div>
                     <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Referencia</label>
                     <input type="text" className="input-field" value={editItemForm.reference || ''} onChange={e => setEditItemForm({...editItemForm, reference: e.target.value})} />
+                  </div>
+                  <div>
+                    <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Fecha</label>
+                    <input type="date" className="input-field" value={editItemForm.date} onChange={e => setEditItemForm({...editItemForm, date: e.target.value})} />
+                  </div>
+                </>
+              )}
+              {editItemType === 'advance' && (
+                <>
+                  <div>
+                    <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Socio</label>
+                    <select className="input-field" value={editItemForm.partner_name} onChange={e => setEditItemForm({...editItemForm, partner_name: e.target.value})}>
+                      <option value="Henry Peraza">Henry Peraza</option>
+                      <option value="Losbers Perez">Losbers Perez</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Monto (USD)</label>
+                    <input type="text" className="input-field" value={editItemForm.amount_usd} onChange={e => setEditItemForm({...editItemForm, amount_usd: handleMoneyInput(e.target.value)})} onBlur={e => setEditItemForm({...editItemForm, amount_usd: formatOnBlur(e.target.value)})} />
+                  </div>
+                  <div>
+                    <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Concepto</label>
+                    <input type="text" className="input-field" value={editItemForm.description} onChange={e => setEditItemForm({...editItemForm, description: e.target.value})} />
                   </div>
                   <div>
                     <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Fecha</label>

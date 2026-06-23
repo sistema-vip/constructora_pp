@@ -82,8 +82,14 @@ export default function CuentasPorPagarPage() {
   const [deleting, setDeleting] = useState(false);
 
   const { role } = useUser();
-  const { isObserver, isClient } = useAdminAction();
+  const { isObserver, isClient, isSales } = useAdminAction();
   const isViewer = isObserver || isClient;
+
+  const isActionDisabledForSales = (projectId: string | null) => {
+    if (!isSales || !projectId) return false;
+    const project = projects.find(p => p.id === projectId);
+    return project ? project.status !== 'proposal' : true;
+  };
 
   useEffect(() => {
     fetchData();
@@ -126,6 +132,9 @@ export default function CuentasPorPagarPage() {
   const handleSaveAccount = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isViewer) return;
+    if (isActionDisabledForSales(accountForm.project_id)) {
+      return alert('Ventas no puede modificar proyectos aprobados.');
+    }
     
     try {
       const payload = {
@@ -160,17 +169,56 @@ export default function CuentasPorPagarPage() {
   const handleSavePayment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isViewer) return;
+    const account = accounts.find(a => a.id === paymentForm.payable_account_id);
+    if (account && isActionDisabledForSales(account.project_id)) {
+      return alert('Ventas no puede modificar proyectos aprobados.');
+    }
 
     try {
+      const paymentAmount = parseFloat(paymentForm.amount_usd) || 0;
       const { error } = await supabase.from('payable_payments').insert([{
         payable_account_id: paymentForm.payable_account_id,
-        amount_usd: parseFloat(paymentForm.amount_usd) || 0,
+        amount_usd: paymentAmount,
         description: paymentForm.description,
         reference: paymentForm.reference,
         date: paymentForm.date
       }]);
 
       if (error) throw error;
+
+      if (account && account.project_id) {
+        let costCategory = 'materials';
+        if (account.type === 'obrero') costCategory = 'labor';
+        else if (account.type === 'alquiler') costCategory = 'equipment';
+        else if (account.type === 'subcontratista') costCategory = 'subcontract';
+
+        const { error: costError } = await supabase.from('project_costs').insert([{
+          project_id: account.project_id,
+          description: `Abono a CxP: ${account.name} - ${paymentForm.description}`,
+          provider: account.name,
+          category: costCategory,
+          quantity: 1,
+          unit_price_usd: paymentAmount,
+          total_usd: paymentAmount,
+          date: paymentForm.date
+        }]);
+
+        if (costError) console.error("Error al registrar gasto:", costError);
+      }
+
+      if (account) {
+        const previouslyPaid = account.payable_payments?.reduce((sum: number, p: any) => sum + Number(p.amount_usd), 0) || 0;
+        const totalAmount = Number(account.total_amount_usd);
+        const remainingBalance = totalAmount - previouslyPaid - paymentAmount;
+
+        if (remainingBalance <= 0.01 && previouslyPaid + paymentAmount >= totalAmount) {
+          const { error: statusError } = await supabase.from('payable_accounts')
+            .update({ status: 'paid' })
+            .eq('id', account.id);
+          if (statusError) console.error("Error al actualizar estado CxP:", statusError);
+        }
+      }
+
       setShowPaymentModal(false);
       fetchData();
     } catch (err: any) {
@@ -348,7 +396,7 @@ export default function CuentasPorPagarPage() {
                           >
                             <Printer size={14} />
                           </button>
-                          {!isViewer && account.status === 'active' && (
+                          {!isViewer && account.status === 'active' && !isActionDisabledForSales(account.project_id) && (
                             <button 
                               className="btn-primary" 
                               style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem' }}
@@ -360,7 +408,7 @@ export default function CuentasPorPagarPage() {
                               <DollarSign size={14} /> Abonar
                             </button>
                           )}
-                          {!isViewer && (
+                          {!isViewer && !isActionDisabledForSales(account.project_id) && (
                             <button 
                               className="btn-secondary" 
                               style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem' }}
@@ -378,7 +426,7 @@ export default function CuentasPorPagarPage() {
                               <Edit3 size={14} />
                             </button>
                           )}
-                          {!isViewer && (
+                          {!isViewer && !isActionDisabledForSales(account.project_id) && (
                             <button 
                               className="btn-secondary" 
                               style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--danger)', borderColor: 'rgba(239, 68, 68, 0.2)' }}
@@ -478,7 +526,7 @@ export default function CuentasPorPagarPage() {
                                 <td style={{ padding: '0.75rem 1rem' }}>{p.description}</td>
                                 <td style={{ padding: '0.75rem 1rem', color: 'var(--text-muted)' }}>{p.reference || '-'}</td>
                                 <td style={{ padding: '0.75rem 1rem', textAlign: 'right', fontWeight: 'bold', color: 'var(--success)' }}>+ ${formatCurrency(p.amount_usd)}</td>
-                                {!isViewer && (
+                                {!isViewer && !isActionDisabledForSales(account.project_id) && (
                                   <td style={{ padding: '0.75rem 1rem', textAlign: 'right' }}>
                                     <button 
                                       className="btn-secondary" 
@@ -502,7 +550,7 @@ export default function CuentasPorPagarPage() {
                     <button className="btn-secondary" style={{ flex: 1, justifyContent: 'center', borderColor: 'rgba(255,255,255,0.2)' }} onClick={() => handlePrintPayable(account)}>
                       <Printer size={16} /> Imprimir Vale
                     </button>
-                    {!isViewer && account.status === 'active' && (
+                    {!isViewer && account.status === 'active' && !isActionDisabledForSales(account.project_id) && (
                       <button 
                         className="btn-primary" 
                         style={{ flex: 1, justifyContent: 'center' }} 

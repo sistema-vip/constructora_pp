@@ -6,7 +6,8 @@
  * Convierte un número o string numérico al formato visual 1.555.701,01
  */
 export function formatCurrency(value: number | string): string {
-  const num = typeof value === 'string' ? parseFloat(value.replace(/\./g, '').replace(',', '.')) : value;
+  if (value === '' || value === null || value === undefined) return '';
+  const num = parseCurrency(value);
   if (isNaN(num)) return '';
   
   return new Intl.NumberFormat('es-VE', {
@@ -22,7 +23,7 @@ export function parseCurrency(value: string | number): number {
   if (!value) return 0;
   if (typeof value === 'number') return value;
 
-  let str = String(value).trim();
+  let str = String(value).replace(/[^\d.,-]/g, '').trim();
   
   const commas = (str.match(/,/g) || []).length;
   const dots = (str.match(/\./g) || []).length;

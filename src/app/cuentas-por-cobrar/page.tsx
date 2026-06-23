@@ -43,6 +43,7 @@ export default function CuentasPorCobrarPage() {
   const [projects, setProjects] = useState<ReceivableProject[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+  const [activeTab, setActiveTab] = useState<'pendientes' | 'saldados'>('pendientes');
   
   // Modals
   const [showPaymentModal, setShowPaymentModal] = useState(false);
@@ -53,8 +54,14 @@ export default function CuentasPorCobrarPage() {
   });
 
   const { role } = useUser();
-  const { isObserver, isClient } = useAdminAction();
+  const { isObserver, isClient, isSales } = useAdminAction();
   const isViewer = isObserver || isClient;
+
+  const isActionDisabledForSales = (projectId: string) => {
+    if (!isSales) return false;
+    const project = projects.find(p => p.id === projectId);
+    return project ? project.status !== 'proposal' : true;
+  };
 
   useEffect(() => {
     fetchData();
@@ -91,6 +98,9 @@ export default function CuentasPorCobrarPage() {
   const handleSavePayment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isViewer) return;
+    if (isActionDisabledForSales(paymentForm.project_id)) {
+      return alert('Ventas no puede modificar proyectos aprobados.');
+    }
 
     try {
       const { error } = await supabase.from('project_payments').insert([{
@@ -120,6 +130,19 @@ export default function CuentasPorCobrarPage() {
   , 0);
   
   const pendingBalance = totalContracted - totalCollected;
+
+  const projectsWithBalance = projects.map(project => {
+    const extras = project.project_extras?.reduce((s, e) => s + Number(e.amount_usd), 0) || 0;
+    const total = Number(project.budget_usd) + extras;
+    const paid = project.project_payments?.reduce((s, p) => s + Number(p.amount_usd), 0) || 0;
+    const balance = total - paid;
+    return { ...project, total, paid, balance };
+  });
+
+  const pendientesProjects = projectsWithBalance.filter(p => p.balance > 0);
+  const saldadosProjects = projectsWithBalance.filter(p => p.balance <= 0);
+
+  const displayedProjects = activeTab === 'pendientes' ? pendientesProjects : saldadosProjects;
 
   return (
     <div className="animate-fade-in">
@@ -163,12 +186,56 @@ export default function CuentasPorCobrarPage() {
         </div>
       </div>
 
+      {/* Tabs */}
+      <div style={{ display: 'flex', gap: '1rem', borderBottom: '1px solid var(--border-color)', marginBottom: '1.5rem' }}>
+        <button 
+          onClick={() => setActiveTab('pendientes')}
+          style={{ 
+            padding: '0.75rem 1.5rem', 
+            background: 'none', 
+            border: 'none', 
+            borderBottom: activeTab === 'pendientes' ? '2px solid var(--primary-color)' : '2px solid transparent',
+            color: activeTab === 'pendientes' ? 'var(--primary-color)' : 'var(--text-muted)',
+            cursor: 'pointer',
+            fontWeight: 600,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.5rem',
+            transition: 'all 0.2s'
+          }}
+        >
+          <TrendingDown size={18} /> Saldos Pendientes
+          <span style={{ background: 'rgba(255,255,255,0.07)', borderRadius: '99px', padding: '0.1rem 0.5rem', fontSize: '0.75rem' }}>{pendientesProjects.length}</span>
+        </button>
+        <button 
+          onClick={() => setActiveTab('saldados')}
+          style={{ 
+            padding: '0.75rem 1.5rem', 
+            background: 'none', 
+            border: 'none', 
+            borderBottom: activeTab === 'saldados' ? '2px solid var(--success)' : '2px solid transparent',
+            color: activeTab === 'saldados' ? 'var(--success)' : 'var(--text-muted)',
+            cursor: 'pointer',
+            fontWeight: 600,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.5rem',
+            transition: 'all 0.2s'
+          }}
+        >
+          <CheckCircle size={18} /> Cuentas Saldadas
+          <span style={{ background: 'rgba(255,255,255,0.07)', borderRadius: '99px', padding: '0.1rem 0.5rem', fontSize: '0.75rem' }}>{saldadosProjects.length}</span>
+        </button>
+      </div>
+
       {/* Table */}
       <div className="card" style={{ overflow: 'hidden' }}>
         {loading ? (
           <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-muted)' }}>Cargando proyectos...</div>
-        ) : projects.length === 0 ? (
-          <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-muted)' }}>No hay cuentas por cobrar registradas.</div>
+        ) : displayedProjects.length === 0 ? (
+          <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+            {activeTab === 'pendientes' ? 'No hay cuentas pendientes por cobrar.' : 'No hay cuentas saldadas.'}
+          </div>
         ) : (
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -185,11 +252,11 @@ export default function CuentasPorCobrarPage() {
                 </tr>
               </thead>
               <tbody>
-                {projects.map(project => {
-                  const extras = project.project_extras?.reduce((s, e) => s + Number(e.amount_usd), 0) || 0;
-                  const total = Number(project.budget_usd) + extras;
-                  const paid = project.project_payments?.reduce((s, p) => s + Number(p.amount_usd), 0) || 0;
-                  const balance = total - paid;
+                {displayedProjects.map(project => {
+                  const total = project.total;
+                  const paid = project.paid;
+                  const balance = project.balance;
+                  const extras = project.project_extras?.reduce((s: any, x: any) => s + Number(x.amount_usd), 0) || 0;
                   const isExpanded = expandedRows.has(project.id);
                   const progress = total > 0 ? Math.min(100, Math.round((paid / total) * 100)) : 0;
 
@@ -222,7 +289,7 @@ export default function CuentasPorCobrarPage() {
                           )}
                         </td>
                         <td style={{ padding: '1rem', textAlign: 'right' }}>
-                          {!isViewer && balance > 0 && (
+                          {!isViewer && balance > 0 && !isActionDisabledForSales(project.id) && (
                             <button 
                               className="btn-primary" 
                               style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem' }}

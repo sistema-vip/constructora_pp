@@ -25,6 +25,7 @@ import { modifyProposalText } from '@/app/actions/ai-actions';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { useAdminAction } from '@/lib/useAdminAction';
+import NewProposalModal from '@/components/NewProposalModal';
 
 interface Project {
   id: string;
@@ -66,6 +67,9 @@ export default function ProyectosPage() {
       'tiempo de ejecución y entrega',
       'presupuesto de inversión (a todo costo)',
       'presupuesto de inversión (solo mano de obra)',
+      'presupuesto de inversión (mano de obra)',
+      'presupuesto de inversión (materiales)',
+      'presupuesto de inversión (solo materiales)',
       'presupuesto de inversión',
       'condiciones y métodos de pago',
       'resumen financiero y ejecución'
@@ -181,9 +185,7 @@ export default function ProyectosPage() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
-  const [isEditing, setIsEditing] = useState(false);
-  const [editContent, setEditContent] = useState('');
-  const [editBudget, setEditBudget] = useState<string>('0');
+  const [showProposalModal, setShowProposalModal] = useState(false);
   const [saving, setSaving] = useState(false);
   const [view, setView] = useState<'proposals' | 'execution' | 'archived'>('proposals');
 
@@ -257,7 +259,6 @@ export default function ProyectosPage() {
           const proj = data.find(p => p.id === printId);
           if (proj) {
             setSelectedProject(proj);
-            setIsEditing(false);
             setTimeout(() => window.print(), 500);
             window.history.replaceState({}, '', '/proyectos');
           }
@@ -270,40 +271,7 @@ export default function ProyectosPage() {
     }
   }
 
-  async function handleSave() {
-    if (!selectedProject) return;
-    setSaving(true);
-    const budgetAmount = parseCurrency(editBudget);
-    const { error } = await supabase
-      .from('projects')
-      .update({ 
-        description: editContent,
-        budget_usd: budgetAmount
-      })
-      .eq('id', selectedProject.id);
 
-    if (!error) {
-      setProjects(projects.map(p => p.id === selectedProject.id ? { ...p, description: editContent, budget_usd: budgetAmount } : p));
-      setSelectedProject({ ...selectedProject, description: editContent, budget_usd: budgetAmount });
-      setIsEditing(false);
-    } else {
-      alert(`Error al guardar: ${error.message}`);
-    }
-    setSaving(false);
-  }
-
-  async function handleAiModify() {
-    if (!aiInstruction.trim() || !editContent) return;
-    setIsModifyingAi(true);
-    const result = await modifyProposalText(editContent, aiInstruction);
-    if (result.success && result.modifiedText) {
-      setEditContent(result.modifiedText);
-      setAiInstruction('');
-    } else {
-      alert(result.error || 'Hubo un error al modificar el texto con IA.');
-    }
-    setIsModifyingAi(false);
-  }
 
   async function handleStatusUpdate(id: string, newStatus: string) {
     executeWithAuth(async () => {
@@ -397,8 +365,13 @@ export default function ProyectosPage() {
       return;
     }
     try {
+      const isRevert = reopenTarget!.status === 'in_progress';
+      const updateData = isRevert 
+        ? { status: 'proposal' } 
+        : { archived_at: null, status: 'in_progress' };
+
       const { error } = await supabase.from('projects')
-        .update({ archived_at: null, status: 'in_progress' })
+        .update(updateData)
         .eq('id', reopenTarget!.id);
       if (error) throw error;
       setShowReopenModal(false);
@@ -407,7 +380,7 @@ export default function ProyectosPage() {
       setReopenError('');
       fetchProjects();
     } catch (err: any) {
-      alert('Error al reabrir proyecto: ' + err.message);
+      alert('Error al procesar la acción: ' + err.message);
     }
   }
 
@@ -529,11 +502,17 @@ export default function ProyectosPage() {
                     </td>
                   )}
                   <td style={{ padding: '1.25rem 1.5rem' }}>
-                    <div style={{ fontWeight: '600', color: 'white' }}>
-                      {project.proposal_number ? <span style={{ color: 'var(--primary-color)', marginRight: '0.5rem' }}>#{project.proposal_number}</span> : null}
+                    <div style={{ fontWeight: '600', color: 'white', marginBottom: '0.2rem' }}>
                       {project.title}
                     </div>
-                    <div className="text-muted" style={{ fontSize: '0.8rem' }}>{new Date(project.created_at).toLocaleDateString()}</div>
+                    <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                      {project.proposal_number && (
+                        <span style={{ background: 'rgba(59,130,246,0.1)', color: 'var(--primary-color)', padding: '0.1rem 0.4rem', borderRadius: '4px', border: '1px solid rgba(59,130,246,0.2)' }}>
+                          Propuesta #{project.proposal_number}
+                        </span>
+                      )}
+                      <span>📅 {new Date(project.created_at).toLocaleDateString()}</span>
+                    </div>
                   </td>
                   <td style={{ padding: '1.25rem 1.5rem', color: 'var(--text-secondary)' }}>
                     {project.clients?.name || 'Cliente por definir'}
@@ -573,7 +552,6 @@ export default function ProyectosPage() {
                             title="Imprimir Propuesta"
                             onClick={() => {
                               setSelectedProject(project);
-                              setIsEditing(false);
                               setTimeout(() => window.print(), 300);
                             }}
                           >
@@ -613,12 +591,26 @@ export default function ProyectosPage() {
                                 title="Imprimir Propuesta"
                                 onClick={() => {
                                   setSelectedProject(project);
-                                  setIsEditing(false);
                                   setTimeout(() => window.print(), 300);
                                 }}
                               >
                                 <Printer size={14} /> Imprimir
                               </button>
+                              {!isObserver && project.status === 'in_progress' && (
+                                <button
+                                  className="btn-secondary"
+                                  style={{ padding: '0.5rem', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#ffcc00' }}
+                                  title="Retornar a Propuesta (requiere clave admin)"
+                                  onClick={() => {
+                                    setReopenTarget(project);
+                                    setReopenPassword('');
+                                    setReopenError('');
+                                    setShowReopenModal(true);
+                                  }}
+                                >
+                                  <RotateCcw size={14} />
+                                </button>
+                              )}
                             </>
                           ) : (
                             <div style={{ display: 'flex', gap: '0.5rem' }}>
@@ -630,17 +622,22 @@ export default function ProyectosPage() {
                               >
                                 <FileText size={14} /> Ver
                               </button>
-                              {!isObserver && (
+                              {!isObserver && !(isSales && project.status !== 'proposal') && (
                                 <button
                                   className="btn-secondary"
                                   style={{ padding: '0.5rem', fontSize: '0.8rem', color: 'var(--primary-color)' }}
                                   title="Editar Presupuesto y Texto"
-                                  onClick={() => executeWithAuth(() => {
-                                    setSelectedProject(project);
-                                    setEditContent(project.description);
-                                    setEditBudget(formatCurrency(project.budget_usd));
-                                    setIsEditing(true);
-                                  })}
+                                  onClick={() => {
+                                    if (isSales && project.status === 'proposal') {
+                                      setSelectedProject(project);
+                                      setShowProposalModal(true);
+                                    } else {
+                                      executeWithAuth(() => {
+                                        setSelectedProject(project);
+                                        setShowProposalModal(true);
+                                      });
+                                    }
+                                  }}
                                 >
                                   <Edit3 size={14} /> Editar
                                 </button>
@@ -651,9 +648,6 @@ export default function ProyectosPage() {
                                 title="Ver detalles"
                                 onClick={() => {
                                   setSelectedProject(project);
-                                  setEditContent(project.description);
-                                  setEditBudget(String(project.budget_usd));
-                                  setIsEditing(false);
                                 }}
                               >
                                 <FileText size={14} />
@@ -664,8 +658,6 @@ export default function ProyectosPage() {
                                 title="Imprimir Propuesta"
                                 onClick={() => {
                                   setSelectedProject(project);
-                                  setEditContent(project.description);
-                                  setIsEditing(false);
                                   setTimeout(() => window.print(), 300);
                                 }}
                               >
@@ -738,8 +730,6 @@ export default function ProyectosPage() {
                 </span>
               </div>
               <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                {!isEditing ? (
-                  <>
                     {selectedProject.status === 'proposal' && isCreatorRole && (
                       <>
                         <button className="btn-primary" style={{ background: 'var(--success)', borderColor: 'var(--success)' }} onClick={() => handleStatusUpdate(selectedProject.id, 'in_progress')}>
@@ -750,9 +740,15 @@ export default function ProyectosPage() {
                         </button>
                       </>
                     )}
-                    {isCreatorRole && (
-                      <button className="btn-secondary" onClick={() => executeWithAuth(() => setIsEditing(true))}>
-                        <Edit3 size={16} /> Editar Texto
+                    {isCreatorRole && !(isSales && selectedProject.status !== 'proposal') && (
+                      <button className="btn-secondary" onClick={() => {
+                        if (isSales && selectedProject.status === 'proposal') {
+                          setShowProposalModal(true);
+                        } else {
+                          executeWithAuth(() => setShowProposalModal(true));
+                        }
+                      }}>
+                        <Edit3 size={16} /> Editar Propuesta
                       </button>
                     )}
                     <button className="btn-primary" onClick={handlePrint}>
@@ -768,17 +764,6 @@ export default function ProyectosPage() {
                         <Lock size={14} /> Modo lectura
                       </div>
                     )}
-                  </>
-                ) : (
-                  <>
-                    <button className="btn-secondary" onClick={() => setIsEditing(false)}>
-                      Cancelar
-                    </button>
-                    <button className="btn-primary" onClick={handleSave} disabled={saving}>
-                      <Save size={16} /> {saving ? 'Guardando...' : 'Guardar Cambios'}
-                    </button>
-                  </>
-                )}
                 <button className="btn-secondary" style={{ padding: '0.5rem' }} onClick={() => setSelectedProject(null)}>
                   <X size={18} />
                 </button>
@@ -786,10 +771,9 @@ export default function ProyectosPage() {
             </div>
 
             {/* Contenido (Visible al imprimir) */}
-            <div className="print-area" style={{ padding: '2rem', overflowY: 'auto', flex: 1, background: isEditing ? '#0c0e12' : '#ffffff' }}>
+            <div className="print-area" style={{ padding: '2rem', overflowY: 'auto', flex: 1, background: '#ffffff' }}>
               
               {/* Header de la Propuesta (Solo se ve bien en blanco o al imprimir si no estamos editando) */}
-              {!isEditing && (
                 <div style={{ marginBottom: '1.5rem', display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', borderBottom: '2px solid #b87333', paddingBottom: '0.5rem' }}>
                   <Image src="/logo_3d.png" alt="P&P CONSTRUYE" width={160} height={80} style={{ objectFit: 'contain' }} priority />
                   <div style={{ textAlign: 'right', color: '#333' }}>
@@ -799,70 +783,10 @@ export default function ProyectosPage() {
                     <p style={{ margin: '0.1rem 0 0 0', fontSize: '0.85rem' }}>Fecha: {new Date(selectedProject.created_at).toLocaleDateString()}</p>
                   </div>
                 </div>
-              )}
 
-              {isEditing ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-                  <div style={{ background: 'rgba(245,158,11,0.05)', padding: '1.5rem', borderRadius: '12px', border: '1px solid rgba(245,158,11,0.2)' }}>
-                    <label style={{ display: 'block', marginBottom: '0.75rem', fontSize: '0.9rem', color: 'var(--primary-color)', fontWeight: 'bold' }}>
-                      MONTO TOTAL DEL PRESUPUESTO (USD)
-                    </label>
-                    <div style={{ position: 'relative' }}>
-                      <DollarSign size={20} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--success)' }} />
-                      <input 
-                        type="text" 
-                        className="input-field" 
-                        style={{ paddingLeft: '3rem', fontSize: '1.2rem', fontWeight: 'bold', color: 'var(--success)' }}
-                        value={editBudget}
-                        onChange={(e) => setEditBudget(handleMoneyInput(e.target.value))}
-                        onBlur={(e) => setEditBudget(formatOnBlur(e.target.value))}
-                        placeholder="0,00"
-                      />
-                    </div>
-                    <p style={{ margin: '0.75rem 0 0 0', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                      Este monto es el que se usará para calcular los pagos y la rentabilidad una vez aprobada la propuesta.
-                    </p>
-                  </div>
-
-                  <div>
-                    <label style={{ display: 'block', marginBottom: '0.75rem', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-                      TEXTO DESCRIPTIVO DE LA PROPUESTA
-                    </label>
-                    
-                    {/* Panel de Asistencia IA */}
-                    <div style={{ background: 'rgba(56, 189, 248, 0.05)', padding: '1rem', borderRadius: '8px', border: '1px solid rgba(56, 189, 248, 0.2)', marginBottom: '1rem', display: 'flex', gap: '0.5rem' }}>
-                      <input 
-                        type="text" 
-                        className="input-field" 
-                        style={{ flex: 1, padding: '0.6rem 1rem', fontSize: '0.85rem' }}
-                        placeholder="Ej: Haz el texto más formal, añade que la garantía es de 1 año..."
-                        value={aiInstruction}
-                        onChange={(e) => setAiInstruction(e.target.value)}
-                        onKeyDown={(e) => { if (e.key === 'Enter') handleAiModify(); }}
-                      />
-                      <button 
-                        className="btn-primary" 
-                        style={{ padding: '0.6rem 1rem', background: 'var(--accent-blue)', borderColor: 'var(--accent-blue)', fontSize: '0.85rem' }}
-                        onClick={handleAiModify}
-                        disabled={isModifyingAi || !aiInstruction.trim()}
-                      >
-                        <Sparkles size={16} /> {isModifyingAi ? 'Modificando...' : 'Aplicar con IA'}
-                      </button>
-                    </div>
-
-                    <textarea 
-                      className="input-field" 
-                      style={{ width: '100%', minHeight: '40vh', resize: 'vertical', fontFamily: 'monospace', fontSize: '0.9rem', lineHeight: 1.6 }}
-                      value={editContent}
-                      onChange={(e) => setEditContent(e.target.value)}
-                    />
-                  </div>
-                </div>
-              ) : (
                 <div style={{ lineHeight: 1.6, color: '#000', fontSize: '14px', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
                   {renderStructuredProposal(selectedProject.description)}
                 </div>
-              )}
             </div>
           </div>
         </div>
@@ -961,7 +885,8 @@ export default function ProyectosPage() {
           <div className="card animate-fade" style={{ maxWidth: '440px', width: '90%', padding: '2rem', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <h2 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                <RotateCcw size={20} style={{ color: '#38bdf8' }} /> Reabrir Proyecto
+                <RotateCcw size={20} style={{ color: reopenTarget.status === 'in_progress' ? '#ffcc00' : '#38bdf8' }} /> 
+                {reopenTarget.status === 'in_progress' ? 'Retornar a Propuesta' : 'Reabrir Proyecto'}
               </h2>
               <button className="btn-secondary" style={{ padding: '0.4rem' }} onClick={() => setShowReopenModal(false)}>
                 <X size={18} />
@@ -979,7 +904,10 @@ export default function ProyectosPage() {
             </div>
 
             <p style={{ color: 'var(--text-muted)', margin: 0, fontSize: '0.9rem' }}>
-              Este proyecto regresará a <strong style={{ color: 'white' }}>En Ejecución</strong>. Ingresa la contraseña de administrador para continuar.
+              {reopenTarget.status === 'in_progress'
+                ? <>Este proyecto regresará a <strong style={{ color: 'white' }}>Propuesta Pendiente</strong>.</>
+                : <>Este proyecto regresará a <strong style={{ color: 'white' }}>En Ejecución</strong>.</>
+              } Ingresa la contraseña de administrador para continuar.
             </p>
 
             <div>
@@ -1005,10 +933,10 @@ export default function ProyectosPage() {
               <button className="btn-secondary" onClick={() => setShowReopenModal(false)}>Cancelar</button>
               <button
                 className="btn-primary"
-                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: '#38bdf8', borderColor: '#38bdf8' }}
+                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: reopenTarget.status === 'in_progress' ? '#ffcc00' : '#38bdf8', borderColor: reopenTarget.status === 'in_progress' ? '#ffcc00' : '#38bdf8', color: reopenTarget.status === 'in_progress' ? '#000' : '#fff' }}
                 onClick={handleReopen}
               >
-                <RotateCcw size={15} /> Confirmar Reapertura
+                <RotateCcw size={15} /> {reopenTarget.status === 'in_progress' ? 'Confirmar Retorno' : 'Confirmar Reapertura'}
               </button>
             </div>
           </div>
@@ -1064,6 +992,13 @@ export default function ProyectosPage() {
           </div>
         </div>
       )}
+
+      <NewProposalModal 
+        isOpen={showProposalModal}
+        existingProposal={selectedProject}
+        onClose={() => { setShowProposalModal(false); setSelectedProject(null); }}
+        onSaved={() => { setShowProposalModal(false); setSelectedProject(null); fetchProjects(); }}
+      />
 
       {/* Estilos específicos para impresión */}
       <style dangerouslySetInnerHTML={{ __html: `

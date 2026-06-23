@@ -217,6 +217,7 @@ export async function modifyProposalText(currentText: string, instruction: strin
 El usuario ha solicitado el siguiente cambio o ajuste: "${instruction}"
 
 Aplica el cambio solicitado sobre el texto actual manteniendo el formato profesional, sin añadir saludos ni despedidas innecesarias. 
+IMPORTANTE: Para las fases del trabajo, NO coloques números ni viñetas al inicio (ej. NO pongas "1. Fase 1:"), escribe directamente el título "Fase 1: ...".
 Devuelve ÚNICAMENTE el nuevo texto modificado. Elimina cualquier guión "---" al inicio o al final del texto.
 
 --- TEXTO ACTUAL ---
@@ -407,7 +408,8 @@ Instrucciones:
 5. Si el usuario te pide que "hagas el presupuesto", "calcules" o "estimes", genera descripciones técnicas profesionales y estimaciones realistas basadas en tu conocimiento de ingeniería para rellenar los campos (objetivo, fases, tiempo, etc.), manteniendo siempre la coherencia.
 6. En cuanto a la 'Modalidad del Presupuesto' (investmentModality): si el usuario menciona "mano de obra", actualiza este campo con una descripción formal para Solo Mano de Obra. Si menciona "materiales", usa una descripción formal para Solo Materiales. Por defecto, usa la descripción de "A Todo Costo".
 7. Formula una respuesta conversacional corta, amable y profesional firmada como Pepe (máximo 3 párrafos, sin adornos excesivos, explicando de manera resumida qué campos actualizaste o pidiendo aclaraciones si falta información clave).
-8. DEVUELVE TU RESPUESTA ESTRICTAMENTE EN FORMATO JSON con las siguientes dos claves:
+8. IMPORTANTE: En el campo "phases" (Fases del trabajo), NO utilices números ni viñetas al inicio de cada fase (ej. no pongas "1. Fase 1:" ni "- Fase 1:"). Escribe directamente el título de la fase, por ejemplo "Fase 1: Saneamiento...".
+9. DEVUELVE TU RESPUESTA ESTRICTAMENTE EN FORMATO JSON con las siguientes dos claves:
 {
   "reply": "Tu mensaje conversacional explicando qué hiciste o preguntando detalles...",
   "form": {

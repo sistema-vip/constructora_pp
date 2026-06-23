@@ -71,6 +71,7 @@ export default function AdministracionDashboard() {
   const [newUserName, setNewUserName] = useState('');
   const [newUserEmail, setNewUserEmail] = useState('');
   const [newUserPassword, setNewUserPassword] = useState('');
+  const [newUserRole, setNewUserRole] = useState<'admin' | 'sales' | 'viewer'>('viewer');
   const [creatingUser, setCreatingUser] = useState(false);
   const [createUserError, setCreateUserError] = useState<string | null>(null);
   const [createUserSuccess, setCreateUserSuccess] = useState(false);
@@ -253,7 +254,7 @@ export default function AdministracionDashboard() {
       const res = await fetch('/api/admin/create-user', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: newUserEmail, password: newUserPassword, name: newUserName, role: 'viewer' }),
+        body: JSON.stringify({ email: newUserEmail, password: newUserPassword, name: newUserName, role: newUserRole }),
       });
       const json = await res.json();
       console.log('Create user response:', res.status, json);
@@ -1104,15 +1105,37 @@ export default function AdministracionDashboard() {
           </button>
 
           <h2 style={{ fontSize: '1.2rem', margin: '0 0 0.25rem 0', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <UserPlus size={20} color="var(--primary-color)" /> Crear Usuario Observador
+            <UserPlus size={20} color="var(--primary-color)" /> Crear Nuevo Usuario
           </h2>
           <p className="text-muted" style={{ fontSize: '0.85rem', margin: '0 0 1.5rem 0' }}>
-            El usuario podrá ver todo el sistema pero no podrá crear, editar ni eliminar datos.
+            Registra a un nuevo usuario y asígnale un rol según sus responsabilidades.
           </p>
 
-          <div style={{ background: 'rgba(16,185,129,0.05)', border: '1px solid rgba(16,185,129,0.2)', borderRadius: '8px', padding: '0.75rem 1rem', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <Eye size={16} color="var(--success)" />
-            <span style={{ fontSize: '0.82rem', color: 'var(--text-main)' }}>Rol asignado automáticamente: <strong style={{ color: 'var(--success)' }}>Observador (Viewer)</strong></span>
+          <div style={{ marginBottom: '1.5rem' }}>
+            <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.85rem' }}>Rol a asignar</label>
+            <div style={{ display: 'flex', gap: '0.75rem' }}>
+              <button
+                type="button"
+                onClick={() => setNewUserRole('viewer')}
+                style={{ flex: 1, padding: '0.85rem', borderRadius: '8px', border: `2px solid ${newUserRole === 'viewer' ? 'var(--success)' : 'var(--border-color)'}`, background: newUserRole === 'viewer' ? 'rgba(16,185,129,0.08)' : 'transparent', color: newUserRole === 'viewer' ? 'var(--success)' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 600, fontSize: '0.9rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}
+              >
+                <Eye size={16} /> Observador
+              </button>
+              <button
+                type="button"
+                onClick={() => setNewUserRole('sales')}
+                style={{ flex: 1, padding: '0.85rem', borderRadius: '8px', border: `2px solid ${newUserRole === 'sales' ? 'var(--accent-blue)' : 'var(--border-color)'}`, background: newUserRole === 'sales' ? 'rgba(56, 189, 248, 0.08)' : 'transparent', color: newUserRole === 'sales' ? 'var(--accent-blue)' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 600, fontSize: '0.9rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}
+              >
+                <ClipboardList size={16} /> Ventas
+              </button>
+              <button
+                type="button"
+                onClick={() => setNewUserRole('admin')}
+                style={{ flex: 1, padding: '0.85rem', borderRadius: '8px', border: `2px solid ${newUserRole === 'admin' ? 'var(--primary-color)' : 'var(--border-color)'}`, background: newUserRole === 'admin' ? 'rgba(245,158,11,0.08)' : 'transparent', color: newUserRole === 'admin' ? 'var(--primary-color)' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 600, fontSize: '0.9rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}
+              >
+                <ShieldCheck size={16} /> Admin
+              </button>
+            </div>
           </div>
 
           <form onSubmit={handleCreateUser} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
