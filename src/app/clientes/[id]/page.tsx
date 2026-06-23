@@ -523,7 +523,7 @@ export default function ClienteDashboard() {
     });
     setAiRefinement('');
 
-    if (isSales && project.status === 'proposal') {
+    if ((isSales || isClient) && project.status === 'proposal') {
       setShowProposalModal(true);
       return;
     }

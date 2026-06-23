@@ -1,11 +1,12 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { X, Sparkles, Send, Loader2, CheckCircle, Save, FileText, User, DollarSign, Clock, HardHat, MessageSquare, Eye } from 'lucide-react';
+import { Check, CheckCircle, Send, RotateCcw, PenTool, Layout, Wand2, Type, RefreshCw, FileText, Bot, HandCoins, HardHat, Pickaxe, Ruler, Wrench, X, Loader2, Save, Eye, User, DollarSign, Clock, MessageSquare, Sparkles } from 'lucide-react';
 import { modifyProposalText, refineProposalField, chatAndUpdateForm, ChatMessage, ProposalData, parseProposalTextToForm } from '@/app/actions/ai-actions';
 import { supabase } from '@/lib/supabase';
 import { handleMoneyInput, formatOnBlur, formatCurrency } from '@/lib/formatters';
 import { useAdminAction } from '@/lib/useAdminAction';
+import ProposalPrintLayout from '@/components/ProposalPrintLayout';
 
 interface Client { id: string; name: string; company_name?: string; }
 interface Props { isOpen: boolean; onClose: () => void; onSaved?: () => void; onOpenAI?: () => void; initialClientId?: string; existingProposal?: any; }
@@ -38,7 +39,7 @@ function detectModalityType(text: string): ModalityType {
 
 export default function NewProposalModal({ isOpen, onClose, onSaved, initialClientId, existingProposal }: Props) {
   const { isSales } = useAdminAction();
-  // Helper to parse simple **bold** markdown syntax
+  
   const parseBoldText = (text: string | null | undefined) => {
     if (!text) return '';
     const parts = text.split('**');
@@ -48,6 +49,15 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
       }
       return part;
     });
+  };
+
+  const getPreviewText = () => {
+    let modalityHeader = 'Presupuesto de Inversión (A Todo Costo)';
+    if (selectedModality === 'mano-obra') modalityHeader = 'Presupuesto de Inversión (Solo Mano de Obra)';
+    else if (selectedModality === 'materiales') modalityHeader = 'Presupuesto de Inversión (Materiales)';
+    else if (selectedModality === 'personalizado') modalityHeader = 'Presupuesto de Inversión';
+
+    return `Proyecto: ${form.title}\nFecha: ${new Date().toLocaleDateString()}\nPara: ${form.clientName}\nÁrea de Ejecución: ${form.area}\n\nObjetivo del Proyecto\n${form.objective}\n\nFases del Trabajo (Alcance Técnico)\n${form.phases}\n\nTiempo de Ejecución y Entrega\n${form.time}\n\n${modalityHeader}\n${form.investmentModality}\n\nINVERSIÓN TOTAL: $${form.amount}\n\nCondiciones y Métodos de Pago\nEsquema de Pago: ${form.payment}\nMoneda de Pago: ${form.currency}\nFormas de Pago: ${form.paymentMethods}`;
   };
 
   /**
@@ -683,91 +693,12 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
             </div>
 
             <div style={{ padding: '2rem' }}>
-              {/* 
-                ⚠️ PROTECTED COMPONENT BLOCK — CORPORATE IDENTITY ⚠️
-                DO NOT MODIFY the visual structure, fonts, margins, or rendering rules 
-                of this print layout without explicit approval from the client.
-              */}
-              {/* Contenedor del documento imprimible estilo A4 */}
-              <div id="printable-draft" style={{ 
-                background: 'white', 
-                color: 'black', 
-                padding: '3rem 4rem', 
-                width: '100%',
-                margin: '0 auto', 
-                borderRadius: '8px',
-                boxShadow: '0 10px 25px rgba(0, 0, 0, 0.15)',
-                fontFamily: 'Arial, sans-serif',
-                fontSize: '11pt',
-                lineHeight: '1.6'
-              }}>
-                {/* ENCABEZADO / MEMBRETE */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #000', paddingBottom: '1.5rem', marginBottom: '2rem' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                    {/* Se usa el logo del proyecto */}
-                    <img src="/logo_3d.png" alt="P&P Construye" style={{ width: '160px', objectFit: 'contain' }} />
-                  </div>
-                  <div style={{ textAlign: 'right' }}>
-                    <h2 style={{ margin: 0, fontSize: '18pt', color: '#000', fontWeight: 800, textTransform: 'uppercase' }}>Propuesta</h2>
-                    <p style={{ margin: '0.2rem 0 0 0', fontSize: '10pt', color: '#555' }}>Fecha: {new Date().toLocaleDateString('es-VE')}</p>
-                  </div>
-                </div>
-
-                {/* DATOS PRINCIPALES */}
-                <div style={{ marginBottom: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-                  <div><strong style={{ color: '#000' }}>Para:</strong> {form.clientName || '_______________'}</div>
-                  <div><strong style={{ color: '#000' }}>Proyecto:</strong> {form.title || '_______________'}</div>
-                  {form.area && <div><strong style={{ color: '#000' }}>Área de Ejecución:</strong> {form.area}</div>}
-                </div>
-
-                {/* OBJETIVO */}
-                {form.objective && (
-                  <div style={{ marginBottom: '1.5rem' }}>
-                    <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '11pt', color: '#000', borderBottom: '1px solid #ccc', paddingBottom: '0.25rem' }}>Objetivo del Proyecto</h3>
-                    <div style={{ margin: 0 }}>{renderTextWithSpacing(form.objective)}</div>
-                  </div>
-                )}
-
-                {/* ALCANCE / FASES */}
-                {form.phases && (
-                  <div style={{ marginBottom: '1.5rem' }}>
-                    <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '11pt', color: '#000', borderBottom: '1px solid #ccc', paddingBottom: '0.25rem' }}>Fases del Trabajo (Alcance Técnico)</h3>
-                    <div style={{ margin: 0 }}>{renderTextWithSpacing(form.phases)}</div>
-                  </div>
-                )}
-
-                {/* INVERSION Y TIEMPO */}
-                <div style={{ marginTop: '2rem', background: '#f9f9f9', padding: '1.5rem', borderRadius: '4px', border: '1px solid #e0e0e0' }}>
-                  <h3 style={{ margin: '0 0 1rem 0', fontSize: '12pt', color: '#000', textAlign: 'center' }}>Resumen Financiero y Ejecución</h3>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1rem' }}>
-                    <div style={{ flex: 1 }}>
-                      <p style={{ margin: '0 0 0.5rem 0' }}><strong style={{ color: '#000' }}>Inversión Total (USD):</strong> ${form.amount ? formatCurrency(form.amount) : '0,00'}</p>
-                      <p style={{ margin: '0 0 0.5rem 0' }}><strong style={{ color: '#000' }}>Condiciones de Pago:</strong> {form.payment}</p>
-                      <p style={{ margin: '0 0 0.5rem 0' }}><strong style={{ color: '#000' }}>Tiempo Estimado:</strong> {form.time || '_______________'}</p>
-                      {form.currency && <p style={{ margin: '0 0 0.5rem 0' }}><strong style={{ color: '#000' }}>Moneda de Pago:</strong> {form.currency}</p>}
-                    </div>
-                  </div>
-                  <div style={{ margin: '0 0 0.5rem 0', fontSize: '9pt', color: '#555', fontStyle: 'italic', textAlign: 'justify' }}>{renderTextWithSpacing(form.investmentModality)}</div>
-                  {form.paymentMethods && (
-                    <p style={{ margin: '0.75rem 0 0 0', fontSize: '9pt', color: '#333', borderTop: '1px dotted #ccc', paddingTop: '0.75rem', textAlign: 'justify', fontStyle: 'italic' }}>
-                      <strong>Formas de Pago:</strong> {parseBoldText(form.paymentMethods)}
-                    </p>
-                  )}
-                </div>
-
-                {/* FIRMAS */}
-                <div style={{ marginTop: '4rem', display: 'flex', justifyContent: 'space-between', padding: '0 2rem' }}>
-                  <div style={{ textAlign: 'center', width: '250px' }}>
-                    <div style={{ borderBottom: '1px solid #000', height: '40px', marginBottom: '0.5rem' }}></div>
-                    <p style={{ margin: 0, fontWeight: 'bold' }}>P&P Construye</p>
-                    <p style={{ margin: 0, fontSize: '9pt', color: '#666' }}>Firma Autorizada</p>
-                  </div>
-                  <div style={{ textAlign: 'center', width: '250px' }}>
-                    <div style={{ borderBottom: '1px solid #000', height: '40px', marginBottom: '0.5rem' }}></div>
-                    <p style={{ margin: 0, fontWeight: 'bold' }}>Cliente / Representante</p>
-                    <p style={{ margin: 0, fontSize: '9pt', color: '#666' }}>Firma de Aprobación</p>
-                  </div>
-                </div>
+              <div id="printable-draft">
+                <ProposalPrintLayout 
+                  proposalNumber={undefined} // it's a draft
+                  date={new Date().toLocaleDateString('es-VE')}
+                  contentText={getPreviewText()}
+                />
               </div>
             </div>
           </div>
