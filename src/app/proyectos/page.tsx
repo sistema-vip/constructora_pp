@@ -94,7 +94,7 @@ export default function ProyectosPage() {
       const line = lines[i].trim();
       if (!line) {
         // Empty line, add a spacing div (compacted)
-        renderedElements.push(<div key={`empty-${i}`} style={{ height: '0.4rem' }} />);
+        renderedElements.push(<div key={`empty-${i}`} style={{ height: '0.2rem' }} />);
         continue;
       }
 

@@ -50,6 +50,15 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
     });
   };
 
+  const renderTextWithSpacing = (text: string | null | undefined) => {
+    if (!text) return null;
+    return text.split(/\n{2,}/).map((paragraph, idx) => (
+      <p key={idx} style={{ margin: '0 0 0.5rem 0', textAlign: 'justify', whiteSpace: 'pre-wrap' }}>
+        {parseBoldText(paragraph)}
+      </p>
+    ));
+  };
+
   const [mode, setMode] = useState<Mode>('manual');
   const [step, setStep] = useState<Step>('chat');
   const [selectedModality, setSelectedModality] = useState<ModalityType>('todo-costo');
@@ -647,7 +656,7 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
                 {form.objective && (
                   <div style={{ marginBottom: '1.5rem' }}>
                     <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '11pt', color: '#000', borderBottom: '1px solid #ccc', paddingBottom: '0.25rem' }}>Objetivo del Proyecto</h3>
-                    <p style={{ margin: 0, textAlign: 'justify', whiteSpace: 'pre-wrap' }}>{parseBoldText(form.objective)}</p>
+                    <div style={{ margin: 0 }}>{renderTextWithSpacing(form.objective)}</div>
                   </div>
                 )}
 
@@ -655,7 +664,7 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
                 {form.phases && (
                   <div style={{ marginBottom: '1.5rem' }}>
                     <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '11pt', color: '#000', borderBottom: '1px solid #ccc', paddingBottom: '0.25rem' }}>Fases del Trabajo (Alcance Técnico)</h3>
-                    <p style={{ margin: 0, textAlign: 'justify', whiteSpace: 'pre-wrap' }}>{parseBoldText(form.phases)}</p>
+                    <div style={{ margin: 0 }}>{renderTextWithSpacing(form.phases)}</div>
                   </div>
                 )}
 
@@ -670,7 +679,7 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
                       {form.currency && <p style={{ margin: '0 0 0.5rem 0' }}><strong style={{ color: '#000' }}>Moneda de Pago:</strong> {form.currency}</p>}
                     </div>
                   </div>
-                  <p style={{ margin: '0 0 0.5rem 0', fontSize: '9pt', color: '#555', fontStyle: 'italic', textAlign: 'justify', whiteSpace: 'pre-wrap' }}>{parseBoldText(form.investmentModality)}</p>
+                  <div style={{ margin: '0 0 0.5rem 0', fontSize: '9pt', color: '#555', fontStyle: 'italic', textAlign: 'justify' }}>{renderTextWithSpacing(form.investmentModality)}</div>
                   {form.paymentMethods && (
                     <p style={{ margin: '0.75rem 0 0 0', fontSize: '9pt', color: '#333', borderTop: '1px dotted #ccc', paddingTop: '0.75rem', textAlign: 'justify', fontStyle: 'italic' }}>
                       <strong>Formas de Pago:</strong> {parseBoldText(form.paymentMethods)}
