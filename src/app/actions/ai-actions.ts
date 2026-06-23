@@ -50,13 +50,16 @@ Objetivo del Proyecto
 [Descripción técnica y formal del propósito fundamental de la obra, detallando de forma clara, profesional y explícita el resultado esperado y el alcance general, sin exagerar pero con un lenguaje ingenieril elegante y descriptivo (1 o 2 párrafos).]
 
 Fases del Trabajo (Alcance Técnico)
-[Lista secuencial y ordenada de las fases de ejecución. Cada fase debe ir OBLIGATORIAMENTE en una nueva línea y estar enumerada (Ej: 1. **Nombre de Fase**: descripción), incluyendo una breve descripción técnica de la actividad a realizar.]
+[Lista secuencial de las fases de ejecución. Cada fase debe ir OBLIGATORIAMENTE en una nueva línea. NO coloques números de lista antes de la palabra "Fase" (Ej. usa directamente: **Fase 1 - Nombre de la fase**: descripción), e incluye una breve descripción técnica.]
 
 Tiempo de Ejecución y Entrega
 [Tiempo estimado basado en lo discutido]
 
-Presupuesto de Inversión (A Todo Costo)
-Esta cotización se presenta bajo la modalidad "A Todo Costo". Incluye todos los materiales, transporte, herramientas y mano de obra calificada necesarios para entregar la obra terminada.
+Presupuesto de Inversión (A Todo Costo o Solo Mano de Obra o Materiales)
+[Genera el encabezado correspondiente según la modalidad acordada: "Presupuesto de Inversión (A Todo Costo)", "Presupuesto de Inversión (Solo Mano de Obra)", o "Presupuesto de Inversión (Materiales)". Luego redacta la modalidad:
+- Si es "A Todo Costo": detalla que incluye materiales, herramientas y mano de obra.
+- Si es "Solo Mano de Obra": detalla que incluye únicamente mano de obra calificada y herramientas, y que el suministro de materiales es por cuenta del cliente.
+- Si es "Materiales": detalla que incluye únicamente el suministro y entrega de materiales en obra, y que la mano de obra para la instalación es por cuenta del cliente.]
 
 INVERSIÓN TOTAL: $[Monto calculado o "Por Definir"]
 
@@ -264,7 +267,7 @@ Instrucciones:
 2. Extrae el nombre del cliente (clientName).
 3. Busca en la lista de clientes registrados el que mejor coincida con el nombre mencionado. Si encuentras uno, pon su ID exacto en 'matchedClientId'. Si no hay coincidencia clara o no se menciona cliente, déjalo vacío ("").
 4. Genera una descripción técnica profesional como 'objective' (Objetivo del Proyecto).
-5. Genera un desglose numerado de las fases de trabajo técnico en 'phases' (Fases del Trabajo).
+5. Genera un desglose de las fases de trabajo técnico en 'phases' (Fases del Trabajo). NO uses listas numeradas tradicionales; comienza la línea directamente con "**Fase 1**" (o la fase correspondiente).
 6. Extrae o estima el tiempo de ejecución en 'time'.
 7. Extrae el monto total (solo números o formato de moneda) en 'amount'. Si no se menciona, pon "".
 8. Extrae las condiciones de pago en 'payment'. Si no se mencionan, pon "60% anticipo / 40% al finalizar".
@@ -402,8 +405,9 @@ Instrucciones:
 3. Si el usuario pide explícitamente modificar un campo o agregar un detalle (ej. "Ponle 1200 dólares", "Cambia el área a 50m2", "En las fases agrega pintar las vigas"), realiza esa modificación sobre el estado actual del formulario.
 4. Intenta buscar coincidencias claras en la lista de clientes registrados. Si encuentras una, coloca su ID en 'clientId' y su nombre exacto en 'clientName'. Si no hay cliente registrado pero se menciona un nombre, colócalo en 'clientName' y deja 'clientId' vacío.
 5. Si el usuario te pide que "hagas el presupuesto", "calcules" o "estimes", genera descripciones técnicas profesionales y estimaciones realistas basadas en tu conocimiento de ingeniería para rellenar los campos (objetivo, fases, tiempo, etc.), manteniendo siempre la coherencia.
-6. Formula una respuesta conversacional corta, amable y profesional firmada como Pepe (máximo 3 párrafos, sin adornos excesivos, explicando de manera resumida qué campos actualizaste o pidiendo aclaraciones si falta información clave).
-7. DEVUELVE TU RESPUESTA ESTRICTAMENTE EN FORMATO JSON con las siguientes dos claves:
+6. En cuanto a la 'Modalidad del Presupuesto' (investmentModality): si el usuario menciona "mano de obra", actualiza este campo con una descripción formal para Solo Mano de Obra. Si menciona "materiales", usa una descripción formal para Solo Materiales. Por defecto, usa la descripción de "A Todo Costo".
+7. Formula una respuesta conversacional corta, amable y profesional firmada como Pepe (máximo 3 párrafos, sin adornos excesivos, explicando de manera resumida qué campos actualizaste o pidiendo aclaraciones si falta información clave).
+8. DEVUELVE TU RESPUESTA ESTRICTAMENTE EN FORMATO JSON con las siguientes dos claves:
 {
   "reply": "Tu mensaje conversacional explicando qué hiciste o preguntando detalles...",
   "form": {
@@ -441,6 +445,71 @@ IMPORTANTE: Responde ÚNICAMENTE con el objeto JSON anterior, sin markdown adici
     };
   } catch (error: any) {
     return { success: false, error: `Error en chat de Pepe: ${error.message}` };
+  }
+}
+
+// ─────────────────────────────────────────────
+// PARSE PROPOSAL TEXT TO FORM FIELDS
+// ─────────────────────────────────────────────
+export async function parseProposalTextToForm(
+  text: string
+): Promise<{ success: boolean; form?: any; error?: string }> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey || apiKey === 'TU_API_KEY_AQUI') {
+    return { success: false, error: 'API Key de Gemini no configurada.' };
+  }
+
+  try {
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+
+    const prompt = `Analiza la siguiente propuesta de construcción redactada y extrae/deduce los valores correspondientes para los campos del formulario.
+Si algún campo no está explícitamente en el texto, deduce un valor adecuado basado en el contexto de la propuesta.
+
+Texto de la propuesta:
+"${text}"
+
+Campos a extraer:
+- title: Título del proyecto (extrae del campo 'Proyecto:')
+- clientName: Nombre del cliente (extrae del campo 'Para:')
+- area: Área de ejecución (extrae del campo 'Área de Ejecución:')
+- objective: El texto completo de la sección 'Objetivo del Proyecto' (sin el título 'Objetivo del Proyecto')
+- phases: Las fases de trabajo completas de la sección 'Fases del Trabajo' (sin el título)
+- investmentModality: El texto de la sección 'Presupuesto de Inversión' (típicamente explica la modalidad de inversión, sin incluir el monto total ni el título de la sección)
+- time: Tiempo de ejecución (extrae del campo 'Tiempo de Ejecución y Entrega:' o similar)
+- amount: Monto de inversión en USD, solo números o formato decimal (ejemplo: "1234.56" o "1234,56", extrae del campo 'INVERSIÓN TOTAL:')
+- payment: Esquema de pago (ej: "60% anticipo / 40% al finalizar", extrae del campo 'Esquema de Pago:')
+- currency: Moneda de pago (ej: "Divisas" o "Bolívares", extrae del campo 'Moneda de Pago:' o 'Tasa de Cambio:' o dedúcelo de la descripción)
+- paymentMethods: Formas de pago / métodos (extrae de 'Formas de Pago:' o 'Métodos de pago:')
+
+IMPORTANTE: Responde ÚNICAMENTE con un objeto JSON válido con las siguientes claves:
+{
+  "title": "",
+  "clientName": "",
+  "area": "",
+  "objective": "",
+  "phases": "",
+  "investmentModality": "",
+  "time": "",
+  "amount": "",
+  "payment": "",
+  "currency": "",
+  "paymentMethods": ""
+}`;
+
+    const result = await model.generateContent({
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      generationConfig: {
+        responseMimeType: "application/json",
+      }
+    });
+
+    const responseText = result.response.text();
+    const data = JSON.parse(responseText);
+
+    return { success: true, form: data };
+  } catch (error: any) {
+    return { success: false, error: `Error al parsear propuesta: ${error.message}` };
   }
 }
 
