@@ -175,7 +175,14 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
       const amount = parseFloat(amountStr.replace(/[^0-9.]/g, '')) || 0;
 
       if (existingProposal) {
-        const { error: err } = await supabase.from('projects').update({ client_id: linkedClientId || null, title: proposal.title, description: editableText, budget_usd: amount }).eq('id', existingProposal.id);
+        const { error: err } = await supabase.from('projects').update({ 
+          client_id: linkedClientId || null, 
+          title: proposal.title, 
+          description: editableText, 
+          budget_usd: amount,
+          status: 'proposal',
+          archived_at: null
+        }).eq('id', existingProposal.id);
         if (err) throw new Error(err.message);
       } else {
         let proposalNumber = 1;
@@ -219,6 +226,39 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
       setEditableText(fullText);
       setStep('preview');
       setMode('ai');
+    } catch (e: any) { setError(e.message); }
+    finally { setLoading(false); }
+  }
+
+  async function handleDirectSave() {
+    if (!existingProposal) return;
+    if (isSales && existingProposal && existingProposal.status !== 'proposal') {
+      return alert('Ventas no puede modificar proyectos aprobados.');
+    }
+    setLoading(true); setError('');
+    try {
+      const amountStr = String(form.amount ?? '');
+      const amount = parseFloat(amountStr.replace(/[^0-9.]/g, '')) || 0;
+
+      let modalityHeader = 'Presupuesto de Inversión (A Todo Costo)';
+      if (selectedModality === 'mano-obra') modalityHeader = 'Presupuesto de Inversión (Solo Mano de Obra)';
+      else if (selectedModality === 'materiales') modalityHeader = 'Presupuesto de Inversión (Materiales)';
+      else if (selectedModality === 'personalizado') modalityHeader = 'Presupuesto de Inversión';
+
+      const fullText = `Proyecto: ${form.title}\nFecha: ${new Date().toLocaleDateString()}\nPara: ${form.clientName}\nÁrea de Ejecución: ${form.area}\n\nObjetivo del Proyecto\n${form.objective}\n\nFases del Trabajo (Alcance Técnico)\n${form.phases}\n\nTiempo de Ejecución y Entrega\n${form.time}\n\n${modalityHeader}\n${form.investmentModality}\n\nINVERSIÓN TOTAL: $${form.amount}\n\nCondiciones y Métodos de Pago\nEsquema de Pago: ${form.payment}\nMoneda de Pago: ${form.currency}\nFormas de Pago: ${form.paymentMethods}`;
+
+      const { error: err } = await supabase.from('projects').update({ 
+        client_id: form.clientId || null, 
+        title: form.title, 
+        description: fullText, 
+        budget_usd: amount,
+        status: 'proposal',
+        archived_at: null
+      }).eq('id', existingProposal.id);
+      
+      if (err) throw new Error(err.message);
+      
+      setStep('done'); onSaved?.();
     } catch (e: any) { setError(e.message); }
     finally { setLoading(false); }
   }
@@ -590,9 +630,15 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
               <button className="btn-secondary" onClick={() => setShowPreviewModal(true)} style={{ display: 'flex', alignItems: 'center', gap: '.5rem', minWidth: 150, justifyContent: 'center' }}>
                 <Eye size={15} /> Previsualización
               </button>
-              <button className="btn-primary" onClick={handleSaveManual} disabled={loading || !form.title.trim()} style={{ display: 'flex', alignItems: 'center', gap: '.5rem', minWidth: 195, justifyContent: 'center' }}>
-                {loading ? <><Loader2 size={15} style={{ animation: 'spin 1s linear infinite' }} /> Preparando...</> : <><FileText size={15} /> {existingProposal ? 'Guardar Cambios' : 'Formalizar Propuesta'}</>}
-              </button>
+              {existingProposal ? (
+                <button className="btn-primary" onClick={handleDirectSave} disabled={loading || !form.title.trim()} style={{ display: 'flex', alignItems: 'center', gap: '.5rem', minWidth: 195, justifyContent: 'center' }}>
+                  {loading ? <><Loader2 size={15} style={{ animation: 'spin 1s linear infinite' }} /> Guardando...</> : <><Save size={15} /> Guardar Cambios</>}
+                </button>
+              ) : (
+                <button className="btn-primary" onClick={handleSaveManual} disabled={loading || !form.title.trim()} style={{ display: 'flex', alignItems: 'center', gap: '.5rem', minWidth: 195, justifyContent: 'center' }}>
+                  {loading ? <><Loader2 size={15} style={{ animation: 'spin 1s linear infinite' }} /> Preparando...</> : <><FileText size={15} /> Formalizar Propuesta</>}
+                </button>
+              )}
             </>
           )}
         </div>
