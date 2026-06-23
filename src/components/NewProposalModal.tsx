@@ -78,12 +78,19 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
   const [highlightedFields, setHighlightedFields] = useState<Record<string, boolean>>({});
   const chatEndRef = useRef<HTMLDivElement>(null);
 
+  const [isEditing, setIsEditing] = useState(false);
+  const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
+
   useEffect(() => {
     if (isOpen) { 
       fetchClients(); 
       if (existingProposal) {
+        setIsEditing(true);
+        setEditingProjectId(existingProposal.id);
         loadExistingProposal();
       } else {
+        setIsEditing(false);
+        setEditingProjectId(null);
         reset(); 
       }
     }
@@ -132,6 +139,8 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
     setLinkedClientId(initialClientId || '');
     setMessages([INITIAL_FORM_CHAT_MSG]); 
     setSelectedModality('todo-costo');
+    setIsEditing(false);
+    setEditingProjectId(null);
     
     const initialClient = clients.find(c => c.id === initialClientId);
     setForm({ ...INIT_FORM, clientId: initialClientId || '', clientName: initialClient?.name || '' });
@@ -174,7 +183,7 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
       const amountStr = String(proposal.investmentAmount ?? '');
       const amount = parseFloat(amountStr.replace(/[^0-9.]/g, '')) || 0;
 
-      if (existingProposal) {
+      if (isEditing && editingProjectId) {
         const { error: err } = await supabase.from('projects').update({ 
           client_id: linkedClientId || null, 
           title: proposal.title, 
@@ -182,7 +191,7 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
           budget_usd: amount,
           status: 'proposal',
           archived_at: null
-        }).eq('id', existingProposal.id);
+        }).eq('id', editingProjectId);
         if (err) throw new Error(err.message);
       } else {
         let proposalNumber = 1;
@@ -231,7 +240,7 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
   }
 
   async function handleDirectSave() {
-    if (!existingProposal) return;
+    if (!isEditing || !editingProjectId) return;
     if (isSales && existingProposal && existingProposal.status !== 'proposal') {
       return alert('Ventas no puede modificar proyectos aprobados.');
     }
@@ -254,7 +263,7 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
         budget_usd: amount,
         status: 'proposal',
         archived_at: null
-      }).eq('id', existingProposal.id);
+      }).eq('id', editingProjectId);
       
       if (err) throw new Error(err.message);
       
@@ -306,7 +315,7 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
             <FileText size={18} style={{ color: 'var(--primary-color)' }} />
           </div>
           <div>
-            <h2 style={{ margin: 0, fontSize: '1.1rem' }}>{existingProposal ? 'Editar Propuesta' : 'Nueva Propuesta'}</h2>
+            <h2 style={{ margin: 0, fontSize: '1.1rem' }}>{isEditing ? 'Editar Propuesta' : 'Nueva Propuesta'}</h2>
             <p className="text-muted" style={{ margin: 0, fontSize: '.78rem' }}>
               {mode === 'manual' ? 'Completa los campos o conversa con Pepe para que lo haga por ti.'
                 : mode === 'ai' && step === 'preview' ? 'Revisa y edita antes de formalizar' : ''}
@@ -327,7 +336,7 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
             <div style={{ background: 'rgba(16,185,129,.1)', width: 72, height: 72, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <CheckCircle size={36} style={{ color: 'var(--success)' }} />
             </div>
-            <h3 style={{ color: 'white' }}>{existingProposal ? '¡Propuesta Actualizada!' : '¡Propuesta Formalizada!'}</h3>
+            <h3 style={{ color: 'white' }}>{isEditing ? '¡Propuesta Actualizada!' : '¡Propuesta Formalizada!'}</h3>
             <p className="text-muted">Guardada con estado <strong style={{ color: 'var(--primary-color)' }}>Propuesta Pendiente</strong>.<br />Puedes hacerle seguimiento desde Proyectos.</p>
             <button className="btn-primary" onClick={onClose}>Cerrar</button>
           </div>
@@ -621,7 +630,7 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
             <>
               <button className="btn-secondary" onClick={() => { setMode('manual'); setStep('chat'); }}>← Seguir editando</button>
               <button className="btn-primary" onClick={handleSave} disabled={loading} style={{ display: 'flex', alignItems: 'center', gap: '.5rem', minWidth: 195, justifyContent: 'center' }}>
-                {loading ? <><Loader2 size={15} style={{ animation: 'spin 1s linear infinite' }} /> Guardando...</> : <><Save size={15} /> {existingProposal ? 'Guardar Cambios' : 'Confirmar Guardado'}</>}
+                {loading ? <><Loader2 size={15} style={{ animation: 'spin 1s linear infinite' }} /> Guardando...</> : <><Save size={15} /> {isEditing ? 'Guardar Cambios' : 'Confirmar Guardado'}</>}
               </button>
             </>
           ) : mode === 'manual' && step === 'chat' && (
@@ -630,7 +639,7 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
               <button className="btn-secondary" onClick={() => setShowPreviewModal(true)} style={{ display: 'flex', alignItems: 'center', gap: '.5rem', minWidth: 150, justifyContent: 'center' }}>
                 <Eye size={15} /> Previsualización
               </button>
-              {existingProposal ? (
+              {isEditing ? (
                 <button className="btn-primary" onClick={handleDirectSave} disabled={loading || !form.title.trim()} style={{ display: 'flex', alignItems: 'center', gap: '.5rem', minWidth: 195, justifyContent: 'center' }}>
                   {loading ? <><Loader2 size={15} style={{ animation: 'spin 1s linear infinite' }} /> Guardando...</> : <><Save size={15} /> Guardar Cambios</>}
                 </button>
