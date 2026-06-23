@@ -41,15 +41,9 @@ interface Project {
 
 export default function ProyectosPage() {
   // Helper to parse simple **bold** markdown syntax
-  const parseBoldText = (text: string | null | undefined) => {
-    if (!text) return '';
-    const parts = text.split('**');
-    return parts.map((part, i) => {
-      if (i % 2 === 1) {
-        return <strong key={i} style={{ fontWeight: 'bold' }}>{part}</strong>;
-      }
-      return part;
-    });
+  const parseBoldText = (text: string) => {
+    if (!text) return text;
+    return text.replace(/\*\*/g, '');
   };
 
   const renderStructuredProposal = (text: string | null | undefined) => {
@@ -98,10 +92,12 @@ export default function ProyectosPage() {
         continue;
       }
 
-      const lowerLine = line.toLowerCase();
+      const cleanLine = line.replace(/^\*{1,2}|\*{1,2}$/g, '').replace(/^#+\s*/, '').trim();
+      const lowerLine = cleanLine.toLowerCase();
+      const isCustomHeader = (line.startsWith('**') && line.endsWith('**') && cleanLine.length > 0 && cleanLine.length < 60 && !cleanLine.includes(':')) || (line.startsWith('#') && cleanLine.length < 60);
 
       // Check if it's a section header
-      if (headers.includes(lowerLine)) {
+      if (headers.includes(lowerLine) || isCustomHeader) {
         renderedElements.push(
           <h3 key={`header-${i}`} style={{ 
             margin: '0.75rem 0 0.3rem 0', 
@@ -112,7 +108,7 @@ export default function ProyectosPage() {
             fontWeight: 'bold',
             textTransform: 'none'
           }}>
-            {line}
+            {cleanLine}
           </h3>
         );
         continue;

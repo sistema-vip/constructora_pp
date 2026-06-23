@@ -89,13 +89,7 @@ export default function ProjectDashboard() {
   // Helper to parse simple **bold** markdown syntax
   const parseBoldText = (text: string | null | undefined) => {
     if (!text) return '';
-    const parts = text.split('**');
-    return parts.map((part, i) => {
-      if (i % 2 === 1) {
-        return <strong key={i} style={{ fontWeight: 'bold' }}>{part}</strong>;
-      }
-      return part;
-    });
+    return text.replace(/\*\*/g, '');
   };
 
   const params = useParams();
