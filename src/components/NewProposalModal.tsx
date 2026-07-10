@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { Check, CheckCircle, Send, RotateCcw, PenTool, Layout, Wand2, Type, RefreshCw, FileText, Bot, HandCoins, HardHat, Pickaxe, Ruler, Wrench, X, Loader2, Save, Eye, User, DollarSign, Clock, MessageSquare, Sparkles } from 'lucide-react';
 import { modifyProposalText, refineProposalField, chatAndUpdateForm, ChatMessage, ProposalData, parseProposalTextToForm } from '@/app/actions/ai-actions';
 import { supabase } from '@/lib/supabase';
-import { handleMoneyInput, formatOnBlur, formatCurrency } from '@/lib/formatters';
+import { handleMoneyInput, formatOnBlur, formatCurrency, parseCurrency } from '@/lib/formatters';
 import { useAdminAction } from '@/lib/useAdminAction';
 import ProposalPrintLayout from '@/components/ProposalPrintLayout';
 
@@ -199,7 +199,7 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
     setLoading(true); setError('');
     try {
       const amountStr = String(proposal.investmentAmount ?? '');
-      const amount = parseFloat(amountStr.replace(/[^0-9.]/g, '')) || 0;
+      const amount = parseCurrency(amountStr);
 
       if (isEditing && editingProjectId) {
         const { error: err } = await supabase.from('projects').update({ 
@@ -265,7 +265,7 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
     setLoading(true); setError('');
     try {
       const amountStr = String(form.amount ?? '');
-      const amount = parseFloat(amountStr.replace(/[^0-9.]/g, '')) || 0;
+      const amount = parseCurrency(amountStr);
 
       let modalityHeader = 'Presupuesto de Inversión (A Todo Costo)';
       if (selectedModality === 'mano-obra') modalityHeader = 'Presupuesto de Inversión (Solo Mano de Obra)';

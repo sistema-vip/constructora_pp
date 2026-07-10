@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { HardHat, X, Minus, Send, Loader2, FileText, Maximize2, RefreshCw } from 'lucide-react';
 import { sendChatMessage, generateFinalProposal, ChatMessage, ProposalData } from '@/app/actions/ai-actions';
 import { supabase } from '@/lib/supabase';
+import { parseCurrency } from '@/lib/formatters';
 
 type AssistantMode = 'support' | 'proposal';
 type ProposalStep = 'chat' | 'preview';
@@ -94,7 +95,7 @@ export default function FloatingAssistant({ onProposalSaved }: { onProposalSaved
     setLoading(true); setError('');
     try {
       const amountStr = String(proposal.investmentAmount ?? '');
-      const amount = parseFloat(amountStr.replace(/[^0-9.]/g, '')) || 0;
+      const amount = parseCurrency(amountStr);
       let proposalNumber = 1;
       const { data: maxRow } = await supabase
         .from('projects')
