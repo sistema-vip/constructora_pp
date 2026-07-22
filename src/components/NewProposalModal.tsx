@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { Check, CheckCircle, Send, RotateCcw, PenTool, Layout, Wand2, Type, RefreshCw, FileText, Bot, HandCoins, HardHat, Pickaxe, Ruler, Wrench, X, Loader2, Save, Eye, User, DollarSign, Clock, MessageSquare, Sparkles } from 'lucide-react';
+import { Check, CheckCircle, Send, RotateCcw, PenTool, Layout, Wand2, Type, RefreshCw, FileText, Bot, HandCoins, HardHat, Pickaxe, Ruler, Wrench, X, Loader2, Save, Eye, User, DollarSign, Clock, MessageSquare, Sparkles, Plus, Trash2 } from 'lucide-react';
 import { modifyProposalText, refineProposalField, chatAndUpdateForm, ChatMessage, ProposalData, parseProposalTextToForm } from '@/app/actions/ai-actions';
 import { supabase } from '@/lib/supabase';
 import { handleMoneyInput, formatOnBlur, formatCurrency, parseCurrency } from '@/lib/formatters';
@@ -23,7 +23,8 @@ const INIT_FORM = {
   investmentModality: TEMPLATE_TODO_COSTO, 
   time: '', amount: '', payment: '60% anticipo / 40% al finalizar',
   currency: 'Divisas',
-  paymentMethods: 'Este presupuesto está expresado en divisas. Métodos de pago: Efectivo, Zelle y Binance.'
+  paymentMethods: 'Este presupuesto está expresado en divisas. Métodos de pago: Efectivo, Zelle y Binance.',
+  workItems: [] as { id: string, description: string, price: string }[]
 };
 
 type ModalityType = 'todo-costo' | 'mano-obra' | 'materiales' | 'personalizado';
@@ -51,13 +52,20 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
     });
   };
 
+  const getPhasesText = () => {
+    if (form.workItems && form.workItems.length > 0) {
+      return form.workItems.map((item, i) => `${i + 1}. ${item.description} .... $${item.price}`).join('\n');
+    }
+    return form.phases;
+  };
+
   const getPreviewText = () => {
     let modalityHeader = 'Presupuesto de Inversión (A Todo Costo)';
     if (selectedModality === 'mano-obra') modalityHeader = 'Presupuesto de Inversión (Solo Mano de Obra)';
     else if (selectedModality === 'materiales') modalityHeader = 'Presupuesto de Inversión (Materiales)';
     else if (selectedModality === 'personalizado') modalityHeader = 'Presupuesto de Inversión';
 
-    return `Proyecto: ${form.title}\nFecha: ${new Date().toLocaleDateString()}\nPara: ${form.clientName}\nÁrea de Ejecución: ${form.area}\n\nObjetivo del Proyecto\n${form.objective}\n\nFases del Trabajo (Alcance Técnico)\n${form.phases}\n\nTiempo de Ejecución y Entrega\n${form.time}\n\n${modalityHeader}\n${form.investmentModality}\n\nINVERSIÓN TOTAL: $${form.amount}\n\nCondiciones y Métodos de Pago\nEsquema de Pago: ${form.payment}\nMoneda de Pago: ${form.currency}\nFormas de Pago: ${form.paymentMethods}`;
+    return `Proyecto: ${form.title}\nFecha: ${new Date().toLocaleDateString()}\nPara: ${form.clientName}\nÁrea de Ejecución: ${form.area}\n\nObjetivo del Proyecto\n${form.objective}\n\nFases del Trabajo (Alcance Técnico)\n${getPhasesText()}\n\nTiempo de Ejecución y Entrega\n${form.time}\n\n${modalityHeader}\n${form.investmentModality}\n\nINVERSIÓN TOTAL: $${form.amount}\n\nCondiciones y Métodos de Pago\nEsquema de Pago: ${form.payment}\nMoneda de Pago: ${form.currency}\nFormas de Pago: ${form.paymentMethods}`;
   };
 
   /**
@@ -134,7 +142,7 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
       setLoading(true);
       const res = await parseProposalTextToForm(existingProposal.description);
       if (res.success && res.form) {
-        setForm({ ...INIT_FORM, ...res.form, clientId: existingProposal.client_id || '', title: existingProposal.title || res.form.title, amount: existingProposal.budget_usd?.toString() || res.form.amount });
+        setForm({ ...INIT_FORM, ...res.form, clientId: existingProposal.client_id || '', title: existingProposal.title || res.form.title, amount: existingProposal.budget_usd?.toString() || res.form.amount, workItems: res.form.workItems || [] });
         setSelectedModality(detectModalityType(res.form.investmentModality || ''));
       } else {
         setForm({ ...INIT_FORM, title: existingProposal.title, clientId: existingProposal.client_id || '' });
@@ -163,6 +171,32 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
     const initialClient = clients.find(c => c.id === initialClientId);
     setForm({ ...INIT_FORM, clientId: initialClientId || '', clientName: initialClient?.name || '' });
   }
+
+  const addWorkItem = () => {
+    setForm(prev => ({ ...prev, workItems: [...prev.workItems, { id: Math.random().toString(36).substr(2, 9), description: '', price: '' }] }));
+  };
+
+  const removeWorkItem = (id: string) => {
+    const newItems = form.workItems.filter(item => item.id !== id);
+    setForm(prev => ({ ...prev, workItems: newItems }));
+    updateTotalFromItems(newItems);
+  };
+
+  const updateWorkItem = (id: string, field: 'description' | 'price', value: string) => {
+    const newItems = form.workItems.map(item => item.id === id ? { ...item, [field]: value } : item);
+    setForm(prev => ({ ...prev, workItems: newItems }));
+    if (field === 'price') updateTotalFromItems(newItems);
+  };
+
+  const updateTotalFromItems = (items: { price: string }[]) => {
+    const total = items.reduce((sum, item) => {
+      const val = parseCurrency(item.price);
+      return sum + (isNaN(val) ? 0 : val);
+    }, 0);
+    if (total > 0) {
+      setForm(prev => ({ ...prev, amount: formatCurrency(total).replace('$', '') }));
+    }
+  };
 
   async function fetchClients() {
     const { data } = await supabase.from('clients').select('id, name, company_name').order('name');
@@ -239,7 +273,7 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
       else if (selectedModality === 'materiales') modalityHeader = 'Presupuesto de Inversión (Materiales)';
       else if (selectedModality === 'personalizado') modalityHeader = 'Presupuesto de Inversión';
 
-      const fullText = `Proyecto: ${form.title}\nFecha: ${new Date().toLocaleDateString()}\nPara: ${form.clientName}\nÁrea de Ejecución: ${form.area}\n\nObjetivo del Proyecto\n${form.objective}\n\nFases del Trabajo (Alcance Técnico)\n${form.phases}\n\nTiempo de Ejecución y Entrega\n${form.time}\n\n${modalityHeader}\n${form.investmentModality}\n\nINVERSIÓN TOTAL: $${form.amount}\n\nCondiciones y Métodos de Pago\nEsquema de Pago: ${form.payment}\nMoneda de Pago: ${form.currency}\nFormas de Pago: ${form.paymentMethods}`;
+      const fullText = `Proyecto: ${form.title}\nFecha: ${new Date().toLocaleDateString()}\nPara: ${form.clientName}\nÁrea de Ejecución: ${form.area}\n\nObjetivo del Proyecto\n${form.objective}\n\nFases del Trabajo (Alcance Técnico)\n${getPhasesText()}\n\nTiempo de Ejecución y Entrega\n${form.time}\n\n${modalityHeader}\n${form.investmentModality}\n\nINVERSIÓN TOTAL: $${form.amount}\n\nCondiciones y Métodos de Pago\nEsquema de Pago: ${form.payment}\nMoneda de Pago: ${form.currency}\nFormas de Pago: ${form.paymentMethods}`;
       setProposal({
         title: form.title,
         clientName: form.clientName,
@@ -272,7 +306,7 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
       else if (selectedModality === 'materiales') modalityHeader = 'Presupuesto de Inversión (Materiales)';
       else if (selectedModality === 'personalizado') modalityHeader = 'Presupuesto de Inversión';
 
-      const fullText = `Proyecto: ${form.title}\nFecha: ${new Date().toLocaleDateString()}\nPara: ${form.clientName}\nÁrea de Ejecución: ${form.area}\n\nObjetivo del Proyecto\n${form.objective}\n\nFases del Trabajo (Alcance Técnico)\n${form.phases}\n\nTiempo de Ejecución y Entrega\n${form.time}\n\n${modalityHeader}\n${form.investmentModality}\n\nINVERSIÓN TOTAL: $${form.amount}\n\nCondiciones y Métodos de Pago\nEsquema de Pago: ${form.payment}\nMoneda de Pago: ${form.currency}\nFormas de Pago: ${form.paymentMethods}`;
+      const fullText = `Proyecto: ${form.title}\nFecha: ${new Date().toLocaleDateString()}\nPara: ${form.clientName}\nÁrea de Ejecución: ${form.area}\n\nObjetivo del Proyecto\n${form.objective}\n\nFases del Trabajo (Alcance Técnico)\n${getPhasesText()}\n\nTiempo de Ejecución y Entrega\n${form.time}\n\n${modalityHeader}\n${form.investmentModality}\n\nINVERSIÓN TOTAL: $${form.amount}\n\nCondiciones y Métodos de Pago\nEsquema de Pago: ${form.payment}\nMoneda de Pago: ${form.currency}\nFormas de Pago: ${form.paymentMethods}`;
 
       const { error: err } = await supabase.from('projects').update({ 
         client_id: form.clientId || null, 
@@ -464,7 +498,28 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
                         {refiningField === 'phases' ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />} Estructurar con IA
                       </button>
                     </div>
-                    <textarea className="input-field" style={{ minHeight: 110, resize: 'vertical', transition: 'all 0.3s', boxShadow: highlightedFields.phases ? '0 0 0 2px var(--primary-color)' : 'none' }} placeholder="1. Saneamiento Estructural: ...\n2. Corrección de Pendiente: ..." value={form.phases} onChange={e => setForm({ ...form, phases: e.target.value })} />
+                    {form.workItems.length === 0 ? (
+                      <textarea className="input-field" style={{ minHeight: 110, resize: 'vertical', transition: 'all 0.3s', boxShadow: highlightedFields.phases ? '0 0 0 2px var(--primary-color)' : 'none' }} placeholder="1. Saneamiento Estructural: ...\n2. Corrección de Pendiente: ..." value={form.phases} onChange={e => setForm({ ...form, phases: e.target.value })} />
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                        {form.workItems.map((item, index) => (
+                          <div key={item.id} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                            <span style={{ fontSize: '.8rem', color: 'var(--text-muted)', width: '15px' }}>{index + 1}.</span>
+                            <input className="input-field" style={{ flex: 1 }} placeholder="Descripción del trabajo..." value={item.description} onChange={e => updateWorkItem(item.id, 'description', e.target.value)} />
+                            <div style={{ position: 'relative', width: '120px' }}>
+                              <span style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', fontSize: '.8rem' }}>$</span>
+                              <input className="input-field" style={{ paddingLeft: '22px' }} placeholder="0,00" value={item.price} onChange={e => updateWorkItem(item.id, 'price', handleMoneyInput(e.target.value))} onBlur={e => updateWorkItem(item.id, 'price', formatOnBlur(e.target.value))} />
+                            </div>
+                            <button onClick={() => removeWorkItem(item.id)} style={{ background: 'rgba(239,68,68,0.1)', color: 'var(--danger)', border: 'none', borderRadius: '4px', width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <button onClick={addWorkItem} style={{ marginTop: '0.5rem', background: 'rgba(255,255,255,0.05)', color: 'var(--text-muted)', border: '1px dashed var(--border-color)', borderRadius: '6px', padding: '0.5rem', fontSize: '.75rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.3rem', width: '100%', transition: 'all 0.2s' }}>
+                      <Plus size={14} /> Añadir Ítem Específico
+                    </button>
                   </div>
                 </div>
               </div>

@@ -114,6 +114,27 @@ export const renderStructuredProposal = (text: string | null | undefined) => {
       const bullet = match ? match[1] : '';
       const content = match ? match[2] : line;
 
+      if (content.includes('.... $')) {
+        const parts = content.split('.... $');
+        const desc = parts[0].trim();
+        const price = parts[1].trim();
+        renderedElements.push(
+          <div key={`li-${i}`} style={{ 
+            display: 'flex', 
+            justifyContent: 'space-between',
+            paddingLeft: '1.5rem', 
+            textIndent: '-1.5rem', 
+            margin: '0.2rem 0', 
+            fontSize: '11pt',
+            color: '#333'
+          }}>
+            <span><strong style={{ color: '#000' }}>{bullet}</strong> {parseBoldText(desc)}</span>
+            <strong style={{ color: '#000', whiteSpace: 'nowrap', marginLeft: '1rem' }}>${price}</strong>
+          </div>
+        );
+        continue;
+      }
+
       renderedElements.push(
         <div key={`li-${i}`} style={{ 
           paddingLeft: '1.5rem', 

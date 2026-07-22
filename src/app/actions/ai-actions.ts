@@ -362,6 +362,7 @@ export async function chatAndUpdateForm(
     payment: string;
     currency?: string;
     paymentMethods?: string;
+    workItems?: { id: string; description: string; price: string }[];
   },
   clients: { id: string; name: string; company_name?: string }[]
 ): Promise<{ success: boolean; reply?: string; form?: any; error?: string }> {
@@ -387,6 +388,7 @@ El estado actual de los campos del formulario es el siguiente:
 - Área de Ejecución (area): "${currentForm.area}"
 - Objetivo del proyecto (objective): "${currentForm.objective}"
 - Fases del trabajo (phases): "${currentForm.phases}"
+- Ítems desglosados (workItems): ${JSON.stringify(currentForm.workItems || [])}
 - Modalidad del presupuesto (investmentModality): "${currentForm.investmentModality}"
 - Tiempo de ejecución (time): "${currentForm.time}"
 - Monto total en USD (amount): "${currentForm.amount}"
@@ -408,7 +410,7 @@ Instrucciones:
 5. Si el usuario te pide que "hagas el presupuesto", "calcules" o "estimes", genera descripciones técnicas profesionales y estimaciones realistas basadas en tu conocimiento de ingeniería para rellenar los campos (objetivo, fases, tiempo, etc.), manteniendo siempre la coherencia.
 6. En cuanto a la 'Modalidad del Presupuesto' (investmentModality): si el usuario menciona "mano de obra", actualiza este campo con una descripción formal para Solo Mano de Obra. Si menciona "materiales", usa una descripción formal para Solo Materiales. Por defecto, usa la descripción de "A Todo Costo".
 7. Formula una respuesta conversacional corta, amable y profesional firmada como Pepe (máximo 3 párrafos, sin adornos excesivos, explicando de manera resumida qué campos actualizaste o pidiendo aclaraciones si falta información clave).
-8. IMPORTANTE: En el campo "phases" (Fases del trabajo), NO utilices números ni viñetas al inicio de cada fase (ej. no pongas "1. Fase 1:" ni "- Fase 1:"). Escribe directamente el título de la fase, por ejemplo "Fase 1: Saneamiento...".
+8. IMPORTANTE: Si el usuario menciona ítems con precios específicos para las fases (ej. "pared 1200", "aire 850"), añádelos al arreglo 'workItems'. Cada objeto de 'workItems' debe tener un 'id' único (generado al azar, string), una 'description' y un 'price' (solo el número en formato string, sin símbolo de dólar). Si no menciona ítems con precios, puedes dejarlos en el texto 'phases'.
 9. DEVUELVE TU RESPUESTA ESTRICTAMENTE EN FORMATO JSON con las siguientes dos claves:
 {
   "reply": "Tu mensaje conversacional explicando qué hiciste o preguntando detalles...",
@@ -419,6 +421,9 @@ Instrucciones:
     "area": "...",
     "objective": "...",
     "phases": "...",
+    "workItems": [
+      { "id": "1", "description": "...", "price": "..." }
+    ],
     "investmentModality": "...",
     "time": "...",
     "amount": "...",
@@ -476,7 +481,8 @@ Campos a extraer:
 - clientName: Nombre del cliente (extrae del campo 'Para:')
 - area: Área de ejecución (extrae del campo 'Área de Ejecución:')
 - objective: El texto completo de la sección 'Objetivo del Proyecto' (sin el título 'Objetivo del Proyecto')
-- phases: Las fases de trabajo completas de la sección 'Fases del Trabajo' (sin el título)
+- phases: Las fases de trabajo en texto libre.
+- workItems: Si las fases del trabajo incluyen ítems con precios específicos (ej: "Instalación... $100"), extráelos como un array de objetos con 'id' (generado aleatoriamente), 'description' y 'price' (solo el número en formato string).
 - investmentModality: El texto de la sección 'Presupuesto de Inversión' (típicamente explica la modalidad de inversión, sin incluir el monto total ni el título de la sección)
 - time: Tiempo de ejecución (extrae del campo 'Tiempo de Ejecución y Entrega:' o similar)
 - amount: Monto de inversión en USD, solo números o formato decimal (ejemplo: "1234.56" o "1234,56", extrae del campo 'INVERSIÓN TOTAL:')
@@ -491,6 +497,7 @@ IMPORTANTE: Responde ÚNICAMENTE con un objeto JSON válido con las siguientes c
   "area": "",
   "objective": "",
   "phases": "",
+  "workItems": [],
   "investmentModality": "",
   "time": "",
   "amount": "",
