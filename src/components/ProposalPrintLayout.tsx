@@ -39,6 +39,7 @@ export const renderStructuredProposal = (text: string | null | undefined) => {
     'presupuesto de inversión (materiales)',
     'presupuesto de inversión (solo materiales)',
     'presupuesto de inversión',
+    'desglose de inversión',
     'condiciones y métodos de pago',
     'resumen financiero y ejecución'
   ];

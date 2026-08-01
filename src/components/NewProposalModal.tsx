@@ -52,11 +52,9 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
     });
   };
 
-  const getPhasesText = () => {
-    if (form.workItems && form.workItems.length > 0) {
-      return form.workItems.map((item, i) => `${i + 1}. ${item.description} .... $${item.price}`).join('\n');
-    }
-    return form.phases;
+  const getCostBreakdownText = () => {
+    if (!form.workItems || form.workItems.length === 0) return '';
+    return '\n\nDesglose de Inversión\n' + form.workItems.map((item, i) => `${i + 1}. ${item.description} .... $${item.price}`).join('\n');
   };
 
   const getPreviewText = () => {
@@ -65,7 +63,7 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
     else if (selectedModality === 'materiales') modalityHeader = 'Presupuesto de Inversión (Materiales)';
     else if (selectedModality === 'personalizado') modalityHeader = 'Presupuesto de Inversión';
 
-    return `Proyecto: ${form.title}\nFecha: ${new Date().toLocaleDateString()}\nPara: ${form.clientName}\nÁrea de Ejecución: ${form.area}\n\nObjetivo del Proyecto\n${form.objective}\n\nFases del Trabajo (Alcance Técnico)\n${getPhasesText()}\n\nTiempo de Ejecución y Entrega\n${form.time}\n\n${modalityHeader}\n${form.investmentModality}\n\nINVERSIÓN TOTAL: $${form.amount}\n\nCondiciones y Métodos de Pago\nEsquema de Pago: ${form.payment}\nMoneda de Pago: ${form.currency}\nFormas de Pago: ${form.paymentMethods}`;
+    return `Proyecto: ${form.title}\nFecha: ${new Date().toLocaleDateString()}\nPara: ${form.clientName}\nÁrea de Ejecución: ${form.area}\n\nObjetivo del Proyecto\n${form.objective}\n\nFases del Trabajo (Alcance Técnico)\n${form.phases}${getCostBreakdownText()}\n\nTiempo de Ejecución y Entrega\n${form.time}\n\n${modalityHeader}\n${form.investmentModality}\n\nINVERSIÓN TOTAL: $${form.amount}\n\nCondiciones y Métodos de Pago\nEsquema de Pago: ${form.payment}\nMoneda de Pago: ${form.currency}\nFormas de Pago: ${form.paymentMethods}`;
   };
 
   /**
@@ -273,7 +271,7 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
       else if (selectedModality === 'materiales') modalityHeader = 'Presupuesto de Inversión (Materiales)';
       else if (selectedModality === 'personalizado') modalityHeader = 'Presupuesto de Inversión';
 
-      const fullText = `Proyecto: ${form.title}\nFecha: ${new Date().toLocaleDateString()}\nPara: ${form.clientName}\nÁrea de Ejecución: ${form.area}\n\nObjetivo del Proyecto\n${form.objective}\n\nFases del Trabajo (Alcance Técnico)\n${getPhasesText()}\n\nTiempo de Ejecución y Entrega\n${form.time}\n\n${modalityHeader}\n${form.investmentModality}\n\nINVERSIÓN TOTAL: $${form.amount}\n\nCondiciones y Métodos de Pago\nEsquema de Pago: ${form.payment}\nMoneda de Pago: ${form.currency}\nFormas de Pago: ${form.paymentMethods}`;
+      const fullText = `Proyecto: ${form.title}\nFecha: ${new Date().toLocaleDateString()}\nPara: ${form.clientName}\nÁrea de Ejecución: ${form.area}\n\nObjetivo del Proyecto\n${form.objective}\n\nFases del Trabajo (Alcance Técnico)\n${form.phases}${getCostBreakdownText()}\n\nTiempo de Ejecución y Entrega\n${form.time}\n\n${modalityHeader}\n${form.investmentModality}\n\nINVERSIÓN TOTAL: $${form.amount}\n\nCondiciones y Métodos de Pago\nEsquema de Pago: ${form.payment}\nMoneda de Pago: ${form.currency}\nFormas de Pago: ${form.paymentMethods}`;
       setProposal({
         title: form.title,
         clientName: form.clientName,
@@ -306,7 +304,7 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
       else if (selectedModality === 'materiales') modalityHeader = 'Presupuesto de Inversión (Materiales)';
       else if (selectedModality === 'personalizado') modalityHeader = 'Presupuesto de Inversión';
 
-      const fullText = `Proyecto: ${form.title}\nFecha: ${new Date().toLocaleDateString()}\nPara: ${form.clientName}\nÁrea de Ejecución: ${form.area}\n\nObjetivo del Proyecto\n${form.objective}\n\nFases del Trabajo (Alcance Técnico)\n${getPhasesText()}\n\nTiempo de Ejecución y Entrega\n${form.time}\n\n${modalityHeader}\n${form.investmentModality}\n\nINVERSIÓN TOTAL: $${form.amount}\n\nCondiciones y Métodos de Pago\nEsquema de Pago: ${form.payment}\nMoneda de Pago: ${form.currency}\nFormas de Pago: ${form.paymentMethods}`;
+      const fullText = `Proyecto: ${form.title}\nFecha: ${new Date().toLocaleDateString()}\nPara: ${form.clientName}\nÁrea de Ejecución: ${form.area}\n\nObjetivo del Proyecto\n${form.objective}\n\nFases del Trabajo (Alcance Técnico)\n${form.phases}${getCostBreakdownText()}\n\nTiempo de Ejecución y Entrega\n${form.time}\n\n${modalityHeader}\n${form.investmentModality}\n\nINVERSIÓN TOTAL: $${form.amount}\n\nCondiciones y Métodos de Pago\nEsquema de Pago: ${form.payment}\nMoneda de Pago: ${form.currency}\nFormas de Pago: ${form.paymentMethods}`;
 
       const { error: err } = await supabase.from('projects').update({ 
         client_id: form.clientId || null, 
@@ -498,30 +496,41 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
                         {refiningField === 'phases' ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />} Estructurar con IA
                       </button>
                     </div>
-                    {form.workItems.length === 0 ? (
-                      <textarea className="input-field" style={{ minHeight: 110, resize: 'vertical', transition: 'all 0.3s', boxShadow: highlightedFields.phases ? '0 0 0 2px var(--primary-color)' : 'none' }} placeholder="1. Saneamiento Estructural: ...\n2. Corrección de Pendiente: ..." value={form.phases} onChange={e => setForm({ ...form, phases: e.target.value })} />
-                    ) : (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                        {form.workItems.map((item, index) => (
-                          <div key={item.id} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                            <span style={{ fontSize: '.8rem', color: 'var(--text-muted)', width: '15px' }}>{index + 1}.</span>
-                            <input className="input-field" style={{ flex: 1 }} placeholder="Descripción del trabajo..." value={item.description} onChange={e => updateWorkItem(item.id, 'description', e.target.value)} />
-                            <div style={{ position: 'relative', width: '120px' }}>
-                              <span style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', fontSize: '.8rem' }}>$</span>
-                              <input className="input-field" style={{ paddingLeft: '22px' }} placeholder="0,00" value={item.price} onChange={e => updateWorkItem(item.id, 'price', handleMoneyInput(e.target.value))} onBlur={e => updateWorkItem(item.id, 'price', formatOnBlur(e.target.value))} />
-                            </div>
-                            <button onClick={() => removeWorkItem(item.id)} style={{ background: 'rgba(239,68,68,0.1)', color: 'var(--danger)', border: 'none', borderRadius: '4px', width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
-                              <Trash2 size={14} />
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    <button onClick={addWorkItem} style={{ marginTop: '0.5rem', background: 'rgba(255,255,255,0.05)', color: 'var(--text-muted)', border: '1px dashed var(--border-color)', borderRadius: '6px', padding: '0.5rem', fontSize: '.75rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.3rem', width: '100%', transition: 'all 0.2s' }}>
-                      <Plus size={14} /> Añadir Ítem Específico
-                    </button>
+                    <textarea className="input-field" style={{ minHeight: 110, resize: 'vertical', transition: 'all 0.3s', boxShadow: highlightedFields.phases ? '0 0 0 2px var(--primary-color)' : 'none' }} placeholder="Fase 1: Saneamiento Estructural — Se realizará limpieza profunda...\nFase 2: Corrección de Pendiente — Aplicación de mortero..." value={form.phases} onChange={e => setForm({ ...form, phases: e.target.value })} />
                   </div>
                 </div>
+              </div>
+
+              {/* Sección 2.5: Desglose de Inversión (Opcional) */}
+              <div>
+                <h3 style={{ fontSize: '1.05rem', color: 'var(--primary-color)', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '.5rem' }}><Ruler size={16} /> Desglose de Inversión <span style={{ fontSize: '.75rem', color: 'var(--text-muted)', fontWeight: 'normal' }}>(Opcional)</span></h3>
+                {form.workItems.length === 0 ? (
+                  <p style={{ fontSize: '.8rem', color: 'var(--text-muted)', margin: '0 0 .5rem 0', fontStyle: 'italic' }}>Puedes desglosar los costos añadiendo ítems aquí. Si no lo necesitas, ingresa el monto total directamente abajo.</p>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                    {form.workItems.map((item, index) => (
+                      <div key={item.id} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                        <span style={{ fontSize: '.8rem', color: 'var(--text-muted)', width: '15px' }}>{index + 1}.</span>
+                        <input className="input-field" style={{ flex: 1 }} placeholder="Descripción del concepto..." value={item.description} onChange={e => updateWorkItem(item.id, 'description', e.target.value)} />
+                        <div style={{ position: 'relative', width: '120px' }}>
+                          <span style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', fontSize: '.8rem' }}>$</span>
+                          <input className="input-field" style={{ paddingLeft: '22px' }} placeholder="0,00" value={item.price} onChange={e => updateWorkItem(item.id, 'price', handleMoneyInput(e.target.value))} onBlur={e => updateWorkItem(item.id, 'price', formatOnBlur(e.target.value))} />
+                        </div>
+                        <button onClick={() => removeWorkItem(item.id)} style={{ background: 'rgba(239,68,68,0.1)', color: 'var(--danger)', border: 'none', borderRadius: '4px', width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    ))}
+                    {form.workItems.length > 0 && (
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '0.5rem 0', borderTop: '1px solid var(--border-color)', marginTop: '0.25rem' }}>
+                        <span style={{ fontSize: '.85rem', color: 'var(--text-muted)' }}>Total: <strong style={{ color: 'var(--success)' }}>${form.workItems.reduce((s, item) => { const v = parseCurrency(item.price); return s + (isNaN(v) ? 0 : v); }, 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}</strong></span>
+                      </div>
+                    )}
+                  </div>
+                )}
+                <button onClick={addWorkItem} style={{ background: 'rgba(255,255,255,0.05)', color: 'var(--text-muted)', border: '1px dashed var(--border-color)', borderRadius: '6px', padding: '0.5rem', fontSize: '.75rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.3rem', width: '100%', transition: 'all 0.2s' }}>
+                  <Plus size={14} /> Añadir Ítem al Desglose
+                </button>
               </div>
 
               {/* Sección 3: Económico y Tiempo */}

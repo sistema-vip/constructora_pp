@@ -387,8 +387,8 @@ El estado actual de los campos del formulario es el siguiente:
 - Nombre en propuesta (clientName): "${currentForm.clientName}"
 - Área de Ejecución (area): "${currentForm.area}"
 - Objetivo del proyecto (objective): "${currentForm.objective}"
-- Fases del trabajo (phases): "${currentForm.phases}"
-- Ítems desglosados (workItems): ${JSON.stringify(currentForm.workItems || [])}
+- Fases del trabajo (phases): "${currentForm.phases}" — IMPORTANTE: Este campo es SOLO narrativo/descriptivo. Describe las fases de trabajo sin precios.
+- Desglose de inversión (workItems): ${JSON.stringify(currentForm.workItems || [])} — Sección SEPARADA y OPCIONAL con ítems y precios individuales.
 - Modalidad del presupuesto (investmentModality): "${currentForm.investmentModality}"
 - Tiempo de ejecución (time): "${currentForm.time}"
 - Monto total en USD (amount): "${currentForm.amount}"
@@ -410,7 +410,7 @@ Instrucciones:
 5. Si el usuario te pide que "hagas el presupuesto", "calcules" o "estimes", genera descripciones técnicas profesionales y estimaciones realistas basadas en tu conocimiento de ingeniería para rellenar los campos (objetivo, fases, tiempo, etc.), manteniendo siempre la coherencia.
 6. En cuanto a la 'Modalidad del Presupuesto' (investmentModality): si el usuario menciona "mano de obra", actualiza este campo con una descripción formal para Solo Mano de Obra. Si menciona "materiales", usa una descripción formal para Solo Materiales. Por defecto, usa la descripción de "A Todo Costo".
 7. Formula una respuesta conversacional corta, amable y profesional firmada como Pepe (máximo 3 párrafos, sin adornos excesivos, explicando de manera resumida qué campos actualizaste o pidiendo aclaraciones si falta información clave).
-8. IMPORTANTE: Si el usuario menciona ítems con precios específicos para las fases (ej. "pared 1200", "aire 850"), añádelos al arreglo 'workItems'. Cada objeto de 'workItems' debe tener un 'id' único (generado al azar, string), una 'description' y un 'price' (solo el número en formato string, sin símbolo de dólar). Si no menciona ítems con precios, puedes dejarlos en el texto 'phases'.
+8. IMPORTANTE SOBRE 'phases' vs 'workItems': El campo 'phases' es EXCLUSIVAMENTE descriptivo — describe qué se va a hacer en cada fase, sin precios ni montos. NUNCA incluyas precios en 'phases'. El campo 'workItems' es una sección SEPARADA llamada 'Desglose de Inversión' que SOLO se usa cuando el usuario pide explícitamente desglosar costos por concepto (ej. "ponme el aire a 850 y la pared a 1200"). Si el usuario NO pide desglose de precios, deja 'workItems' vacío ([]). Cada objeto de 'workItems' debe tener un 'id' único (string), una 'description' y un 'price' (solo el número en formato string, sin símbolo de dólar).
 9. DEVUELVE TU RESPUESTA ESTRICTAMENTE EN FORMATO JSON con las siguientes dos claves:
 {
   "reply": "Tu mensaje conversacional explicando qué hiciste o preguntando detalles...",
