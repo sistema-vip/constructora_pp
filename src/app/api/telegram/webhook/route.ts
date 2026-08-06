@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase-admin';
-import { parseTelegramMessageWithAI, ClientProjectContext } from '@/lib/telegram-ai';
+import { parseTelegramMessageWithAI, ClientProjectContext, classifyTelegramIntent } from '@/lib/telegram-ai';
 
 export async function POST(req: NextRequest) {
   try {
@@ -112,10 +112,30 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
-    // 5. Parsear mensaje de registro de gasto/pago usando Gemini AI
+    // 5. Clasificar la intención del usuario con IA
+    const classification = await classifyTelegramIntent(messageText);
+
+    if (classification.intent === 'greeting' || classification.intent === 'unclear') {
+      await sendTelegramMessage(chatId, classification.reply);
+      return NextResponse.json({ ok: true });
+    }
+
+    if (classification.intent === 'query') {
+      // Si es una consulta pero no fue capturada por la lógica local de isQueryRequest
+      await sendTelegramMessage(chatId, classification.reply + '\n\n💡 _Tip: Puedes escribir /proyectos para ver todos los proyectos activos._');
+      return NextResponse.json({ ok: true });
+    }
+
+    // 6. Parsear mensaje de registro de gasto/pago usando Gemini AI (solo para transacciones)
     const aiResult = await parseTelegramMessageWithAI(messageText, context);
 
-    // 5. Insertar en la tabla telegram_pending_entries
+    // Validación extra: si el monto es 0 o negativo, pedimos aclaración
+    if (aiResult.amount_usd <= 0) {
+      await sendTelegramMessage(chatId, '⚠️ No pude identificar un monto válido para registrar. Por favor incluye el monto exacto (ej. "Gasté $50 en clavos").');
+      return NextResponse.json({ ok: true });
+    }
+
+    // 7. Insertar en la tabla telegram_pending_entries
     const { data: newEntry, error: insertErr } = await supabaseAdmin
       .from('telegram_pending_entries')
       .insert({

@@ -27,6 +27,63 @@ export interface ClientProjectContext {
   }>;
 }
 
+export interface MessageClassification {
+  intent: 'greeting' | 'query' | 'transaction' | 'unclear';
+  reply: string;
+}
+
+export async function classifyTelegramIntent(
+  rawMessage: string
+): Promise<MessageClassification> {
+  if (!apiKey) {
+    throw new Error('GEMINI_API_KEY no está configurada');
+  }
+
+  const model = genAI.getGenerativeModel({
+    model: 'gemini-2.5-flash',
+    generationConfig: {
+      temperature: 0.1,
+      responseMimeType: 'application/json',
+    },
+  });
+
+  const prompt = `
+Eres el asistente virtual "Pepe" para P&P CONSTRUYE.
+Tu tarea es clasificar la intención del usuario basándote en su mensaje de Telegram.
+
+Intenciones posibles (intent):
+- "greeting": Saludos, despedidas, agradecimientos o conversación casual (ej. "Hola Pepe", "Gracias", "Buen día").
+- "query": Preguntas generales sobre proyectos, clientes, finanzas (ej. "¿Cuántos proyectos activos hay?", "¿Cuáles son los clientes?").
+- "transaction": Instrucciones claras para registrar un gasto, pago, adelanto o compromiso. Debe contener al menos una acción financiera (ej. "Gasté $50 en materiales", "Retiro de socio 300").
+- "unclear": Mensajes ambiguos, incomprensibles o que no encajan en las otras categorías (ej. "asdfg", "me equivoqué").
+
+Si la intención es "greeting", genera una respuesta corta y amigable (ej. "¡Hola! ¿En qué te ayudo hoy?").
+Si es "query", genera un texto diciendo que procesarás su consulta (ej. "Revisando la base de datos...").
+Si es "transaction", genera un texto vacío (el webhook lo ignorará).
+Si es "unclear", pide que reformule su mensaje.
+
+Responde ÚNICAMENTE con el siguiente JSON:
+{
+  "intent": "greeting" | "query" | "transaction" | "unclear",
+  "reply": "Tu respuesta amigable al usuario (vacía si es transaction)"
+}
+
+Mensaje del usuario:
+"${rawMessage}"
+`;
+
+  const result = await model.generateContent(prompt);
+  const responseText = result.response.text();
+  
+  try {
+    return JSON.parse(responseText);
+  } catch (error) {
+    console.error('Error parseando JSON de clasificación:', responseText, error);
+    return { intent: 'unclear', reply: '🤔 No estoy seguro de lo que intentas decir.' };
+  }
+}
+
+
 export async function parseTelegramMessageWithAI(
   rawMessage: string,
   context: ClientProjectContext[]
@@ -45,10 +102,10 @@ export async function parseTelegramMessageWithAI(
 
   const prompt = `
 Eres el motor de Inteligencia Artificial para P&P CONSTRUYE (constructora).
-Tu tarea es interpretar mensajes cortos en lenguaje natural enviados por los socios/administradores a través de Telegram y estructurarlos para registrar transacciones.
+Tu tarea es interpretar mensajes cortos en lenguaje natural enviados por los socios/administradores a través de Telegram y estructurarlos para registrar transacciones financieras reales.
 
 Contexto actual de Clientes y sus Proyectos en el sistema:
-${JSON.stringify(context, null, 2)}
+\${JSON.stringify(context, null, 2)}
 
 Tipos de entrada posibles (entry_type):
 - "cost": Gastos de obra o compras (ej. "Gasté $200 en cemento para la cocina de Zully", "Pago de $150 al plomero").
@@ -63,8 +120,8 @@ Categorías posibles de gastos (category):
 - "subcontract": Trabajos subcontratados.
 - "other": Varios u otros.
 
-Reglas:
-1. Extrae el monto en USD (amount_usd). Si mencionan bolívares u otra moneda, intenta inferir o mantener el número en USD si no se especifica.
+Reglas CRÍTICAS:
+1. Extrae el monto en USD (amount_usd). Si el usuario no especifica un monto numérico válido, pon 0.
 2. Identifica el nombre del cliente y proyecto si se mencionan en la conversación. Compara contra el contexto inyectado para hacer match exacto de matched_project_id si existe coincidencia alta.
 3. Si el entry_type es "partner_advance", intenta identificar el nombre del socio en partner_name.
 4. Asigna un score de confianza (confidence_score) entre 0.0 y 1.0.
@@ -85,7 +142,7 @@ Responde ÚNICAMENTE con el siguiente objeto JSON:
 }
 
 Mensaje a analizar:
-"${rawMessage}"
+"\${rawMessage}"
 `;
 
   const result = await model.generateContent(prompt);
