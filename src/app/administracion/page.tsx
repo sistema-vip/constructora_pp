@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/formatters';
 import { useAdminAction } from '@/lib/useAdminAction';
+import { linkTelegramProfile } from '@/app/actions/telegram-actions';
 import {
   TrendingUp,
   TrendingDown,
@@ -946,6 +947,33 @@ export default function AdministracionDashboard() {
                         <span className={`badge ${u.role === 'admin' ? 'badge-active' : u.role === 'sales' ? 'badge-warning' : 'badge-pending'}`} style={{ minWidth: '100px', textAlign: 'center' }}>
                           {u.role === 'admin' ? 'Administrador' : u.role === 'sales' ? 'Ventas' : 'Observador'}
                         </span>
+                      </td>
+                      <td style={{ padding: '1.25rem 1.5rem', textAlign: 'center' }}>
+                        {u.telegram_chat_id ? (
+                          <span style={{ fontSize: '0.8rem', color: 'var(--success)', display: 'inline-flex', alignItems: 'center', gap: '0.3rem', background: 'rgba(16,185,129,0.1)', padding: '0.2rem 0.6rem', borderRadius: '12px' }}>
+                            <Send size={12} /> {u.telegram_chat_id}
+                          </span>
+                        ) : (
+                          <button
+                            className="btn-secondary"
+                            style={{ fontSize: '0.75rem', padding: '0.3rem 0.6rem' }}
+                            onClick={async () => {
+                              const input = prompt(`Ingresa el Chat ID de Telegram para ${u.name}:`);
+                              if (!input) return;
+                              const chatIdNum = parseInt(input.trim(), 10);
+                              if (isNaN(chatIdNum)) return alert('Chat ID inválido');
+                              try {
+                                await linkTelegramProfile(u.id, chatIdNum);
+                                alert('Telegram vinculado con éxito');
+                                fetchUsers();
+                              } catch (err: any) {
+                                alert(`Error al vincular: ${err.message}`);
+                              }
+                            }}
+                          >
+                            + Vincular Telegram
+                          </button>
+                        )}
                       </td>
                       <td style={{ padding: '1.25rem 1.5rem', textAlign: 'right' }}>
                         <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', alignItems: 'center' }}>

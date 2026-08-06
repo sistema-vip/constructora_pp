@@ -15,6 +15,7 @@ import {
 import { supabase } from '@/lib/supabase';
 import Link from 'next/link';
 import { handleMoneyInput, parseCurrency, formatOnBlur } from '@/lib/formatters';
+import TelegramPendingPanel from '@/components/TelegramPendingPanel';
 
 export default function Home() {
   const [stats, setStats] = useState({
@@ -217,6 +218,15 @@ export default function Home() {
           </h2>
         </Link>
       </div>
+
+      {/* Panel de Entradas Pendientes de Telegram */}
+      <TelegramPendingPanel
+        projects={recentProjects.map(p => ({
+          id: p.id,
+          title: p.title,
+          clientName: p.clients?.name || 'Cliente sin nombre'
+        }))}
+      />
 
       {/* Main Content Split */}
       <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '2rem' }}>
