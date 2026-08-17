@@ -44,6 +44,7 @@ import {
 import { supabase } from '@/lib/supabase';
 import { formatCurrency, handleMoneyInput, parseCurrency, formatOnBlur } from '@/lib/formatters';
 import NewProposalModal from '@/components/NewProposalModal';
+import TelegramPendingPanel from '@/components/TelegramPendingPanel';
 import { useUser } from '@/lib/UserContext';
 import { useAdminAction } from '@/lib/useAdminAction';
 
@@ -984,6 +985,18 @@ export default function ClienteDashboard() {
             </>
           )}
         </div>
+      )}
+
+      {/* Cargos Pendientes de Telegram para este Cliente */}
+      {client && (
+        <TelegramPendingPanel
+          clientIdFilter={client.id}
+          projects={projects.map((p: any) => ({
+            id: p.id,
+            title: p.title,
+            clientName: client.name,
+          }))}
+        />
       )}
 
       {/* Estado de Cuenta Global y Rentabilidad del Cliente */}

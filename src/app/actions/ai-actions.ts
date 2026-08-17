@@ -79,6 +79,8 @@ TAMBIÉN incluye al inicio un bloque JSON (antes del texto de la propuesta):
 }
 </JSON_DATA>`;
 
+const FALLBACK_MODELS = ['gemini-flash-latest', 'gemini-3.5-flash-lite', 'gemini-3.6-flash', 'gemini-3.1-flash-lite'];
+
 // ─────────────────────────────────────────────
 // SEND CHAT MESSAGE (conversación libre)
 // ─────────────────────────────────────────────
@@ -93,39 +95,53 @@ export async function sendChatMessage(messages: ChatMessage[]): Promise<{
     return { success: false, error: 'API Key de Gemini no configurada. Agrega GEMINI_API_KEY en el archivo .env.local (obtén una gratis en aistudio.google.com)' };
   }
 
-  try {
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+  // Build clean alternating chat history for Gemini API
+  const validHistory: { role: 'user' | 'model'; parts: { text: string }[] }[] = [
+    { role: 'user', parts: [{ text: CHAT_SYSTEM_PROMPT }] },
+    { role: 'model', parts: [{ text: '¡Entendido! Soy el asistente técnico de P&P CONSTRUYE. ¿En qué proyecto estamos trabajando?' }] }
+  ];
 
-    // Build the chat history for the API (all except the last user message)
-    const history = messages.slice(0, -1).map(m => ({
-      role: m.role,
-      parts: [{ text: m.text }]
-    }));
-
-    const chat = model.startChat({
-      history: [
-        { role: 'user', parts: [{ text: CHAT_SYSTEM_PROMPT }] },
-        { role: 'model', parts: [{ text: '¡Entendido! Soy el asistente técnico de P&P CONSTRUYE. ¿En qué proyecto estamos trabajando?' }] },
-        ...history
-      ],
-    });
-
-    const lastMessage = messages[messages.length - 1].text;
-    const result = await chat.sendMessage(lastMessage);
-    const replyText = result.response.text();
-
-    const readyToGenerate = replyText.includes('[LISTO_PARA_GENERAR]');
-    const cleanReply = replyText.replace('[LISTO_PARA_GENERAR]', '').trim();
-
-    return {
-      success: true,
-      reply: cleanReply || '¡Perfecto! La información está lista. Presiona "Generar Propuesta" para formalizarla.',
-      readyToGenerate,
-    };
-  } catch (error: any) {
-    return { success: false, error: `Error al contactar Gemini: ${error.message}` };
+  let lastRole: 'user' | 'model' = 'model';
+  for (const m of messages.slice(0, -1)) {
+    if (m.role !== lastRole) {
+      validHistory.push({
+        role: m.role,
+        parts: [{ text: m.text }]
+      });
+      lastRole = m.role;
+    }
   }
+
+  const lastMessage = messages[messages.length - 1].text;
+  const genAI = new GoogleGenerativeAI(apiKey);
+  let lastError: any;
+
+  for (const modelName of FALLBACK_MODELS) {
+    try {
+      const model = genAI.getGenerativeModel({ model: modelName });
+      const chat = model.startChat({ history: validHistory });
+      const result = await chat.sendMessage(lastMessage);
+      const replyText = result.response.text();
+
+      const readyToGenerate = replyText.includes('[LISTO_PARA_GENERAR]');
+      const cleanReply = replyText.replace('[LISTO_PARA_GENERAR]', '').trim();
+
+      return {
+        success: true,
+        reply: cleanReply || '¡Perfecto! La información está lista. Presiona "Generar Propuesta" para formalizarla.',
+        readyToGenerate,
+      };
+    } catch (error: any) {
+      lastError = error;
+      if (error.message?.includes('429') || error.message?.includes('quota')) {
+        console.warn(`Cuota excedida en ${modelName}, probando siguiente modelo...`);
+        continue;
+      }
+      break;
+    }
+  }
+
+  return { success: false, error: `Error al contactar Gemini: ${lastError?.message || 'Cuota excedida'}` };
 }
 
 // ─────────────────────────────────────────────
@@ -143,7 +159,7 @@ export async function generateFinalProposal(messages: ChatMessage[]): Promise<{
 
   try {
     const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-3.5-flash' });
 
     const conversationSummary = messages
       .map(m => `${m.role === 'user' ? 'Cliente/Usuario' : 'Asistente'}: ${m.text}`)
@@ -211,7 +227,7 @@ export async function modifyProposalText(currentText: string, instruction: strin
 
   try {
     const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-3.5-flash' });
 
     const prompt = `Eres un asistente técnico de construcción. A continuación te presento el texto actual de una propuesta de construcción.
 El usuario ha solicitado el siguiente cambio o ajuste: "${instruction}"
@@ -250,7 +266,7 @@ export async function autofillProposalFields(
 
   try {
     const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-3.5-flash' });
 
     const clientsListStr = clients.map(c => "ID: " + c.id + " | Nombre: " + c.name + (c.company_name ? " (" + c.company_name + ")" : "")).join('\n');
 
@@ -318,7 +334,7 @@ export async function refineProposalField(
 
   try {
     const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-3.5-flash' });
 
     const prompt = `Eres un ingeniero civil / arquitecto de la constructora P&P CONSTRUYE.
 Tu objetivo es redactar, mejorar y estructurar el texto para un campo específico de una propuesta.
@@ -371,14 +387,11 @@ export async function chatAndUpdateForm(
     return { success: false, error: 'API Key de Gemini no configurada.' };
   }
 
-  try {
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+  const genAI = new GoogleGenerativeAI(apiKey);
+  const clientsListStr = clients.map(c => "ID: " + c.id + " | Nombre: " + c.name + (c.company_name ? " (" + c.company_name + ")" : "")).join('\n');
+  const conversationHistory = messages.map(m => (m.role === 'user' ? 'Usuario' : 'Pepe') + ': ' + m.text).join('\n');
 
-    const clientsListStr = clients.map(c => "ID: " + c.id + " | Nombre: " + c.name + (c.company_name ? " (" + c.company_name + ")" : "")).join('\n');
-    const conversationHistory = messages.map(m => (m.role === 'user' ? 'Usuario' : 'Pepe') + ': ' + m.text).join('\n');
-
-    const prompt = `Eres Pepe, el asistente técnico de presupuestos de P&P CONSTRUYE. 
+  const prompt = `Eres Pepe, el asistente técnico de presupuestos de P&P CONSTRUYE. 
 Tu objetivo es ayudar al usuario a rellenar un formulario estructurado para una nueva propuesta de construcción a través de una conversación interactiva.
 
 El estado actual de los campos del formulario es el siguiente:
@@ -435,24 +448,42 @@ Instrucciones:
 
 IMPORTANTE: Responde ÚNICAMENTE con el objeto JSON anterior, sin markdown adicional, sin rodeos, sin el bloque de código \`\`\`json. Asegúrate de escapar TODAS las comillas dobles internas con \\" (ejemplo: \\"A Todo Costo\\") y los saltos de línea correctamente para que el JSON sea válido.`;
 
-    const result = await model.generateContent({
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      generationConfig: {
-        responseMimeType: "application/json",
+  let lastError: any;
+  for (const modelName of FALLBACK_MODELS) {
+    try {
+      const model = genAI.getGenerativeModel({ model: modelName });
+      const result = await model.generateContent({
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig: {
+          responseMimeType: "application/json",
+        }
+      });
+
+      let responseText = result.response.text().trim();
+      if (responseText.startsWith('```json')) {
+        responseText = responseText.replace(/^```json\s*/, '').replace(/\s*```$/, '');
+      } else if (responseText.startsWith('```')) {
+        responseText = responseText.replace(/^```\s*/, '').replace(/\s*```$/, '');
       }
-    });
 
-    const responseText = result.response.text();
-    const parsed = JSON.parse(responseText);
+      const parsed = JSON.parse(responseText);
 
-    return { 
-      success: true, 
-      reply: parsed.reply, 
-      form: parsed.form 
-    };
-  } catch (error: any) {
-    return { success: false, error: `Error en chat de Pepe: ${error.message}` };
+      return { 
+        success: true, 
+        reply: parsed.reply || 'Entendido, he actualizado el formulario.', 
+        form: parsed.form || currentForm 
+      };
+    } catch (error: any) {
+      lastError = error;
+      if (error.message?.includes('429') || error.message?.includes('quota')) {
+        console.warn(`Cuota excedida en ${modelName}, probando siguiente modelo...`);
+        continue;
+      }
+      break;
+    }
   }
+
+  return { success: false, error: `Error en chat de Pepe: ${lastError?.message || 'Cuota excedida'}` };
 }
 
 // ─────────────────────────────────────────────
@@ -468,7 +499,7 @@ export async function parseProposalTextToForm(
 
   try {
     const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-3.5-flash' });
 
     const prompt = `Analiza la siguiente propuesta de construcción redactada y extrae/deduce los valores correspondientes para los campos del formulario.
 Si algún campo no está explícitamente en el texto, deduce un valor adecuado basado en el contexto de la propuesta.

@@ -31,6 +31,7 @@ import {
 import { supabase } from '@/lib/supabase';
 import { formatCurrency, handleMoneyInput, parseCurrency, formatOnBlur } from '@/lib/formatters';
 import { useUser } from '@/lib/UserContext';
+import TelegramPendingPanel from '@/components/TelegramPendingPanel';
 import Image from 'next/image';
 
 interface Project {
@@ -867,24 +868,38 @@ export default function ProjectDashboard() {
       {/* ACTION BAR */}
       {!isViewer && (
         <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'nowrap', overflowX: 'auto', justifyContent: 'flex-start', alignItems: 'center', background: 'rgba(255,255,255,0.02)', padding: '0.75rem', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.05)' }}>
-          <button className="btn-primary" onClick={() => setShowPaymentModal(true)} style={{ height: '38px', padding: '0 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', background: 'var(--success)', borderColor: 'var(--success)', boxShadow: '0 4px 12px rgba(16,185,129,0.15)' }}>
-            <BriefcaseIcon size={15} /> Registrar Pago
+          <button className="btn-secondary" onClick={() => setShowPaymentModal(true)} style={{ height: '38px', padding: '0 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', borderColor: 'var(--success)', color: 'var(--success)' }}>
+            <DollarSign size={15} /> Registrar Abono
           </button>
-          {!isViewer && (
-            <button className="btn-secondary" onClick={() => setShowAdvanceModal(true)} style={{ height: '38px', padding: '0 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', borderColor: '#8b5cf6', color: '#8b5cf6' }}>
-              <Users size={15} /> Retiro de Socio
-            </button>
+          {role !== 'sales' && (
+            <>
+              <button className="btn-secondary" onClick={() => setShowCostModal(true)} style={{ height: '38px', padding: '0 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', borderColor: 'var(--danger)', color: 'var(--danger)' }}>
+                <DollarIcon size={15} /> Registrar Gasto
+              </button>
+              <button className="btn-secondary" onClick={() => setShowExtraModal(true)} style={{ height: '38px', padding: '0 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', borderColor: 'var(--accent-blue)', color: 'var(--accent-blue)' }}>
+                <Plus size={15} /> Servicio Adicional
+              </button>
+              <button className="btn-secondary" onClick={() => setShowCommitmentModal(true)} style={{ height: '38px', padding: '0 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', borderColor: 'rgba(245,158,11,0.5)', color: 'var(--primary-color)' }}>
+                <ClipboardList size={15} /> Cuenta por Pagar
+              </button>
+              <button className="btn-secondary" onClick={() => setShowAdvanceModal(true)} style={{ height: '38px', padding: '0 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', borderColor: 'rgba(168,85,247,0.5)', color: '#c084fc' }}>
+                <Wallet size={15} /> Retiro de Socio
+              </button>
+            </>
           )}
-          <button className="btn-secondary" onClick={() => setShowCommitmentModal(true)} style={{ height: '38px', padding: '0 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', borderColor: 'var(--primary-color)', color: 'var(--primary-color)' }}>
-            <ClipboardList size={15} /> Registrar Compromiso
-          </button>
-          <button className="btn-secondary" onClick={() => setShowExtraModal(true)} style={{ height: '38px', padding: '0 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-            <Plus size={15} /> Servicio Adicional
-          </button>
-          <button className="btn-secondary" onClick={() => setShowCostModal(true)} style={{ height: '38px', padding: '0 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', borderColor: 'var(--danger)', color: 'var(--danger)' }}>
-            <DollarIcon size={15} /> Registrar Gasto
-          </button>
         </div>
+      )}
+
+      {/* Panel de Entradas Pendientes de Telegram para este Proyecto */}
+      {project && (
+        <TelegramPendingPanel
+          projectIdFilter={project.id}
+          projects={[{
+            id: project.id,
+            title: project.title,
+            clientName: project.clients?.name || 'Cliente sin nombre',
+          }]}
+        />
       )}
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '1.25rem' }}>

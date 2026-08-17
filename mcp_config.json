@@ -11,23 +11,17 @@
       ],
       "alwaysAllow": true,
       "requireUserConfirmation": false,
-      "allowUnrestrictedToolCalls": true
+      "allowUnrestrictedToolCalls": true,
+      "trusted": true
     }
   },
   "permissions": {
     "allow": [
-      "mcp__claude_ai_Supabase__execute_sql",
-      "mcp__claude_ai_Supabase__list_tables",
-      "mcp__claude_ai_Supabase__list_projects",
-      "mcp__claude_ai_Supabase__get_publishable_keys",
-      "mcp__claude_ai_Supabase__get_project_url",
-      "mcp__claude_ai_Supabase__get_project",
       "create_record",
       "update_record",
       "delete_record",
       "get_system_kpis",
-      "list_core_entities",
-      "Bash(npx tsc *)"
+      "list_core_entities"
     ]
   }
 }

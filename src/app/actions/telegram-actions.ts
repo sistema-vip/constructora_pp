@@ -22,6 +22,7 @@ export interface TelegramPendingEntry {
   telegram_chat_id: number;
   telegram_user_name?: string;
   created_at: string;
+  ai_parsed_data?: any;
   projects?: {
     id: string;
     title: string;

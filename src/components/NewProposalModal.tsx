@@ -207,20 +207,30 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
     setMessages(next); setInput(''); setLoading(true); setError('');
     try {
       const res = await chatAndUpdateForm(next, form, clients);
-      if (res.success && res.reply && res.form) {
+      if (res.success && res.reply) {
         setMessages(p => [...p, { role: 'model', text: res.reply! }]);
-        const changedFields: Record<string, boolean> = {};
-        Object.keys(res.form).forEach(key => {
-          if (res.form[key] !== (form as any)[key]) changedFields[key] = true;
-        });
-        setForm(prev => ({ ...prev, ...res.form }));
-        if (Object.keys(changedFields).length > 0) {
-          setHighlightedFields(changedFields);
-          setTimeout(() => setHighlightedFields({}), 2500);
+        if (res.form) {
+          const changedFields: Record<string, boolean> = {};
+          Object.keys(res.form).forEach(key => {
+            if (res.form[key] !== (form as any)[key]) changedFields[key] = true;
+          });
+          setForm(prev => ({ ...prev, ...res.form }));
+          if (Object.keys(changedFields).length > 0) {
+            setHighlightedFields(changedFields);
+            setTimeout(() => setHighlightedFields({}), 2500);
+          }
         }
-      } else setError(res.error || 'Error al procesar el chat');
-    } catch (e: any) { setError(e.message); }
-    finally { setLoading(false); }
+      } else {
+        const errMsg = res.error || 'Ocurrió un error al contactar al asistente.';
+        setError(errMsg);
+        setMessages(p => [...p, { role: 'model', text: `⚠️ ${errMsg}` }]);
+      }
+    } catch (e: any) {
+      setError(e.message);
+      setMessages(p => [...p, { role: 'model', text: `⚠️ Error: ${e.message}` }]);
+    } finally {
+      setLoading(false);
+    }
   };
 
   async function handleSave() {
