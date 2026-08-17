@@ -39,71 +39,60 @@ export async function processTelegramAgentMessage(
     return { replyText: '❌ Error: GEMINI_API_KEY no configurada en el servidor.' };
   }
 
-  const prompt = `
-Eres Spark / Pepe, el copiloto inteligente de P&P CONSTRUYE.
-Tu misión es interpretar la intención del usuario a partir de su texto, audio o foto de recibo, y ejecutar la acción correcta en el sistema.
+  const clienteName = context.map(c => `${c.name}: ${c.projects.map(p => p.title + ' [' + p.id + ']').join(', ')}`).join(' | ');
 
-Contexto actual de Clientes y Obras activas:
+  const prompt = `
+Eres Spark, el copiloto inteligente de P&P CONSTRUYE con permisos de Super Administrador.
+Tu misión es interpretar la intención del usuario y responder con el JSON correcto.
+
+Contexto de Clientes y Obras activas (usa los IDs exactos para projectId y client_id):
+${clienteName}
+
+Full context:
 ${JSON.stringify(context, null, 2)}
 
-INSTRUCCIONES DE CLASIFICACIÓN DE INTENCIÓN:
-1. "kpi_query": Preguntas sobre saldos, presupuestos, cobrado, gastado o balance (ej. "¿cuánto saldo queda a Zully?", "dame el resumen de la obra de bomba", "cuánto dinero hay disponible").
-   - Extrae "projectId" si menciona o coincide con alguna obra del contexto.
+REGLAS IMPORTANTES:
+- Si el usuario pregunta por proyectos de un cliente (ej. "proyectos de Zully"), usa intent "entity_query" con entityType "projects" y filtra por ese cliente en chat_reply.
+- Si el usuario quiere registrar un gasto pero no especifica la obra exacta, usa intent "entity_query" con entityType "projects" y en chat_reply explica: "Estos son los proyectos activos. ¿En cuál deseas registrar el gasto?"
+- Si el usuario menciona monto Y proyecto claramente (ej. "gasté 50$ en cemento en la obra de Zully"), usa intent "create_cost" directamente.
+- Si el usuario hace dos peticiones a la vez (listar proyectos + registrar gasto), prioriza mostrar la lista de proyectos primero (entity_query).
+- Para imágenes de recibos, usa siempre intent "create_cost" o "create_commitment".
+- Extrae el projectId del contexto si el usuario menciona el nombre del cliente o parte del título del proyecto.
 
-2. "entity_query": Listar proyectos, clientes o cuentas por pagar (ej. "dame la lista de clientes", "cuáles son las cuentas por pagar", "muéstrame las obras").
-   - entityType: "projects" | "clients" | "payables".
+INTENTS DISPONIBLES:
+1. "kpi_query": Saldos, presupuestos, cobrado, gastado (extrae projectId si hay obra específica).
+2. "entity_query": Listar proyectos/clients/payables. entityType: "projects" | "clients" | "payables". Usa chat_reply para personalizar el mensaje si hay filtro por cliente.
+3. "create_client": Crear cliente (client_name, phone, company_name, email).
+4. "create_project": Crear obra/propuesta (title, client_id, amount).
+5. "create_cost": Gasto directo (amount, currency, description, project_id, category, provider).
+6. "create_commitment": Deuda/compromiso a proveedor (amount, currency, description, provider, project_id, category).
+7. "create_client_payment": Cobro de cliente (amount, currency, description, project_id).
+8. "create_partner_advance": Retiro de socio (amount, currency, partner_name, description, project_id).
+9. "update_status": Cambiar estatus de obra (project_id, new_status: "in_progress"|"completed"|"cancelled"|"proposal").
+10. "proposal_request": Redactar propuesta técnica (topic, client_name, details).
+11. "delete_record": Eliminar registro (entityType, recordId).
+12. "chat": Saludos o conversación casual.
 
-3. "create_client": Crear nuevo cliente (ej. "crea un cliente llamado Inversiones ABC teléfono 0414...").
-   - client_name, phone, company_name, email.
-
-4. "create_project": Crear nueva obra o propuesta (ej. "crea una obra llamada Remodelación Cocina para Zully presupuesto 1500$").
-   - title, client_id (del contexto si existe), amount.
-
-5. "create_cost": Registrar gasto directo (ej. "gasté 85$ en cemento para Zully", o foto de recibo de compra).
-   - amount, currency ("USD" o "VES"), description, project_id, category ("materials", "labor", "equipment", "subcontract", "other"), provider.
-
-6. "create_commitment": Registrar deuda/compromiso a pagar a proveedor u obrero (ej. "carga un compromiso de 150$ para Carlos Herrero en la obra de Zully").
-   - amount, currency ("USD" o "VES"), description, provider, project_id, category.
-
-7. "create_client_payment": Registrar cobro o abono de cliente (ej. "Zully abonó 500$").
-   - amount, currency, description, project_id.
-
-8. "create_partner_advance": Retiro de socio (ej. "retiro de socio Henry 300$").
-   - amount, currency, partner_name, description.
-
-9. "update_status": Cambiar estatus de una obra (ej. "pasa la propuesta de Zully a en ejecución / aprobada", "cancela la propuesta X").
-   - project_id, new_status ("in_progress", "completed", "cancelled", "proposal").
-
-10. "proposal_request": Redactar o analizar propuesta técnica (ej. "ayúdame a redactar una propuesta para impermeabilizar 100m2 para Carlos").
-    - topic, client_name, details.
-
-11. "delete_record": Borrar un registro específico si se menciona ID o solicitud expresa.
-    - entityType, recordId.
-
-12. "chat": Saludos, preguntas generales de construcción o conversación casual.
-
-Si hay foto adjunta (recibo/factura), examínala para extraer monto, comercio y concepto.
-
-Responde ÚNICAMENTE con este JSON:
+Responde ÚNICAMENTE con este JSON (sin markdown, sin texto extra):
 {
-  "intent": "kpi_query" | "entity_query" | "create_client" | "create_project" | "create_cost" | "create_commitment" | "create_client_payment" | "create_partner_advance" | "update_status" | "proposal_request" | "delete_record" | "chat",
+  "intent": "<intent>",
   "params": {
-    "projectId": "string UUID o null",
-    "entityType": "projects" | "clients" | "payables" | "cost" | "commitment" | "project" | null,
+    "projectId": "<UUID o null>",
+    "entityType": "<projects|clients|payables|null>",
     "amount": 0,
-    "currency": "USD" | "VES",
-    "description": "string",
-    "provider": "string o null",
-    "client_name": "string o null",
-    "client_id": "string UUID o null",
-    "category": "materials" | "labor" | "equipment" | "subcontract" | "other",
-    "partner_name": "string o null",
-    "title": "string o null",
-    "new_status": "in_progress" | "completed" | "cancelled" | "proposal" | null,
-    "topic": "string o null",
-    "details": "string o null",
-    "recordId": "string o null",
-    "chat_reply": "string con respuesta amigable si es intent chat"
+    "currency": "USD",
+    "description": "<string>",
+    "provider": null,
+    "client_name": null,
+    "client_id": null,
+    "category": "materials",
+    "partner_name": null,
+    "title": null,
+    "new_status": null,
+    "topic": null,
+    "details": null,
+    "recordId": null,
+    "chat_reply": "<respuesta en español si es entity_query con filtro o chat>"
   }
 }
 
@@ -111,9 +100,9 @@ Mensaje del usuario:
 "${rawMessage || 'Foto adjunta'}"
 `;
 
-  const fallbackModels = imageBase64 
-    ? ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-flash-latest']
-    : ['gemini-1.5-flash', 'gemini-flash-latest', 'gemini-1.5-pro'];
+  const fallbackModels = imageBase64
+    ? ['gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-2.5-flash-preview-05-20']
+    : ['gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-2.5-flash-preview-05-20'];
 
   let parsedDecision: any = null;
 
@@ -123,13 +112,12 @@ Mensaje del usuario:
         model: modelName,
         generationConfig: {
           temperature: 0.1,
-          responseMimeType: 'application/json',
         },
       });
 
-      const contents: any[] = [prompt];
+      const contents: any[] = [{ role: 'user', parts: [{ text: prompt }] }];
       if (imageBase64) {
-        contents.push({
+        contents[0].parts.push({
           inlineData: {
             mimeType: 'image/jpeg',
             data: imageBase64,
@@ -137,13 +125,20 @@ Mensaje del usuario:
         });
       }
 
-      const result = await model.generateContent(contents);
-      parsedDecision = JSON.parse(result.response.text());
+      const result = await model.generateContent({ contents });
+      const rawText = result.response.text();
+
+      // Extract JSON robustly from text (handles markdown code blocks)
+      const jsonMatch = rawText.match(/```(?:json)?\s*([\s\S]*?)```/) ||
+                        rawText.match(/(\{[\s\S]*\})/);
+      const jsonStr = jsonMatch ? jsonMatch[1] : rawText;
+      parsedDecision = JSON.parse(jsonStr.trim());
       break;
     } catch (e: any) {
       console.warn(`Error en modelo ${modelName}:`, e.message);
     }
   }
+
 
   if (!parsedDecision) {
     return { replyText: '🤔 No pude procesar tu mensaje. Por favor intenta de nuevo.' };

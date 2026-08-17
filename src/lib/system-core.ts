@@ -536,7 +536,7 @@ INVERSIÓN TOTAL: $[Monto estimado en USD]
 Condiciones de Pago: 60% anticipo / 40% al finalizar.
 `;
 
-  const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+  const model = genAI.getGenerativeModel({ model: 'gemini-3.6-flash' });
   const res = await model.generateContent(prompt);
   return res.response.text();
 }
