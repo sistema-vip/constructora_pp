@@ -42,7 +42,7 @@ export async function processTelegramAgentMessage(
   const clienteName = context.map(c => `${c.name}: ${c.projects.map(p => p.title + ' [' + p.id + ']').join(', ')}`).join(' | ');
 
   const prompt = `
-Eres Spark, el copiloto inteligente de P&P CONSTRUYE con permisos de Super Administrador.
+Eres Pepe, el copiloto y asistente administrativo inteligente de P&P CONSTRUYE con permisos de Super Administrador.
 Tu misión es interpretar la intención del usuario y responder con el JSON correcto.
 
 Contexto de Clientes y Obras activas (usa los IDs exactos para projectId y client_id):
@@ -52,7 +52,7 @@ Full context:
 ${JSON.stringify(context, null, 2)}
 
 REGLAS IMPORTANTES:
-- Si el usuario pregunta por proyectos de un cliente (ej. "proyectos de Zully"), usa intent "entity_query" con entityType "projects" y filtra por ese cliente en chat_reply.
+- Si el usuario pregunta por proyectos de un cliente (ej. "¿cuáles son los proyectos de Zully?"), usa intent "entity_query" con entityType "projects", coloca en client_name el nombre del cliente y en chat_reply un saludo breve.
 - Si el usuario quiere registrar un gasto pero no especifica la obra exacta, usa intent "entity_query" con entityType "projects" y en chat_reply explica: "Estos son los proyectos activos. ¿En cuál deseas registrar el gasto?"
 - Si el usuario menciona monto Y proyecto claramente (ej. "gasté 50$ en cemento en la obra de Zully"), usa intent "create_cost" directamente.
 - Si el usuario hace dos peticiones a la vez (listar proyectos + registrar gasto), prioriza mostrar la lista de proyectos primero (entity_query).
@@ -209,9 +209,37 @@ Mensaje del usuario:
         list.slice(0, 10).forEach((p: any) => msg += `• *${p.supplier_name}:* $${Number(p.amount).toFixed(2)} (${p.description || 'Compromiso'}) - *${p.project_title}*\n`);
         return { replyText: msg, actionTaken: 'list_payables' };
       }
-      let msg = `📋 *Obras y Propuestas (${list.length}):*\n\n`;
-      list.slice(0, 10).forEach((p: any) => msg += `• *${p.title}* [${p.status}]\n  Cliente: ${p.client_name} | Presupuesto: $${Number(p.budget_usd).toFixed(2)} | Cobrado: $${Number(p.total_collected_usd).toFixed(2)}\n`);
-      return { replyText: msg, actionTaken: 'list_projects' };
+
+      // Filtrado inteligente por cliente si se especifica
+      let filtered = list;
+      if (params.client_name) {
+        const clientSearch = params.client_name.toLowerCase().trim();
+        const matched = list.filter((p: any) => p.client_name?.toLowerCase().includes(clientSearch));
+        if (matched.length > 0) {
+          filtered = matched;
+        }
+      }
+
+      // Filtrado por estado si se pide (en ejecución o aprobados)
+      const rawLower = (rawMessage || '').toLowerCase();
+      if (rawLower.includes('ejecucion') || rawLower.includes('ejecución') || rawLower.includes('aprobado')) {
+        const inProgress = filtered.filter((p: any) => p.status === 'in_progress');
+        if (inProgress.length > 0) {
+          filtered = inProgress;
+        }
+      }
+
+      let msg = params.chat_reply ? `${params.chat_reply}\n\n` : '';
+      msg += `📋 *Obras Encontradas (${filtered.length}):*\n\n`;
+      if (filtered.length === 0) {
+        msg += `ℹ️ No se encontraron proyectos activos para el cliente indicado.`;
+      } else {
+        filtered.slice(0, 10).forEach((p: any) => {
+          const statusLabel = p.status === 'in_progress' ? '🚧 En ejecución' : p.status === 'proposal' ? '📄 Propuesta' : p.status;
+          msg += `• *${p.title}* (${statusLabel})\n  👤 Cliente: ${p.client_name} | 💰 Presupuesto: $${Number(p.budget_usd).toFixed(2)} | 💵 Cobrado: $${Number(p.total_collected_usd).toFixed(2)}\n\n`;
+        });
+      }
+      return { replyText: msg.trim(), actionTaken: 'list_projects' };
     }
 
     // 3. CREATE CLIENT
@@ -349,7 +377,7 @@ Mensaje del usuario:
 
     // 12. CHAT / GREETING
     return {
-      replyText: params.chat_reply || '¡Hola! Soy tu asistente de P&P CONSTRUYE. ¿En qué obra o registro estamos trabajando hoy?',
+      replyText: params.chat_reply || '¡Hola! Soy Pepe, tu asistente de P&P CONSTRUYE. ¿En qué obra o registro estamos trabajando hoy?',
       actionTaken: 'chat'
     };
 

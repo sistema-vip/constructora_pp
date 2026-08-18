@@ -48,7 +48,7 @@ export async function POST(req: NextRequest) {
     if (messageText.startsWith('/start')) {
       await sendTelegramMessage(
         chatId,
-        `👋 *¡Hola! Soy tu Copiloto Inteligente de P&P CONSTRUYE*\n\nTu ID de Telegram es: \`${fromId || chatId}\`\n\n📌 *¿Qué puedo hacer por ti?*\n• 📊 *Consultar saldos:* _"¿Cuánto saldo queda en la obra de Zully?"_\n• 📝 *Propuestas:* _"Redacta propuesta para nivelar 50m2 para Carlos"_\n• 🏗️ *Gastos:* _"Gasté 85$ en cemento para Zully"_ (o envía foto del recibo)\n• 💳 *Compromisos:* _"Carga compromiso de 150$ para Carlos Herrero"_\n• 👥 *Clientes:* _"Crea cliente Inversiones ABC teléfono 04141234567"_\n• 🚧 *Estatus:* _"Pasa la propuesta de Zully a en ejecución"_`
+        `👋 *¡Hola! Soy Pepe, tu Asistente Inteligente de P&P CONSTRUYE*\n\nTu ID de Telegram es: \`${fromId || chatId}\`\n\n📌 *¿Qué puedo hacer por ti?*\n• 📊 *Consultar saldos:* _"¿Cuánto saldo queda en la obra de Zully?"_\n• 📝 *Propuestas:* _"Redacta propuesta para nivelar 50m2 para Carlos"_\n• 🏗️ *Gastos:* _"Gasté 85$ en cemento para Zully"_ (o envía foto del recibo)\n• 💳 *Compromisos:* _"Carga compromiso de 150$ para Carlos Herrero"_\n• 👥 *Clientes:* _"Crea cliente Inversiones ABC teléfono 04141234567"_\n• 🚧 *Estatus:* _"Pasa la propuesta de Zully a en ejecución"_`
       );
       return NextResponse.json({ ok: true });
     }
