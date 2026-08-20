@@ -128,10 +128,10 @@ Tu misión es actuar como un asistente de construcción humano: inteligente, met
 ── HABILIDADES Y REGLAS APRENDIDAS (BASE DE CONOCIMIENTO VIVA) ──
 ${learnedSkillsText}
 
-── MEMORIA: HISTORIAL DE CONVERSACIÓN RECIENTE (Últimos mensajes de este chat) ──
+── MEMORIA: HISTORIAL DE CONVERSACIÓN RECIENTE (LO QUE SE ESTÁ HABLANDO EN ESTE CHAT AHORA) ──
 ${formattedHistory}
 
-── MEMORIA: ÚLTIMA ACTIVIDAD REGISTRADA EN EL SISTEMA (Últimos gastos, compromisos y cobros) ──
+── AUDITORÍA HISTÓRICA DEL SISTEMA (REGISTROS VIEJOS YA GUARDADOS EN BD - SOLO CONSULTAS INFORMATIVAS) ──
 ${formattedActivity}
 
 ── CONTEXTO DE CLIENTES Y OBRAS EN EL SISTEMA (usa los IDs exactos para projectId y client_id) ──
@@ -141,27 +141,35 @@ Full context:
 ${JSON.stringify(context, null, 2)}
 
 ══════════════════════════════════════════════════════════════════════════════
-REGLAS CRÍTICAS DE MEMORIA BIDIRECCIONAL Y RUPTURA DE BUCLES (FOTO <-> PROYECTO):
+REGLAS CRÍTICAS DE PRELACIÓN: FACTURA PENDIENTE EN CHAT vs REGISTROS VIEJOS
 ══════════════════════════════════════════════════════════════════════════════
-1. CASO A: FOTO LEÍDA PREVIAMENTE ➡️ EL USUARIO INDICA EL PROYECTO AHORA:
-   - Si en el historial de conversación reciente (1-3 mensajes atrás) el bot leyó una factura o comprobante (ej. "📄 Factura Leída: $50.00 en Ferretería EPA..."), Y en este mensaje el usuario indica el proyecto o cliente (ej. "en la cocina de Zully", "en la obra de Carlos", "en el galpón"):
-     👉 ¡ESTÁ TOTALMENTE PROHIBIDO VOLVER A PEDIR LA FOTO, EL MONTO O EL CONCEPTO!
-     👉 RECUPERA DE LA MEMORIA los datos de la factura previa (amount, provider, description, currency, payment_reference).
-     👉 TOMA EL PROYECTO (projectId) de este mensaje del usuario.
-     👉 ASENTA EL REGISTRO INMEDIATAMENTE usando intent "create_cost" (o "create_client_payment") y devuelve la confirmación.
+⚠️ ADVERTENCIA CRÍTICA CONTRA CONFUSIONES:
+- La sección "AUDITORÍA HISTÓRICA DEL SISTEMA" contiene registros del pasado que YA FUERON GUARDADOS en la base de datos (ej. PAINTSHOP, compras de días anteriores).
+- ¡ESTÁ ESTRICTAMENTE PROHIBIDO usar montos, proveedores o conceptos de la AUDITORÍA HISTÓRICA para asentar un gasto nuevo!
+- La AUDITORÍA HISTÓRICA SOLO se consulta si el usuario pregunta expresamente: "¿cuánto se gastó ayer?", "¿cuál fue el último registro?", etc.
 
-2. CASO B: PROYECTO CONVERSADO PREVIAMENTE ➡️ EL USUARIO ENVÍA LA FOTO AHORA:
-   - Si en el historial reciente ya se identificó la obra o cliente (ej. "quiero registrar un gasto en la cocina de Zully") y el bot estaba esperando el comprobante, Y en este mensaje el usuario envía la foto de la factura (sin texto o con texto corto):
-     👉 ¡ESTÁ TOTALMENTE PROHIBIDO PREGUNTAR A QUÉ PROYECTO PERTENECE OTRA VEZ!
-     👉 TOMA EL PROYECTO (projectId) de la conversación previa.
-     👉 TOMA LOS DATOS de la foto actual (amount, provider, description, currency, payment_reference).
-     👉 ASENTA EL REGISTRO INMEDIATAMENTE en esa obra usando intent "create_cost" y devuelve la confirmación.
+1. CASO A: FACTURA LEÍDA EN EL CHAT ➡️ EL USUARIO INDICA EL PROYECTO AHORA:
+   - Si en el HISTORIAL DE CONVERSACIÓN RECIENTE (el último mensaje del bot) aparece una factura o compra procesada (ej. "He procesado la nota de consumo Nº 104455 de FERREVEN 3000, C.A. por ... Total: Bs. 13.520,00"), Y en este mensaje el usuario responde con el cliente o proyecto (ej. "El de ZULLY GUERRERO, ADECUACIÓN CON DEMOLICIÓN Y ACABADOS"):
+     👉 ESTE NUEVO GASTO PERTENECE 100% A ESA FACTURA (FERREVEN 3000, C.A. por Bs. 13.520,00).
+     👉 ¡PROHIBIDO mirar la AUDITORÍA HISTÓRICA (PAINTSHOP u otros)!
+     👉 EXTRAE OBLIGATORIAMENTE los datos de la factura leída en el chat:
+        • provider: El proveedor de la factura del chat (ej. "FERREVEN 3000, C.A.")
+        • amount: El total numérico de la factura del chat (ej. 13520)
+        • currency: "VES" (si estaba en Bs.) o "USD" (si estaba en $)
+        • description: Los ítems detallados de la factura del chat (ej. "Disco 4.1/2\" Diamantado Turbo Brullen, Pega P.V.C. Tubopeg 1/32G (Nota #104455)")
+        • projectId: El ID del proyecto indicado por el usuario (ej. ID de "ADECUACIÓN CON DEMOLICIÓN Y ACABADOS" de Zully)
+        • intent: "create_cost"
+     👉 ASENTA EL REGISTRO DIRECTAMENTE y confirma el éxito con esos datos exactos.
 
-3. CUANDO LEAS UNA FOTO Y AÚN NO SE SEPA EL PROYECTO:
-   - Extrae con máxima precisión del OCR: provider, amount, currency, description, payment_reference.
-   - En "chat_reply", resume OBLIGATORIAMENTE los datos leídos para que queden registrados en la memoria conversacional:
-     "📄 **Factura Leída:** [Monto con moneda] en **[Proveedor]** ([Items/Concepto comprados]).\n🏗️ ¿A qué proyecto u obra deseas registrar este gasto?"
-   - Coloca en el JSON los datos extraídos ("amount", "currency", "provider", "description", "payment_reference").
+2. CASO B: PROYECTO CONVERSADO EN EL CHAT ➡️ EL USUARIO ENVÍA LA FOTO AHORA:
+   - Si en el chat el usuario ya indicó la obra (ej. "en la cocina de Zully") y ahora envía la foto de la factura:
+     👉 ASOCIA la foto con esa obra y ASENTA EL REGISTRO INMEDIATAMENTE en esa obra usando los datos de la foto actual.
+
+3. CASO C: FOTO LEÍDA SIN PROYECTO:
+   - Extrae con máxima precisión: provider, amount, currency, description, payment_reference.
+   - En "chat_reply", resume con exactitud los datos leídos para que queden guardados en el historial del chat:
+     "¡Recibido! He procesado la factura de [Proveedor] por la compra de: [Items]. Total: [Moneda] [Monto]. 👤 ¿A qué cliente o proyecto deseas asignarle este gasto?"
+   - Pasa en el JSON los datos extraídos ("amount", "currency", "provider", "description", "payment_reference").
 
 4. REGLA DE ORO CONTRA BUCLES:
    - Si entre la foto (actual o del historial) y el texto (actual o del historial) ya tienes: [Proyecto] + [Monto] + [Concepto], NUNCA vuelvas a preguntar. EJECUTA EL REGISTRO DIRECTAMENTE.
@@ -609,8 +617,24 @@ Mensaje del usuario:
         provider: params.provider,
         mode: 'direct'
       });
+
+      let projectInfo = '';
+      if (params.projectId) {
+        for (const c of context) {
+          const p = c.projects.find(proj => proj.id === params.projectId);
+          if (p) {
+            projectInfo = `\n🏗️ *Obra:* ${p.title} (${c.name})`;
+            break;
+          }
+        }
+      }
+
+      const formattedAmount = params.currency === 'VES'
+        ? 'Bs ' + Number(params.amount).toLocaleString('es-VE')
+        : '$' + Number(params.amount).toFixed(2);
+
       return {
-        replyText: `✅ *Gasto Asentado en Obra*\n📝 *Concepto:* ${params.description}\n💰 *Monto:* ${params.currency === 'VES' ? 'Bs ' + params.amount : '$' + Number(params.amount).toFixed(2)}\n🏷️ *Categoría:* ${params.category || 'Materiales'}\n${params.provider ? '🏪 *Proveedor:* ' + params.provider : ''}`,
+        replyText: `✅ *Gasto Asentado en Obra*${projectInfo}\n📝 *Concepto:* ${params.description}\n💰 *Monto:* ${formattedAmount}\n🏷️ *Categoría:* ${params.category || 'Materiales'}\n${params.provider ? '🏪 *Proveedor:* ' + params.provider : ''}`,
         actionTaken: 'create_cost',
         recordId: res.recordId
       };
