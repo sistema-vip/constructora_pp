@@ -1,12 +1,23 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { supabaseAdmin } from './supabase-admin';
 import {
   getSystemKpis,
   listCoreEntities,
   createRecord,
   updateRecord,
   deleteRecord,
-  generateTechnicalProposal
+  generateTechnicalProposal,
+  getRecentSystemActivity,
+  getProjectDetailedFinancials,
+  searchDetailedExpenses,
+  SystemActivityItem
 } from './system-core';
+import {
+  getLearnedSkillsContext,
+  teachSkillDirectly,
+  listLearnedSkills,
+  deleteLearnedSkill
+} from './agent-learning';
 
 const apiKey = process.env.GEMINI_API_KEY || '';
 const genAI = apiKey ? new GoogleGenerativeAI(apiKey) : null;
@@ -21,10 +32,60 @@ export interface ClientProjectContext {
   }>;
 }
 
+export interface TelegramChatMessageItem {
+  role: 'user' | 'assistant';
+  message_text: string;
+  action_taken?: string;
+  record_id?: string;
+  created_at: string;
+}
+
 export interface TelegramAgentResponse {
   replyText: string;
   actionTaken?: string;
   recordId?: string;
+}
+
+export async function saveTelegramChatMessage(
+  telegramChatId: number,
+  role: 'user' | 'assistant',
+  messageText: string,
+  actionTaken?: string,
+  recordId?: string
+): Promise<void> {
+  if (!telegramChatId || !messageText) return;
+  try {
+    await supabaseAdmin.from('telegram_chat_history').insert({
+      telegram_chat_id: telegramChatId,
+      role,
+      message_text: messageText,
+      action_taken: actionTaken || null,
+      record_id: recordId || null
+    });
+  } catch (err: any) {
+    console.error('Error saving telegram chat message to history:', err);
+  }
+}
+
+export async function getTelegramChatHistory(
+  telegramChatId: number,
+  limit: number = 8
+): Promise<TelegramChatMessageItem[]> {
+  if (!telegramChatId) return [];
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('telegram_chat_history')
+      .select('role, message_text, action_taken, record_id, created_at')
+      .eq('telegram_chat_id', telegramChatId)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+
+    if (error || !data) return [];
+    return data.reverse();
+  } catch (err: any) {
+    console.error('Error fetching telegram chat history:', err);
+    return [];
+  }
 }
 
 export async function processTelegramAgentMessage(
@@ -33,45 +94,128 @@ export async function processTelegramAgentMessage(
   imageBase64?: string,
   telegramChatId: number = 0,
   telegramUserName: string = 'Telegram User',
-  isAdmin: boolean = true
+  isAdmin: boolean = true,
+  chatHistory?: TelegramChatMessageItem[],
+  recentActivity?: SystemActivityItem[],
+  audioBase64?: string,
+  audioMimeType?: string
 ): Promise<TelegramAgentResponse> {
   if (!genAI) {
     return { replyText: '❌ Error: GEMINI_API_KEY no configurada en el servidor.' };
   }
 
+  // Cargar historial, actividad y habilidades aprendidas en paralelo
+  const [history, activity, learnedSkillsText] = await Promise.all([
+    chatHistory ? Promise.resolve(chatHistory) : (telegramChatId ? getTelegramChatHistory(telegramChatId, 8) : Promise.resolve([])),
+    recentActivity ? Promise.resolve(recentActivity) : getRecentSystemActivity(8),
+    getLearnedSkillsContext(15)
+  ]);
+
   const clienteName = context.map(c => `${c.name}: ${c.projects.map(p => p.title + ' [' + p.id + ']').join(', ')}`).join(' | ');
+
+  const formattedHistory = history.length > 0
+    ? history.map(m => `- [${m.role === 'user' ? 'Usuario' : 'Pepe (Tú)'}]: ${m.message_text}`).join('\n')
+    : 'Sin mensajes previos en esta sesión.';
+
+  const formattedActivity = activity.length > 0
+    ? activity.map(a => `• [${a.typeLabel}] $${a.amount_usd.toFixed(2)} - "${a.description}" | Obra: ${a.project_title || 'General'} (${a.client_name || 'Particular'})${a.provider_or_partner ? ' | Por/Para: ' + a.provider_or_partner : ''} [ID: ${a.id}]`).join('\n')
+    : 'No hay registros recientes.';
 
   const prompt = `
 Eres Pepe, el copiloto y asistente administrativo inteligente de P&P CONSTRUYE con permisos de Super Administrador.
-Tu misión es interpretar la intención del usuario y responder con el JSON correcto.
+Tu misión es actuar como un asistente de construcción humano: inteligente, metódico, guiado paso a paso y con cero alucinaciones.
 
-Contexto de Clientes y Obras activas (usa los IDs exactos para projectId y client_id):
+── HABILIDADES Y REGLAS APRENDIDAS (BASE DE CONOCIMIENTO VIVA) ──
+${learnedSkillsText}
+
+── MEMORIA: HISTORIAL DE CONVERSACIÓN RECIENTE (Últimos mensajes de este chat) ──
+${formattedHistory}
+
+── MEMORIA: ÚLTIMA ACTIVIDAD REGISTRADA EN EL SISTEMA (Últimos gastos, compromisos y cobros) ──
+${formattedActivity}
+
+── CONTEXTO DE CLIENTES Y OBRAS EN EL SISTEMA (usa los IDs exactos para projectId y client_id) ──
 ${clienteName}
 
 Full context:
 ${JSON.stringify(context, null, 2)}
 
-REGLAS IMPORTANTES:
-- Si el usuario pregunta por proyectos de un cliente (ej. "¿cuáles son los proyectos de Zully?"), usa intent "entity_query" con entityType "projects", coloca en client_name el nombre del cliente y en chat_reply un saludo breve.
-- Si el usuario quiere registrar un gasto pero no especifica la obra exacta, usa intent "entity_query" con entityType "projects" y en chat_reply explica: "Estos son los proyectos activos. ¿En cuál deseas registrar el gasto?"
-- Si el usuario menciona monto Y proyecto claramente (ej. "gasté 50$ en cemento en la obra de Zully"), usa intent "create_cost" directamente.
-- Si el usuario hace dos peticiones a la vez (listar proyectos + registrar gasto), prioriza mostrar la lista de proyectos primero (entity_query).
-- Para imágenes de recibos, usa siempre intent "create_cost" o "create_commitment".
-- Extrae el projectId del contexto si el usuario menciona el nombre del cliente o parte del título del proyecto.
+══════════════════════════════════════════════════════════════════════════════
+ÁRBOL DE DECISIÓN CONVERSACIONAL GUIADO (PASO A PASO - CERO VOLCADOS CIEGOS):
+══════════════════════════════════════════════════════════════════════════════
+1. PASO 1 - INTENCIÓN GENÉRICA SIN CLIENTE NI OBRA:
+   - Si el usuario dice "quiero registrar un gasto", "carguemos un pago", "voy a registrar algo":
+     • Usa intent "chat".
+     • En "chat_reply" pregunta educadamente:
+       "¡Perfecto! Vamos a registrar el gasto. 👤 ¿A qué **cliente** deseas hacerle el cargo? (O dime directamente el nombre de la obra)."
+
+2. PASO 2 - CLIENTE INDICADO, PERO FALTA SELECCIONAR LA OBRA:
+   - Si el usuario indica un cliente (ej. "Zully", "Carlos", "a nombre de Inversiones ABC") y ese cliente tiene obras:
+     • Busca los proyectos de ese cliente en el contexto.
+     • Si tiene varios proyectos, agrúpalos y pregunta con claridad:
+       "👤 **Cliente: [Nombre Cliente]**. ¿En qué obra deseas registrar el gasto?
+       
+       🚧 *Obras en Ejecución:*
+       • [Título Obra 1]
+       
+       📄 *Propuestas / Pendientes por Aprobar:*
+       • [Título Obra 2]
+       
+       ¿Deseas afectar una obra activa o una propuesta pendiente?"
+     • Si tiene solo 1 proyecto, selecciónalo directamente y pasa al Paso 3.
+
+3. PASO 3 - OBRA SELECCIONADA, PERO FALTA MONTO O CONCEPTO:
+   - Si el usuario indica la obra (ej. "en la cocina", "en adecuación y acabados", "en la propuesta de fachada"):
+     • Identifica el "projectId" exacto.
+     • Usa intent "chat".
+     • En "chat_reply" solicita los datos puntuales:
+       "¡Entendido! Para la obra **[Nombre de Obra] ([Nombre de Cliente])**: ¿Cuál fue el monto gastado, concepto y proveedor? (Puedes escribirlo, enviar foto de factura o enviar una nota de voz 🎙️)."
+
+4. PASO 4 - ASENTAMIENTO CON DATOS COMPLETOS:
+   - Si se cuenta con monto, concepto y obra (o se deducen del historial + mensaje actual):
+     • Usa intent "create_cost" (o "create_commitment" / "create_client_payment").
+     • Asienta el registro y muestra la confirmación detallada.
+
+══════════════════════════════════════════════════════════════════════════════
+REGLAS DE MULTIMODALIDAD (FOTO + TEXTO + NOTA DE VOZ):
+══════════════════════════════════════════════════════════════════════════════
+1. FOTO + TEXTO COMPLEMENTARIO:
+   - Si el usuario envía una foto (factura/recibo) Y un texto explicativo (ej. foto + "para la obra de Zully, nos hicieron 10$ de descuento"):
+     • OCR DE LA IMAGEN: Extrae razón social en "provider" (Ferretería EPA, RIF, etc.), desglose de productos en "description", subtotal/total y nro. de factura.
+     • TEXTO COMPLEMENTARIO: Aplica las instrucciones de cliente/obra y modificaciones de monto indicadas en el texto.
+     • Combina AMBOS para generar el registro perfecto.
+2. NOTAS DE VOZ (AUDIO):
+   - Si se adjunta un audio/nota de voz, escucha con total nitidez lo que dijo el usuario, extrae todas las entidades y responde o asienta con la misma exactitud que un mensaje escrito.
+
+REGLAS DE AUTO-APRENDIZAJE Y HABILIDADES:
+1. APLICA TUS HABILIDADES: Revisa las "HABILIDADES Y REGLAS APRENDIDAS". Aplica siempre los alias y reglas del negocio allí indicadas.
+2. ENSEÑANZA DIRECTA: Si el usuario te enseña o pide recordar algo (ej. "Pepe, aprende que..."), usa intent "teach_skill" con la regla en "description".
+3. CONSULTA DE HABILIDADES: Si el usuario pregunta qué has aprendido, usa intent "list_skills".
+4. OLVIDAR REGLA: Si el usuario pide olvidar una regla, usa intent "forget_skill".
+
+REGLAS DE CONSULTA Y DESGLOSE FINANCIERO DE OBRAS:
+1. Si el usuario pregunta cuáles son los gastos ejecutados en una obra (ej. "¿cuáles son los gastos en el proyecto X de Zully?"): usa intent "project_financial_breakdown" y extrae "projectId" y/o "client_name".
+2. Si el usuario busca gastos específicos por concepto o proveedor: usa intent "search_expenses".
 
 INTENTS DISPONIBLES:
-1. "kpi_query": Saldos, presupuestos, cobrado, gastado (extrae projectId si hay obra específica).
-2. "entity_query": Listar proyectos/clients/payables. entityType: "projects" | "clients" | "payables". Usa chat_reply para personalizar el mensaje si hay filtro por cliente.
-3. "create_client": Crear cliente (client_name, phone, company_name, email).
-4. "create_project": Crear obra/propuesta (title, client_id, amount).
-5. "create_cost": Gasto directo (amount, currency, description, project_id, category, provider).
-6. "create_commitment": Deuda/compromiso a proveedor (amount, currency, description, provider, project_id, category).
-7. "create_client_payment": Cobro de cliente (amount, currency, description, project_id).
-8. "create_partner_advance": Retiro de socio (amount, currency, partner_name, description, project_id).
-9. "update_status": Cambiar estatus de obra (project_id, new_status: "in_progress"|"completed"|"cancelled"|"proposal").
-10. "proposal_request": Redactar propuesta técnica (topic, client_name, details).
-11. "delete_record": Eliminar registro (entityType, recordId).
-12. "chat": Saludos o conversación casual.
+1. "teach_skill": Enseñar una nueva regla, alias o habilidad (description: instrucción completa).
+2. "list_skills": Consultar la lista de habilidades y reglas que el bot ha aprendido.
+3. "forget_skill": Olvidar o eliminar una regla aprendida (query: término o ID).
+4. "project_financial_breakdown": Desglose completo ítem por ítem de gastos, compromisos y pagos de una obra específica (projectId o client_name).
+5. "search_expenses": Búsqueda y filtrado de gastos específicos por concepto, material, proveedor o categoría (query, provider, category, projectId, client_name).
+6. "kpi_query": Saldos, presupuestos, cobrado, gastado global o de obra.
+7. "entity_query": Listar proyectos/clients/payables SOLO SI EL USUARIO LO PIDE EXPRESAMENTE ("/proyectos").
+8. "recent_activity": Ver lista de últimos movimientos o registros realizados recientemente.
+9. "create_client": Crear cliente (client_name, phone, company_name, email).
+10. "create_project": Crear obra/propuesta (title, client_id, amount).
+11. "create_cost": Gasto directo (amount, currency, description, project_id, category, provider, payment_reference).
+12. "create_commitment": Deuda/compromiso a proveedor (amount, currency, description, provider, project_id, category).
+13. "create_client_payment": Cobro de cliente (amount, currency, description, project_id, payment_reference).
+14. "create_partner_advance": Retiro de socio (amount, currency, partner_name, description, project_id).
+15. "update_status": Cambiar estatus de obra (project_id, new_status: "in_progress"|"completed"|"cancelled"|"proposal").
+16. "proposal_request": Redactar propuesta técnica (topic, client_name, details).
+17. "delete_record": Eliminar registro (entityType, recordId).
+18. "chat": Saludos, aclaraciones, diálogo guiado paso a paso, respuestas sobre acciones pasadas o conversación casual.
 
 Responde ÚNICAMENTE con este JSON (sin markdown, sin texto extra):
 {
@@ -82,9 +226,10 @@ Responde ÚNICAMENTE con este JSON (sin markdown, sin texto extra):
     "amount": 0,
     "currency": "USD",
     "description": "<string>",
-    "provider": null,
-    "client_name": null,
-    "client_id": null,
+    "provider": "<nombre de proveedor/ferretería/tienda o null>",
+    "payment_reference": "<nro de factura o comprobante o null>",
+    "client_name": "<string o null>",
+    "client_id": "<UUID o null>",
     "category": "materials",
     "partner_name": null,
     "title": null,
@@ -92,17 +237,18 @@ Responde ÚNICAMENTE con este JSON (sin markdown, sin texto extra):
     "topic": null,
     "details": null,
     "recordId": null,
-    "chat_reply": "<respuesta en español si es entity_query con filtro o chat>"
+    "query": "<término de búsqueda para search_expenses o null>",
+    "chat_reply": "<respuesta en español para el diálogo guiado paso a paso, chat o aclaraciones>"
   }
 }
 
 Mensaje del usuario:
-"${rawMessage || 'Foto adjunta'}"
+"${rawMessage || (audioBase64 ? 'Nota de voz adjunta' : imageBase64 ? 'Foto adjunta' : 'Mensaje multimedia')}"
 `;
 
-  const fallbackModels = imageBase64
-    ? ['gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-2.5-flash-preview-05-20']
-    : ['gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-2.5-flash-preview-05-20'];
+  const fallbackModels = (imageBase64 || audioBase64)
+    ? ['gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-3.5-flash-lite']
+    : ['gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-3.5-flash-lite'];
 
   let parsedDecision: any = null;
 
@@ -124,6 +270,14 @@ Mensaje del usuario:
           },
         });
       }
+      if (audioBase64) {
+        contents[0].parts.push({
+          inlineData: {
+            mimeType: audioMimeType || 'audio/ogg',
+            data: audioBase64,
+          },
+        });
+      }
 
       const result = await model.generateContent({ contents });
       const rawText = result.response.text();
@@ -139,7 +293,6 @@ Mensaje del usuario:
     }
   }
 
-
   if (!parsedDecision) {
     return { replyText: '🤔 No pude procesar tu mensaje. Por favor intenta de nuevo.' };
   }
@@ -149,7 +302,7 @@ Mensaje del usuario:
   // ── RESTRICCIÓN DE SEGURIDAD POR ROL PARA USUARIOS NO ADMINISTRADORES ──
   if (!isAdmin) {
     // Si un usuario no admin intenta consultas financieras o acciones de administración
-    if (['kpi_query', 'entity_query', 'create_client', 'create_project', 'update_status', 'delete_record'].includes(intent)) {
+    if (['kpi_query', 'entity_query', 'project_financial_breakdown', 'search_expenses', 'create_client', 'create_project', 'update_status', 'delete_record'].includes(intent)) {
       return {
         replyText: '🔒 *Acceso Restringido:* Tu usuario solo tiene autorización para reportar gastos y comprobantes a la bandeja de pendientes. Las consultas financieras y administración de obras están reservadas para administradores.',
         actionTaken: 'blocked_non_admin'
@@ -181,6 +334,149 @@ Mensaje del usuario:
 
   // ── EJECUCIÓN SUPER ADMIN (TÚ) ──
   try {
+    // 00a. TEACH SKILL (ENSEÑANZA DIRECTA DE HABILIDAD / REGLA)
+    if (intent === 'teach_skill') {
+      const teachRes = await teachSkillDirectly(params.description || rawMessage);
+      return {
+        replyText: teachRes.message,
+        actionTaken: 'teach_skill'
+      };
+    }
+
+    // 00b. LIST LEARNED SKILLS (LISTADO DE HABILIDADES APRENDIDAS)
+    if (intent === 'list_skills') {
+      const skills = await listLearnedSkills();
+      if (skills.length === 0) {
+        return {
+          replyText: 'ℹ️ Aún no tengo habilidades o reglas personalizadas guardadas. Puedes enseñarme diciéndome: _"Pepe, aprende que..."_ o _"Recuerda que..."_',
+          actionTaken: 'list_skills_empty'
+        };
+      }
+      let msg = `🧠 *Habilidades y Reglas que he Aprendido (${skills.length}):*\n\n`;
+      skills.forEach((s, idx) => {
+        msg += `${idx + 1}. *[${s.category.toUpperCase()}]* \`${s.skill_key}\`\n   📖 ${s.description}\n`;
+      });
+      return {
+        replyText: msg.trim(),
+        actionTaken: 'list_skills'
+      };
+    }
+
+    // 00c. FORGET SKILL (ELIMINAR HABILIDAD)
+    if (intent === 'forget_skill') {
+      const queryTerm = (params.query || params.description || '').toLowerCase();
+      const skills = await listLearnedSkills();
+      const matched = skills.find(s => s.id === params.recordId || s.skill_key.toLowerCase().includes(queryTerm) || s.description.toLowerCase().includes(queryTerm));
+      if (matched) {
+        await deleteLearnedSkill(matched.id);
+        return {
+          replyText: `🗑️ *Regla olvidada:* He eliminado la regla \`${matched.skill_key}\` de mi base de conocimiento.`,
+          actionTaken: 'forget_skill'
+        };
+      }
+      return {
+        replyText: `❓ No encontré ninguna regla o habilidad que coincida con "${params.query || params.description}".`,
+        actionTaken: 'forget_skill_not_found'
+      };
+    }
+
+    // 0a. PROJECT FINANCIAL BREAKDOWN (DESGLOSE COMPLETO DE GASTOS DE UNA OBRA)
+    if (intent === 'project_financial_breakdown') {
+      let targetProjectId = params.projectId;
+
+      // Si no tenemos projectId pero sí client_name o nombre de obra en el texto, buscar en context
+      if (!targetProjectId && (params.client_name || params.description || rawMessage)) {
+        const term = (params.client_name || params.description || rawMessage || '').toLowerCase();
+        for (const client of context) {
+          if (term.includes(client.name.toLowerCase()) || client.name.toLowerCase().includes(term)) {
+            if (client.projects.length === 1) {
+              targetProjectId = client.projects[0].id;
+              break;
+            }
+          }
+          for (const proj of client.projects) {
+            if (term.includes(proj.title.toLowerCase()) || proj.title.toLowerCase().includes(term)) {
+              targetProjectId = proj.id;
+              break;
+            }
+          }
+          if (targetProjectId) break;
+        }
+      }
+
+      if (!targetProjectId) {
+        return {
+          replyText: `❓ ¿De cuál obra deseas consultar el desglose de gastos? Por favor especifica el nombre del proyecto o cliente.\n\n_Ejemplo: "¿Cuáles son los gastos de la cocina de Zully?"_`,
+          actionTaken: 'ask_project_for_breakdown'
+        };
+      }
+
+      const fin = await getProjectDetailedFinancials(targetProjectId);
+
+      let msg = `🏗️ *Detalle de Gastos: ${fin.title}*\n`;
+      msg += `👤 *Cliente:* ${fin.clientName}\n`;
+      msg += `💰 *Presupuesto:* $${Number(fin.budgetUsd).toFixed(2)} | 💵 *Cobrado:* $${Number(fin.totalCollectedUsd).toFixed(2)}\n`;
+      msg += `📉 *Total Gastos Ejecutados:* $${Number(fin.totalCostsUsd).toFixed(2)}\n`;
+      msg += `💎 *Saldo por Cobrar:* $${Number(fin.remainingBalanceUsd).toFixed(2)} | *Margen Est.:* ${fin.marginPercentage}%\n\n`;
+
+      if (fin.costs.length === 0) {
+        msg += `ℹ️ *No se han asentado gastos ejecutados aún en esta obra.*\n`;
+      } else {
+        msg += `📋 *Gastos Ejecutados (${fin.costs.length}):*\n`;
+        fin.costs.slice(0, 15).forEach((c, idx) => {
+          msg += `${idx + 1}. 📅 *${c.date}* | 🏪 *${c.provider}*\n   📝 ${c.description}\n   💰 *$${Number(c.total_usd).toFixed(2)}* _(${c.category})_\n`;
+        });
+        if (fin.costs.length > 15) {
+          msg += `\n_...y ${fin.costs.length - 15} gastos adicionales registrados en el sistema web._\n`;
+        }
+      }
+
+      if (fin.commitments.length > 0) {
+        msg += `\n💳 *Compromisos / Cuentas por Pagar (${fin.commitments.length}):*\n`;
+        fin.commitments.forEach(com => {
+          msg += `• *${com.provider}:* $${Number(com.amount_usd).toFixed(2)} (${com.description})\n`;
+        });
+      }
+
+      return {
+        replyText: msg.trim(),
+        actionTaken: 'project_financial_breakdown',
+        recordId: targetProjectId
+      };
+    }
+
+    // 0b. SEARCH EXPENSES (BÚSQUEDA PUNTUAL DE GASTOS POR PROVEEDOR/CONCEPTO)
+    if (intent === 'search_expenses') {
+      const results = await searchDetailedExpenses({
+        projectId: params.projectId || undefined,
+        clientName: params.client_name || undefined,
+        category: params.category || undefined,
+        provider: params.provider || undefined,
+        query: params.query || params.description || undefined,
+        limit: 12
+      });
+
+      if (results.length === 0) {
+        return {
+          replyText: `🔍 No encontré gastos que coincidan con tu búsqueda${params.provider ? ' para el proveedor "' + params.provider + '"' : ''}${params.query ? ' ("' + params.query + '")' : ''}.`,
+          actionTaken: 'search_expenses_empty'
+        };
+      }
+
+      const totalMatched = results.reduce((acc: number, r: any) => acc + (Number(r.total_usd) || 0), 0);
+      let msg = `🔍 *Resultados de Gastos Encontrados (${results.length}):*\n`;
+      msg += `💰 *Suma Total:* $${Number(totalMatched).toFixed(2)}\n\n`;
+
+      results.forEach((r, idx) => {
+        msg += `${idx + 1}. 📅 *${r.date}* | 🏪 *${r.provider}*\n   📝 ${r.description}\n   💰 *$${Number(r.total_usd).toFixed(2)}* | 🏗️ ${r.project_title} (${r.client_name})\n`;
+      });
+
+      return {
+        replyText: msg.trim(),
+        actionTaken: 'search_expenses'
+      };
+    }
+
     // 1. KPI QUERY
     if (intent === 'kpi_query') {
       const kpis = await getSystemKpis(params.projectId || undefined);
@@ -375,7 +671,28 @@ Mensaje del usuario:
       };
     }
 
-    // 12. CHAT / GREETING
+    // 12. RECENT ACTIVITY QUERY
+    if (intent === 'recent_activity') {
+      const activity = await getRecentSystemActivity(8);
+      if (!activity || activity.length === 0) {
+        return {
+          replyText: 'ℹ️ No hay movimientos o registros recientes en el sistema.',
+          actionTaken: 'recent_activity'
+        };
+      }
+      let msg = `🕒 *Últimos Movimientos Registrados (${activity.length}):*\n\n`;
+      activity.forEach((item, idx) => {
+        msg += `${idx + 1}. *[${item.typeLabel}]* $${Number(item.amount_usd).toFixed(2)}\n`;
+        msg += `   📝 ${item.description}\n`;
+        msg += `   🏗️ ${item.project_title || 'General'}${item.client_name ? ' (' + item.client_name + ')' : ''}\n\n`;
+      });
+      return {
+        replyText: msg.trim(),
+        actionTaken: 'recent_activity'
+      };
+    }
+
+    // 13. CHAT / GREETING / MEMORY RESPONSE
     return {
       replyText: params.chat_reply || '¡Hola! Soy Pepe, tu asistente de P&P CONSTRUYE. ¿En qué obra o registro estamos trabajando hoy?',
       actionTaken: 'chat'

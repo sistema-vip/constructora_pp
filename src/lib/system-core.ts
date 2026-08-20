@@ -76,6 +76,139 @@ export async function getSystemKpis(projectId?: string): Promise<any> {
   };
 }
 
+export interface SystemActivityItem {
+  id: string;
+  type: 'cost' | 'commitment' | 'payment' | 'advance' | 'pending';
+  typeLabel: string;
+  description: string;
+  amount_usd: number;
+  project_title?: string;
+  client_name?: string;
+  provider_or_partner?: string;
+  status?: string;
+  created_at: string;
+}
+
+export async function getRecentSystemActivity(limit: number = 8): Promise<SystemActivityItem[]> {
+  try {
+    const [costsRes, commitmentsRes, paymentsRes, advancesRes, pendingRes] = await Promise.allSettled([
+      supabaseAdmin
+        .from('project_costs')
+        .select('id, description, total_usd, quantity, unit_price_usd, provider, created_at, project:projects(title, clients(name))')
+        .order('created_at', { ascending: false })
+        .limit(limit),
+      supabaseAdmin
+        .from('project_commitments')
+        .select('id, description, amount_usd, provider, created_at, project:projects(title, clients(name))')
+        .order('created_at', { ascending: false })
+        .limit(limit),
+      supabaseAdmin
+        .from('project_payments')
+        .select('id, description, amount_usd, reference, created_at, project:projects(title, clients(name))')
+        .order('created_at', { ascending: false })
+        .limit(limit),
+      supabaseAdmin
+        .from('partner_advances')
+        .select('id, description, amount_usd, partner_name, created_at, project:projects(title, clients(name))')
+        .order('created_at', { ascending: false })
+        .limit(limit),
+      supabaseAdmin
+        .from('telegram_pending_entries')
+        .select('id, description, amount_usd, entry_type, status, provider, partner_name, created_at, project:projects(title, clients(name))')
+        .order('created_at', { ascending: false })
+        .limit(limit)
+    ]);
+
+    const items: SystemActivityItem[] = [];
+
+    if (costsRes.status === 'fulfilled' && costsRes.value.data) {
+      costsRes.value.data.forEach((c: any) => {
+        const amt = c.total_usd ?? (Number(c.quantity || 1) * Number(c.unit_price_usd || 0));
+        items.push({
+          id: c.id,
+          type: 'cost',
+          typeLabel: 'Gasto Asentado',
+          description: c.description || 'Gasto',
+          amount_usd: Number(amt) || 0,
+          project_title: c.project?.title || 'Sin Obra',
+          client_name: (c.project?.clients as any)?.name || 'Particular',
+          provider_or_partner: c.provider || undefined,
+          created_at: c.created_at
+        });
+      });
+    }
+
+    if (commitmentsRes.status === 'fulfilled' && commitmentsRes.value.data) {
+      commitmentsRes.value.data.forEach((c: any) => {
+        items.push({
+          id: c.id,
+          type: 'commitment',
+          typeLabel: 'Compromiso / CxP',
+          description: c.description || 'Compromiso',
+          amount_usd: Number(c.amount_usd) || 0,
+          project_title: c.project?.title || 'Sin Obra',
+          client_name: (c.project?.clients as any)?.name || 'Particular',
+          provider_or_partner: c.provider || undefined,
+          created_at: c.created_at
+        });
+      });
+    }
+
+    if (paymentsRes.status === 'fulfilled' && paymentsRes.value.data) {
+      paymentsRes.value.data.forEach((p: any) => {
+        items.push({
+          id: p.id,
+          type: 'payment',
+          typeLabel: 'Cobro / Abono Cliente',
+          description: p.description || 'Cobro de cliente',
+          amount_usd: Number(p.amount_usd) || 0,
+          project_title: p.project?.title || 'Sin Obra',
+          client_name: (p.project?.clients as any)?.name || 'Particular',
+          created_at: p.created_at
+        });
+      });
+    }
+
+    if (advancesRes.status === 'fulfilled' && advancesRes.value.data) {
+      advancesRes.value.data.forEach((a: any) => {
+        items.push({
+          id: a.id,
+          type: 'advance',
+          typeLabel: 'Retiro de Socio',
+          description: a.description || 'Retiro de socio',
+          amount_usd: Number(a.amount_usd) || 0,
+          project_title: a.project?.title || 'General',
+          provider_or_partner: a.partner_name || undefined,
+          created_at: a.created_at
+        });
+      });
+    }
+
+    if (pendingRes.status === 'fulfilled' && pendingRes.value.data) {
+      pendingRes.value.data.forEach((pe: any) => {
+        items.push({
+          id: pe.id,
+          type: 'pending',
+          typeLabel: `Borrador Telegram (${pe.status || 'pendiente'})`,
+          description: pe.description || 'Borrador',
+          amount_usd: Number(pe.amount_usd) || 0,
+          project_title: pe.project?.title || 'Por asignar',
+          client_name: (pe.project?.clients as any)?.name || undefined,
+          provider_or_partner: pe.provider || pe.partner_name || undefined,
+          status: pe.status,
+          created_at: pe.created_at
+        });
+      });
+    }
+
+    items.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    return items.slice(0, limit);
+  } catch (err: any) {
+    console.error('Error fetching recent system activity:', err);
+    return [];
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 2. CONSULTAS DE LISTADOS (ENTITIES)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -149,6 +282,252 @@ export async function listCoreEntities(entityType: string): Promise<any[]> {
   }
 
   throw new Error(`Tipo de entidad inválido: "${entityType}". Válidos: 'clients', 'projects', 'payables'.`);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 2b. INSPECCIÓN FINANCIERA DETALLADA POR OBRA Y BÚSQUEDA DE GASTOS
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface ProjectCostItem {
+  id: string;
+  date: string;
+  provider: string;
+  description: string;
+  category: string;
+  quantity: number;
+  unit_price_usd: number;
+  total_usd: number;
+}
+
+export interface ProjectCommitmentItem {
+  id: string;
+  date: string;
+  provider: string;
+  description: string;
+  category: string;
+  amount_usd: number;
+}
+
+export interface ProjectPaymentItem {
+  id: string;
+  date: string;
+  amount_usd: number;
+  description: string;
+  reference?: string;
+}
+
+export interface ProjectDetailedFinancials {
+  projectId: string;
+  title: string;
+  clientName: string;
+  clientId?: string;
+  status: string;
+  budgetUsd: number;
+  totalCostsUsd: number;
+  totalCommitmentsUsd: number;
+  totalCollectedUsd: number;
+  remainingBalanceUsd: number;
+  estimatedProfitUsd: number;
+  marginPercentage: number;
+  costs: ProjectCostItem[];
+  commitments: ProjectCommitmentItem[];
+  payments: ProjectPaymentItem[];
+  costCategoryTotals: Record<string, number>;
+}
+
+export async function getProjectDetailedFinancials(projectId: string): Promise<ProjectDetailedFinancials> {
+  const { data: project, error: projErr } = await supabaseAdmin
+    .from('projects')
+    .select(`
+      id,
+      title,
+      status,
+      budget_usd,
+      client_id,
+      clients (
+        id,
+        name
+      ),
+      project_extras (
+        amount_usd
+      ),
+      project_costs (
+        id,
+        date,
+        provider,
+        description,
+        category,
+        quantity,
+        unit_price_usd,
+        total_usd,
+        created_at
+      ),
+      project_commitments (
+        id,
+        date,
+        provider,
+        description,
+        category,
+        amount_usd,
+        created_at
+      ),
+      project_payments (
+        id,
+        date,
+        amount_usd,
+        description,
+        reference,
+        created_at
+      )
+    `)
+    .eq('id', projectId)
+    .single();
+
+  if (projErr || !project) {
+    throw new Error(projErr ? projErr.message : `Obra con ID "${projectId}" no encontrada`);
+  }
+
+  const baseBudget = Number(project.budget_usd) || 0;
+  const extrasTotal = (project.project_extras || []).reduce((sum: number, e: any) => sum + (Number(e.amount_usd) || 0), 0);
+  const budgetUsd = baseBudget + extrasTotal;
+
+  const costCategoryTotals: Record<string, number> = {};
+  const costs: ProjectCostItem[] = (project.project_costs || []).map((c: any) => {
+    const total = c.total_usd !== null && c.total_usd !== undefined ? Number(c.total_usd) : (Number(c.quantity || 1) * Number(c.unit_price_usd || 0));
+    const cat = c.category || 'materials';
+    costCategoryTotals[cat] = (costCategoryTotals[cat] || 0) + (Number(total) || 0);
+
+    return {
+      id: c.id,
+      date: c.date || (c.created_at ? c.created_at.split('T')[0] : 'N/A'),
+      provider: c.provider || 'Sin Proveedor',
+      description: c.description || 'Gasto',
+      category: cat,
+      quantity: Number(c.quantity) || 1,
+      unit_price_usd: Number(c.unit_price_usd) || 0,
+      total_usd: Number(total) || 0
+    };
+  });
+
+  costs.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+  const commitments: ProjectCommitmentItem[] = (project.project_commitments || []).map((com: any) => ({
+    id: com.id,
+    date: com.date || (com.created_at ? com.created_at.split('T')[0] : 'N/A'),
+    provider: com.provider || 'Proveedor',
+    description: com.description || 'Compromiso',
+    category: com.category || 'materials',
+    amount_usd: Number(com.amount_usd) || 0
+  }));
+  commitments.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+  const payments: ProjectPaymentItem[] = (project.project_payments || []).map((p: any) => ({
+    id: p.id,
+    date: p.date || (p.created_at ? p.created_at.split('T')[0] : 'N/A'),
+    amount_usd: Number(p.amount_usd) || 0,
+    description: p.description || 'Cobro de cliente',
+    reference: p.reference || undefined
+  }));
+  payments.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+  const totalCostsUsd = costs.reduce((sum, c) => sum + c.total_usd, 0);
+  const totalCommitmentsUsd = commitments.reduce((sum, com) => sum + com.amount_usd, 0);
+  const totalCollectedUsd = payments.reduce((sum, p) => sum + p.amount_usd, 0);
+  const remainingBalanceUsd = budgetUsd - totalCollectedUsd;
+  const estimatedProfitUsd = budgetUsd - totalCostsUsd;
+  const marginPercentage = budgetUsd > 0 ? Number(((estimatedProfitUsd / budgetUsd) * 100).toFixed(2)) : 0;
+
+  return {
+    projectId: project.id,
+    title: project.title,
+    clientName: (project.clients as any)?.name || 'Cliente no asignado',
+    clientId: project.client_id,
+    status: project.status,
+    budgetUsd,
+    totalCostsUsd,
+    totalCommitmentsUsd,
+    totalCollectedUsd,
+    remainingBalanceUsd,
+    estimatedProfitUsd,
+    marginPercentage,
+    costs,
+    commitments,
+    payments,
+    costCategoryTotals
+  };
+}
+
+export async function searchDetailedExpenses(filters: {
+  projectId?: string;
+  clientName?: string;
+  category?: string;
+  query?: string;
+  provider?: string;
+  limit?: number;
+}): Promise<any[]> {
+  let query = supabaseAdmin
+    .from('project_costs')
+    .select(`
+      id,
+      date,
+      provider,
+      description,
+      category,
+      quantity,
+      unit_price_usd,
+      total_usd,
+      created_at,
+      project:projects (
+        id,
+        title,
+        status,
+        clients (
+          id,
+          name
+        )
+      )
+    `)
+    .order('created_at', { ascending: false });
+
+  if (filters.projectId) {
+    query = query.eq('project_id', filters.projectId);
+  }
+  if (filters.category) {
+    query = query.eq('category', filters.category);
+  }
+  if (filters.provider) {
+    query = query.ilike('provider', `%${filters.provider}%`);
+  }
+  if (filters.query) {
+    query = query.or(`description.ilike.%${filters.query}%,provider.ilike.%${filters.query}%`);
+  }
+
+  const { data, error } = await query.limit(filters.limit || 20);
+  if (error) throw new Error(`Error en búsqueda de gastos: ${error.message}`);
+
+  let results = (data || []).map((c: any) => {
+    const total = c.total_usd !== null && c.total_usd !== undefined ? Number(c.total_usd) : (Number(c.quantity || 1) * Number(c.unit_price_usd || 0));
+    return {
+      id: c.id,
+      date: c.date || (c.created_at ? c.created_at.split('T')[0] : 'N/A'),
+      provider: c.provider || 'Sin Proveedor',
+      description: c.description || 'Gasto',
+      category: c.category || 'materials',
+      quantity: Number(c.quantity) || 1,
+      unit_price_usd: Number(c.unit_price_usd) || 0,
+      total_usd: Number(total) || 0,
+      project_id: c.project?.id,
+      project_title: c.project?.title || 'Sin Obra',
+      client_name: (c.project?.clients as any)?.name || 'Particular'
+    };
+  });
+
+  if (filters.clientName) {
+    const clientTerm = filters.clientName.toLowerCase();
+    results = results.filter(r => r.client_name.toLowerCase().includes(clientTerm));
+  }
+
+  return results;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
