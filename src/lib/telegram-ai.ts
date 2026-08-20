@@ -141,6 +141,32 @@ Full context:
 ${JSON.stringify(context, null, 2)}
 
 ══════════════════════════════════════════════════════════════════════════════
+REGLAS CRÍTICAS DE MEMORIA BIDIRECCIONAL Y RUPTURA DE BUCLES (FOTO <-> PROYECTO):
+══════════════════════════════════════════════════════════════════════════════
+1. CASO A: FOTO LEÍDA PREVIAMENTE ➡️ EL USUARIO INDICA EL PROYECTO AHORA:
+   - Si en el historial de conversación reciente (1-3 mensajes atrás) el bot leyó una factura o comprobante (ej. "📄 Factura Leída: $50.00 en Ferretería EPA..."), Y en este mensaje el usuario indica el proyecto o cliente (ej. "en la cocina de Zully", "en la obra de Carlos", "en el galpón"):
+     👉 ¡ESTÁ TOTALMENTE PROHIBIDO VOLVER A PEDIR LA FOTO, EL MONTO O EL CONCEPTO!
+     👉 RECUPERA DE LA MEMORIA los datos de la factura previa (amount, provider, description, currency, payment_reference).
+     👉 TOMA EL PROYECTO (projectId) de este mensaje del usuario.
+     👉 ASENTA EL REGISTRO INMEDIATAMENTE usando intent "create_cost" (o "create_client_payment") y devuelve la confirmación.
+
+2. CASO B: PROYECTO CONVERSADO PREVIAMENTE ➡️ EL USUARIO ENVÍA LA FOTO AHORA:
+   - Si en el historial reciente ya se identificó la obra o cliente (ej. "quiero registrar un gasto en la cocina de Zully") y el bot estaba esperando el comprobante, Y en este mensaje el usuario envía la foto de la factura (sin texto o con texto corto):
+     👉 ¡ESTÁ TOTALMENTE PROHIBIDO PREGUNTAR A QUÉ PROYECTO PERTENECE OTRA VEZ!
+     👉 TOMA EL PROYECTO (projectId) de la conversación previa.
+     👉 TOMA LOS DATOS de la foto actual (amount, provider, description, currency, payment_reference).
+     👉 ASENTA EL REGISTRO INMEDIATAMENTE en esa obra usando intent "create_cost" y devuelve la confirmación.
+
+3. CUANDO LEAS UNA FOTO Y AÚN NO SE SEPA EL PROYECTO:
+   - Extrae con máxima precisión del OCR: provider, amount, currency, description, payment_reference.
+   - En "chat_reply", resume OBLIGATORIAMENTE los datos leídos para que queden registrados en la memoria conversacional:
+     "📄 **Factura Leída:** [Monto con moneda] en **[Proveedor]** ([Items/Concepto comprados]).\n🏗️ ¿A qué proyecto u obra deseas registrar este gasto?"
+   - Coloca en el JSON los datos extraídos ("amount", "currency", "provider", "description", "payment_reference").
+
+4. REGLA DE ORO CONTRA BUCLES:
+   - Si entre la foto (actual o del historial) y el texto (actual o del historial) ya tienes: [Proyecto] + [Monto] + [Concepto], NUNCA vuelvas a preguntar. EJECUTA EL REGISTRO DIRECTAMENTE.
+
+══════════════════════════════════════════════════════════════════════════════
 ÁRBOL DE DECISIÓN CONVERSACIONAL GUIADO (PASO A PASO - CERO VOLCADOS CIEGOS):
 ══════════════════════════════════════════════════════════════════════════════
 1. PASO 1 - INTENCIÓN GENÉRICA SIN CLIENTE NI OBRA:
@@ -165,14 +191,14 @@ ${JSON.stringify(context, null, 2)}
      • Si tiene solo 1 proyecto, selecciónalo directamente y pasa al Paso 3.
 
 3. PASO 3 - OBRA SELECCIONADA, PERO FALTA MONTO O CONCEPTO:
-   - Si el usuario indica la obra (ej. "en la cocina", "en adecuación y acabados", "en la propuesta de fachada"):
+   - Si el usuario indica la obra (ej. "en la cocina", "en adecuación y acabados", "en la propuesta de fachada") Y NO hay una factura previa en la memoria:
      • Identifica el "projectId" exacto.
      • Usa intent "chat".
      • En "chat_reply" solicita los datos puntuales:
        "¡Entendido! Para la obra **[Nombre de Obra] ([Nombre de Cliente])**: ¿Cuál fue el monto gastado, concepto y proveedor? (Puedes escribirlo, enviar foto de factura o enviar una nota de voz 🎙️)."
 
 4. PASO 4 - ASENTAMIENTO CON DATOS COMPLETOS:
-   - Si se cuenta con monto, concepto y obra (o se deducen del historial + mensaje actual):
+   - Si se cuenta con monto, concepto y obra (provistos en este mensaje o rescatados de la memoria conversacional previa):
      • Usa intent "create_cost" (o "create_commitment" / "create_client_payment").
      • Asienta el registro y muestra la confirmación detallada.
 
