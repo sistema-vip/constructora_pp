@@ -915,7 +915,19 @@ INVERSIÓN TOTAL: $[Monto estimado en USD]
 Condiciones de Pago: 60% anticipo / 40% al finalizar.
 `;
 
-  const model = genAI.getGenerativeModel({ model: 'gemini-3.6-flash' });
-  const res = await model.generateContent(prompt);
-  return res.response.text();
+  const fallbackModels = ['gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-3.5-flash-lite', 'gemini-flash-latest'];
+  let lastErr: any;
+
+  for (const modelName of fallbackModels) {
+    try {
+      const model = genAI.getGenerativeModel({ model: modelName });
+      const res = await model.generateContent(prompt);
+      return res.response.text();
+    } catch (err: any) {
+      lastErr = err;
+      continue;
+    }
+  }
+
+  throw lastErr || new Error('No se pudo generar la propuesta técnica con ningún modelo de Gemini.');
 }

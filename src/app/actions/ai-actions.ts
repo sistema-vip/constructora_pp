@@ -79,7 +79,35 @@ TAMBIÉN incluye al inicio un bloque JSON (antes del texto de la propuesta):
 }
 </JSON_DATA>`;
 
-const FALLBACK_MODELS = ['gemini-flash-latest', 'gemini-3.5-flash-lite', 'gemini-3.6-flash', 'gemini-3.1-flash-lite'];
+const FALLBACK_MODELS = [
+  'gemini-3.6-flash',
+  'gemini-2.5-flash',
+  'gemini-3.5-flash-lite',
+  'gemini-2.5-flash-lite',
+  'gemini-flash-latest'
+];
+
+async function callGeminiWithFallback<T>(
+  apiKey: string,
+  fn: (model: any, modelName: string) => Promise<T>
+): Promise<T> {
+  const genAI = new GoogleGenerativeAI(apiKey);
+  let lastError: any;
+
+  for (const modelName of FALLBACK_MODELS) {
+    try {
+      const model = genAI.getGenerativeModel({ model: modelName });
+      return await fn(model, modelName);
+    } catch (error: any) {
+      lastError = error;
+      console.warn(`[Gemini Fallback] Error en modelo ${modelName}:`, error?.message || error);
+      // Continuar al siguiente modelo en cualquier error (503, 429, 500, etc.)
+      continue;
+    }
+  }
+
+  throw lastError || new Error('Todos los modelos de Gemini fallaron o están temporalmente ocupados.');
+}
 
 // ─────────────────────────────────────────────
 // SEND CHAT MESSAGE (conversación libre)
@@ -113,12 +141,9 @@ export async function sendChatMessage(messages: ChatMessage[]): Promise<{
   }
 
   const lastMessage = messages[messages.length - 1].text;
-  const genAI = new GoogleGenerativeAI(apiKey);
-  let lastError: any;
 
-  for (const modelName of FALLBACK_MODELS) {
-    try {
-      const model = genAI.getGenerativeModel({ model: modelName });
+  try {
+    return await callGeminiWithFallback(apiKey, async (model) => {
       const chat = model.startChat({ history: validHistory });
       const result = await chat.sendMessage(lastMessage);
       const replyText = result.response.text();
@@ -131,17 +156,10 @@ export async function sendChatMessage(messages: ChatMessage[]): Promise<{
         reply: cleanReply || '¡Perfecto! La información está lista. Presiona "Generar Propuesta" para formalizarla.',
         readyToGenerate,
       };
-    } catch (error: any) {
-      lastError = error;
-      if (error.message?.includes('429') || error.message?.includes('quota')) {
-        console.warn(`Cuota excedida en ${modelName}, probando siguiente modelo...`);
-        continue;
-      }
-      break;
-    }
+    });
+  } catch (error: any) {
+    return { success: false, error: `Error al contactar Gemini: ${error?.message || 'Servicio temporalmente no disponible'}` };
   }
-
-  return { success: false, error: `Error al contactar Gemini: ${lastError?.message || 'Cuota excedida'}` };
 }
 
 // ─────────────────────────────────────────────
@@ -157,19 +175,15 @@ export async function generateFinalProposal(messages: ChatMessage[]): Promise<{
     return { success: false, error: 'API Key de Gemini no configurada.' };
   }
 
-  try {
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: 'gemini-3.5-flash' });
+  const conversationSummary = messages
+    .map(m => `${m.role === 'user' ? 'Cliente/Usuario' : 'Asistente'}: ${m.text}`)
+    .join('\n\n');
 
-    const conversationSummary = messages
-      .map(m => `${m.role === 'user' ? 'Cliente/Usuario' : 'Asistente'}: ${m.text}`)
-      .join('\n\n');
+  const today = new Date().toLocaleDateString('es-VE', {
+    day: '2-digit', month: '2-digit', year: 'numeric'
+  });
 
-    const today = new Date().toLocaleDateString('es-VE', {
-      day: '2-digit', month: '2-digit', year: 'numeric'
-    });
-
-    const prompt = `${PROPOSAL_SYSTEM_PROMPT}
+  const prompt = `${PROPOSAL_SYSTEM_PROMPT}
 
 La fecha de hoy es: ${today}
 
@@ -178,37 +192,40 @@ ${conversationSummary}
 
 Genera la propuesta profesional ahora.`;
 
-    const result = await model.generateContent(prompt);
-    const responseText = result.response.text();
+  try {
+    return await callGeminiWithFallback(apiKey, async (model) => {
+      const result = await model.generateContent(prompt);
+      const responseText = result.response.text();
 
-    // Extract JSON
-    const jsonMatch = responseText.match(/<JSON_DATA>([\s\S]*?)<\/JSON_DATA>/);
-    let parsedJson: any = {};
-    if (jsonMatch) {
-      try { parsedJson = JSON.parse(jsonMatch[1].trim()); } catch {}
-    }
-
-    const fullProposalText = responseText
-      .replace(/<JSON_DATA>[\s\S]*?<\/JSON_DATA>/, '')
-      .replace(/^---\s*/, '')
-      .replace(/\s*---$/, '')
-      .trim();
-
-    return {
-      success: true,
-      data: {
-        title: parsedJson.title || 'Nueva Propuesta',
-        clientName: parsedJson.clientName || '',
-        clientContact: parsedJson.clientContact || '',
-        date: parsedJson.date || today,
-        area: parsedJson.area || '',
-        investmentAmount: parsedJson.investmentAmount || 'Por Definir',
-        executionTime: parsedJson.executionTime || '',
-        fullProposalText,
+      // Extract JSON
+      const jsonMatch = responseText.match(/<JSON_DATA>([\s\S]*?)<\/JSON_DATA>/);
+      let parsedJson: any = {};
+      if (jsonMatch) {
+        try { parsedJson = JSON.parse(jsonMatch[1].trim()); } catch {}
       }
-    };
+
+      const fullProposalText = responseText
+        .replace(/<JSON_DATA>[\s\S]*?<\/JSON_DATA>/, '')
+        .replace(/^---\s*/, '')
+        .replace(/\s*---$/, '')
+        .trim();
+
+      return {
+        success: true,
+        data: {
+          title: parsedJson.title || 'Nueva Propuesta',
+          clientName: parsedJson.clientName || '',
+          clientContact: parsedJson.clientContact || '',
+          date: parsedJson.date || today,
+          area: parsedJson.area || '',
+          investmentAmount: parsedJson.investmentAmount || 'Por Definir',
+          executionTime: parsedJson.executionTime || '',
+          fullProposalText,
+        }
+      };
+    });
   } catch (error: any) {
-    return { success: false, error: `Error al generar propuesta: ${error.message}` };
+    return { success: false, error: `Error al generar propuesta: ${error?.message || error}` };
   }
 }
 
@@ -225,11 +242,7 @@ export async function modifyProposalText(currentText: string, instruction: strin
     return { success: false, error: 'API Key de Gemini no configurada.' };
   }
 
-  try {
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: 'gemini-3.5-flash' });
-
-    const prompt = `Eres un asistente técnico de construcción. A continuación te presento el texto actual de una propuesta de construcción.
+  const prompt = `Eres un asistente técnico de construcción. A continuación te presento el texto actual de una propuesta de construcción.
 El usuario ha solicitado el siguiente cambio o ajuste: "${instruction}"
 
 Aplica el cambio solicitado sobre el texto actual manteniendo el formato profesional, sin añadir saludos ni despedidas innecesarias. 
@@ -240,15 +253,17 @@ Devuelve ÚNICAMENTE el nuevo texto modificado. Elimina cualquier guión "---" a
 ${currentText}
 --- FIN DEL TEXTO ACTUAL ---`;
 
-    const result = await model.generateContent(prompt);
-    const responseText = result.response.text().trim();
-
-    return {
-      success: true,
-      modifiedText: responseText
-    };
+  try {
+    return await callGeminiWithFallback(apiKey, async (model) => {
+      const result = await model.generateContent(prompt);
+      const responseText = result.response.text().trim();
+      return {
+        success: true,
+        modifiedText: responseText
+      };
+    });
   } catch (error: any) {
-    return { success: false, error: `Error al modificar propuesta: ${error.message}` };
+    return { success: false, error: `Error al modificar propuesta: ${error?.message || error}` };
   }
 }
 
@@ -264,13 +279,9 @@ export async function autofillProposalFields(
     return { success: false, error: 'API Key de Gemini no configurada.' };
   }
 
-  try {
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: 'gemini-3.5-flash' });
+  const clientsListStr = clients.map(c => "ID: " + c.id + " | Nombre: " + c.name + (c.company_name ? " (" + c.company_name + ")" : "")).join('\n');
 
-    const clientsListStr = clients.map(c => "ID: " + c.id + " | Nombre: " + c.name + (c.company_name ? " (" + c.company_name + ")" : "")).join('\n');
-
-    const prompt = `Eres un asistente inteligente para la constructora P&P CONSTRUYE.
+  const prompt = `Eres un asistente inteligente para la constructora P&P CONSTRUYE.
 Tu objetivo es analizar las notas o descripción de un proyecto proporcionada por el usuario y extraer/generar los campos necesarios para un formulario de propuesta.
 
 Notas del usuario:
@@ -303,19 +314,21 @@ IMPORTANTE: Responde ÚNICAMENTE con un objeto JSON válido con las siguientes c
   "notes": ""
 }`;
 
-    const result = await model.generateContent({
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      generationConfig: {
-        responseMimeType: "application/json",
-      }
+  try {
+    return await callGeminiWithFallback(apiKey, async (model) => {
+      const result = await model.generateContent({
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig: {
+          responseMimeType: "application/json",
+        }
+      });
+
+      const responseText = result.response.text();
+      const data = JSON.parse(responseText);
+      return { success: true, data };
     });
-
-    const responseText = result.response.text();
-    const data = JSON.parse(responseText);
-
-    return { success: true, data };
   } catch (error: any) {
-    return { success: false, error: `Error en autocompletado: ${error.message}` };
+    return { success: false, error: `Error en autocompletado: ${error?.message || error}` };
   }
 }
 
@@ -332,11 +345,7 @@ export async function refineProposalField(
     return { success: false, error: 'API Key de Gemini no configurada.' };
   }
 
-  try {
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: 'gemini-3.5-flash' });
-
-    const prompt = `Eres un ingeniero civil / arquitecto de la constructora P&P CONSTRUYE.
+  const prompt = `Eres un ingeniero civil / arquitecto de la constructora P&P CONSTRUYE.
 Tu objetivo es redactar, mejorar y estructurar el texto para un campo específico de una propuesta.
 
 Contexto general del proyecto:
@@ -351,12 +360,14 @@ Instrucciones:
 - Usa lenguaje profesional y conciso, orientado a la construcción.
 - Devuelve ÚNICAMENTE el texto mejorado, sin introducciones ni comillas.`;
 
-    const result = await model.generateContent(prompt);
-    const text = result.response.text();
-
-    return { success: true, text: text.trim() };
+  try {
+    return await callGeminiWithFallback(apiKey, async (model) => {
+      const result = await model.generateContent(prompt);
+      const text = result.response.text();
+      return { success: true, text: text.trim() };
+    });
   } catch (error: any) {
-    return { success: false, error: `Error al refinar campo: ${error.message}` };
+    return { success: false, error: `Error al refinar campo: ${error?.message || error}` };
   }
 }
 
@@ -387,7 +398,6 @@ export async function chatAndUpdateForm(
     return { success: false, error: 'API Key de Gemini no configurada.' };
   }
 
-  const genAI = new GoogleGenerativeAI(apiKey);
   const clientsListStr = clients.map(c => "ID: " + c.id + " | Nombre: " + c.name + (c.company_name ? " (" + c.company_name + ")" : "")).join('\n');
   const conversationHistory = messages.map(m => (m.role === 'user' ? 'Usuario' : 'Pepe') + ': ' + m.text).join('\n');
 
@@ -448,10 +458,8 @@ Instrucciones:
 
 IMPORTANTE: Responde ÚNICAMENTE con el objeto JSON anterior, sin markdown adicional, sin rodeos, sin el bloque de código \`\`\`json. Asegúrate de escapar TODAS las comillas dobles internas con \\" (ejemplo: \\"A Todo Costo\\") y los saltos de línea correctamente para que el JSON sea válido.`;
 
-  let lastError: any;
-  for (const modelName of FALLBACK_MODELS) {
-    try {
-      const model = genAI.getGenerativeModel({ model: modelName });
+  try {
+    return await callGeminiWithFallback(apiKey, async (model) => {
       const result = await model.generateContent({
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
         generationConfig: {
@@ -473,17 +481,10 @@ IMPORTANTE: Responde ÚNICAMENTE con el objeto JSON anterior, sin markdown adici
         reply: parsed.reply || 'Entendido, he actualizado el formulario.', 
         form: parsed.form || currentForm 
       };
-    } catch (error: any) {
-      lastError = error;
-      if (error.message?.includes('429') || error.message?.includes('quota')) {
-        console.warn(`Cuota excedida en ${modelName}, probando siguiente modelo...`);
-        continue;
-      }
-      break;
-    }
+    });
+  } catch (error: any) {
+    return { success: false, error: `Error en chat de Pepe: ${error?.message || 'Servicio temporalmente ocupado'}` };
   }
-
-  return { success: false, error: `Error en chat de Pepe: ${lastError?.message || 'Cuota excedida'}` };
 }
 
 // ─────────────────────────────────────────────
@@ -497,11 +498,7 @@ export async function parseProposalTextToForm(
     return { success: false, error: 'API Key de Gemini no configurada.' };
   }
 
-  try {
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: 'gemini-3.5-flash' });
-
-    const prompt = `Analiza la siguiente propuesta de construcción redactada y extrae/deduce los valores correspondientes para los campos del formulario.
+  const prompt = `Analiza la siguiente propuesta de construcción redactada y extrae/deduce los valores correspondientes para los campos del formulario.
 Si algún campo no está explícitamente en el texto, deduce un valor adecuado basado en el contexto de la propuesta.
 
 Texto de la propuesta:
@@ -537,19 +534,22 @@ IMPORTANTE: Responde ÚNICAMENTE con un objeto JSON válido con las siguientes c
   "paymentMethods": ""
 }`;
 
-    const result = await model.generateContent({
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      generationConfig: {
-        responseMimeType: "application/json",
-      }
+  try {
+    return await callGeminiWithFallback(apiKey, async (model) => {
+      const result = await model.generateContent({
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig: {
+          responseMimeType: "application/json",
+        }
+      });
+
+      const responseText = result.response.text();
+      const data = JSON.parse(responseText);
+
+      return { success: true, form: data };
     });
-
-    const responseText = result.response.text();
-    const data = JSON.parse(responseText);
-
-    return { success: true, form: data };
   } catch (error: any) {
-    return { success: false, error: `Error al parsear propuesta: ${error.message}` };
+    return { success: false, error: `Error al parsear propuesta: ${error?.message || error}` };
   }
 }
 

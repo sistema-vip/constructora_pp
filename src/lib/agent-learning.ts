@@ -90,17 +90,32 @@ Responde ÚNICAMENTE con este JSON:
 }
 `;
 
-  try {
-    const model = genAI.getGenerativeModel({
-      model: 'gemini-3.6-flash',
-      generationConfig: { temperature: 0.1 }
-    });
+  const fallbackModels = ['gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-3.5-flash-lite', 'gemini-flash-latest'];
+  let parsed: any = null;
 
-    const result = await model.generateContent(prompt);
-    const rawText = result.response.text();
-    const jsonMatch = rawText.match(/```(?:json)?\s*([\s\S]*?)```/) || rawText.match(/(\{[\s\S]*\})/);
-    const jsonStr = jsonMatch ? jsonMatch[1] : rawText;
-    const parsed = JSON.parse(jsonStr.trim());
+  for (const modelName of fallbackModels) {
+    try {
+      const model = genAI.getGenerativeModel({
+        model: modelName,
+        generationConfig: { temperature: 0.1 }
+      });
+
+      const result = await model.generateContent(prompt);
+      const rawText = result.response.text();
+      const jsonMatch = rawText.match(/```(?:json)?\s*([\s\S]*?)```/) || rawText.match(/(\{[\s\S]*\})/);
+      const jsonStr = jsonMatch ? jsonMatch[1] : rawText;
+      parsed = JSON.parse(jsonStr.trim());
+      break;
+    } catch (e: any) {
+      console.warn(`Error en modelo ${modelName} para teachSkill:`, e.message);
+    }
+  }
+
+  if (!parsed) {
+    throw new Error('No se pudo sintetizar el aprendizaje con los modelos disponibles.');
+  }
+
+  try {
 
     // Guardar en la base de datos
     const { data, error } = await supabaseAdmin
@@ -175,18 +190,28 @@ Si es solo una negación casual sin regla duradera (ej. "no gracias", "no entien
 { "is_learnable": false }
 `;
 
+  const fallbackModels = ['gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-3.5-flash-lite', 'gemini-flash-latest'];
+  let parsed: any = null;
+
+  for (const modelName of fallbackModels) {
+    try {
+      const model = genAI.getGenerativeModel({
+        model: modelName,
+        generationConfig: { temperature: 0.1 }
+      });
+
+      const res = await model.generateContent(prompt);
+      const rawText = res.response.text();
+      const jsonMatch = rawText.match(/```(?:json)?\s*([\s\S]*?)```/) || rawText.match(/(\{[\s\S]*\})/);
+      parsed = JSON.parse((jsonMatch ? jsonMatch[1] : rawText).trim());
+      break;
+    } catch (e: any) {
+      console.warn(`Error en modelo ${modelName} para autoExtractLearning:`, e.message);
+    }
+  }
+
   try {
-    const model = genAI.getGenerativeModel({
-      model: 'gemini-3.6-flash',
-      generationConfig: { temperature: 0.1 }
-    });
-
-    const res = await model.generateContent(prompt);
-    const rawText = res.response.text();
-    const jsonMatch = rawText.match(/```(?:json)?\s*([\s\S]*?)```/) || rawText.match(/(\{[\s\S]*\})/);
-    const parsed = JSON.parse((jsonMatch ? jsonMatch[1] : rawText).trim());
-
-    if (parsed.is_learnable && parsed.skill_key && parsed.description) {
+    if (parsed && parsed.is_learnable && parsed.skill_key && parsed.description) {
       await supabaseAdmin.from('agent_learned_skills').insert({
         category: parsed.category || 'correction',
         skill_key: parsed.skill_key,
