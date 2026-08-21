@@ -742,16 +742,59 @@ Mensaje del usuario:
       };
     }
 
-    // 13. CHAT / GREETING / MEMORY RESPONSE
-    return {
-      replyText: params.chat_reply || '¡Hola! Soy Pepe, tu asistente de P&P CONSTRUYE. ¿En qué obra o registro estamos trabajando hoy?',
-      actionTaken: 'chat'
-    };
+    // 13. CHAT / GREETING / MEMORY RESPONSE (CON PERSISTENCIA DE BORRADOR SI HAY FACTURA)
+    if (intent === 'chat') {
+      const parsedAmount = Number(params.amount) || 0;
+      if (parsedAmount > 0 && (params.provider || params.description) && !params.projectId && telegramChatId) {
+        try {
+          const isVes = params.currency === 'VES';
+          const { data: draft } = await supabaseAdmin.from('telegram_pending_entries').insert({
+            description: params.description || 'Gasto procesado',
+            amount_usd: isVes ? 0 : parsedAmount,
+            entry_type: 'cost',
+            project_id: null,
+            category: params.category || 'materials',
+            provider: params.provider || null,
+            payment_reference: params.payment_reference || null,
+            status: 'draft_awaiting_project',
+            telegram_chat_id: telegramChatId,
+            telegram_user_name: telegramUserName,
+            raw_message: rawMessage || '[Foto de Comprobante]',
+            ai_parsed_data: {
+              original_amount: parsedAmount,
+              original_currency: params.currency || 'USD',
+              description: params.description,
+              provider: params.provider,
+              payment_reference: params.payment_reference,
+              category: params.category || 'materials'
+            }
+          }).select('id').single();
 
-  } catch (err: any) {
-    console.error('Error executing Telegram agent action:', err);
+          return {
+            replyText: params.chat_reply || '¡Recibido! He procesado el comprobante. 👤 ¿A qué cliente o proyecto/obra deseas asignarle este gasto?',
+            actionTaken: 'draft_awaiting_project',
+            recordId: draft?.id
+          };
+        } catch (err) {
+          console.warn('Error guardando draft_awaiting_project en telegram-ai:', err);
+        }
+      }
+
+      return {
+        replyText: params.chat_reply || '¡Hola! Soy Pepe, tu asistente de P&P CONSTRUYE. ¿En qué obra o registro estamos trabajando hoy?',
+        actionTaken: 'chat'
+      };
+    }
+
     return {
-      replyText: `⚠️ Ocurrió un error al ejecutar la acción: ${err.message}`
+      replyText: params.chat_reply || 'Entendido. ¿Deseas realizar alguna otra acción en el sistema?',
+      actionTaken: intent || 'general_reply'
+    };
+  } catch (err: any) {
+    console.error('Error procesando acción administrativa en Telegram:', err);
+    return {
+      replyText: `❌ Ocurrió un error al ejecutar la acción: ${err.message || err}`,
+      actionTaken: 'error'
     };
   }
 }

@@ -184,8 +184,103 @@ export async function POST(req: NextRequest) {
         })),
     }));
 
-    // 6. Procesar el mensaje con el Agente Inteligente de Telegram y su Memoria (Texto, Foto o Audio)
     const isAdmin = (profile?.role === 'admin');
+
+    // 5b. INTERCEPTOR DETERMINISTA DE ESTADO: Si hay un borrador de factura esperando obra y el usuario responde texto
+    if (!imageBase64 && messageText && messageText.trim().length > 0) {
+      const incomingText = messageText.trim().toLowerCase();
+      const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+
+      const { data: activeDraft } = await supabaseAdmin
+        .from('telegram_pending_entries')
+        .select('*')
+        .eq('telegram_chat_id', chatId)
+        .eq('status', 'draft_awaiting_project')
+        .gte('created_at', fifteenMinutesAgo)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (activeDraft) {
+        let matchedProject: { id: string; title: string; clientName: string } | null = null;
+
+        // 1. Buscar coincidencia exacta o por subcadenas en clientes y proyectos
+        for (const client of context) {
+          const clientMatch = incomingText.includes(client.name.toLowerCase()) || client.name.toLowerCase().includes(incomingText);
+          
+          for (const proj of client.projects) {
+            const projMatch = incomingText.includes(proj.title.toLowerCase()) || proj.title.toLowerCase().includes(incomingText);
+            if (projMatch || (clientMatch && client.projects.length === 1)) {
+              matchedProject = { id: proj.id, title: proj.title, clientName: client.name };
+              break;
+            }
+          }
+          if (matchedProject) break;
+        }
+
+        // 2. Si no hubo match directo, buscar por palabras clave (ej: "zully", "guerrero", "demolicion", "acabados", "cocina")
+        if (!matchedProject) {
+          const stopWords = ['para', 'obra', 'proyecto', 'cliente', 'gasto', 'el', 'la', 'de', 'en', 'con', 'y', 'los', 'las', 'un', 'una'];
+          const words = incomingText
+            .replace(/[^\w\sáéíóúüñ]/gi, ' ')
+            .split(/\s+/)
+            .filter((w: string) => w.length > 2 && !stopWords.includes(w));
+
+          for (const client of context) {
+            for (const proj of client.projects) {
+              const fullTarget = `${client.name} ${proj.title}`.toLowerCase();
+              const hasKeyWord = words.some((w: string) => fullTarget.includes(w));
+              if (hasKeyWord) {
+                matchedProject = { id: proj.id, title: proj.title, clientName: client.name };
+                break;
+              }
+            }
+            if (matchedProject) break;
+          }
+        }
+
+        if (matchedProject) {
+          // Asentar gasto determinísticamente con los datos de la factura
+          const parsed = activeDraft.ai_parsed_data || {};
+          const isVes = parsed.original_currency === 'VES';
+          const amount = parsed.original_amount || activeDraft.amount_usd;
+          const formattedAmount = isVes
+            ? 'Bs ' + Number(amount).toLocaleString('es-VE')
+            : '$' + Number(amount).toFixed(2);
+
+          const { createRecord } = await import('@/lib/system-core');
+          const costRes = await createRecord({
+            entry_type: 'cost',
+            amount: amount,
+            currency: parsed.original_currency || 'USD',
+            description: parsed.description || activeDraft.description,
+            project_id: matchedProject.id,
+            category: parsed.category || activeDraft.category || 'materials',
+            provider: parsed.provider || activeDraft.provider,
+            mode: isAdmin ? 'direct' : 'draft',
+            telegram_chat_id: chatId,
+            telegram_user_name: telegramUserName
+          });
+
+          await supabaseAdmin
+            .from('telegram_pending_entries')
+            .update({
+              status: 'approved',
+              project_id: matchedProject.id,
+              created_record_id: costRes.recordId
+            })
+            .eq('id', activeDraft.id);
+
+          const successReply = `✅ *Gasto Asentado en Obra*\n🏗️ *Obra:* ${matchedProject.title} (${matchedProject.clientName})\n📝 *Concepto:* ${parsed.description || activeDraft.description}\n💰 *Monto:* ${formattedAmount}\n🏷️ *Categoría:* ${parsed.category || activeDraft.category || 'Materiales'}${parsed.provider || activeDraft.provider ? '\n🏪 *Proveedor:* ' + (parsed.provider || activeDraft.provider) : ''}`;
+
+          await sendTelegramMessage(chatId, successReply);
+          await saveTelegramChatMessage(chatId, 'assistant', successReply, 'create_cost', costRes.recordId);
+          return NextResponse.json({ ok: true });
+        }
+      }
+    }
+
+    // 6. Procesar el mensaje con el Agente Inteligente de Telegram y su Memoria (Texto, Foto o Audio)
     const agentResponse = await processTelegramAgentMessage(
       messageText,
       context,
