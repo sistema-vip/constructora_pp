@@ -4,7 +4,8 @@ import {
   processTelegramAgentMessage,
   ClientProjectContext,
   saveTelegramChatMessage,
-  getTelegramChatHistory
+  getTelegramChatHistory,
+  PendingDraftData
 } from '@/lib/telegram-ai';
 import { getRecentSystemActivity } from '@/lib/system-core';
 import { autoExtractLearningFromCorrection } from '@/lib/agent-learning';
@@ -186,30 +187,62 @@ export async function POST(req: NextRequest) {
 
     const isAdmin = (profile?.role === 'admin');
 
-    // 5b. INTERCEPTOR DETERMINISTA DE ESTADO: Si hay un borrador de factura esperando obra y el usuario responde texto
+    // 5b. INTERCEPTOR DETERMINISTA + IA-FALLBACK: Si hay borrador de factura esperando obra
     if (!imageBase64 && messageText && messageText.trim().length > 0) {
-      const incomingText = messageText.trim().toLowerCase();
-      const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+      const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
 
+      // Limpiar drafts huérfanos duplicados del mismo usuario (mantener solo el más reciente)
+      const { data: allDrafts } = await supabaseAdmin
+        .from('telegram_pending_entries')
+        .select('id, created_at')
+        .eq('telegram_chat_id', chatId)
+        .eq('status', 'draft_awaiting_project')
+        .gte('created_at', thirtyMinutesAgo)
+        .order('created_at', { ascending: false });
+
+      if (allDrafts && allDrafts.length > 1) {
+        // Marcar todos los viejos como expirados, conservar solo el más reciente
+        const idsToExpire = allDrafts.slice(1).map((d: any) => d.id);
+        await supabaseAdmin
+          .from('telegram_pending_entries')
+          .update({ status: 'expired' })
+          .in('id', idsToExpire);
+      }
+
+      // Buscar el draft activo más reciente
       const { data: activeDraft } = await supabaseAdmin
         .from('telegram_pending_entries')
         .select('*')
         .eq('telegram_chat_id', chatId)
         .eq('status', 'draft_awaiting_project')
-        .gte('created_at', fifteenMinutesAgo)
+        .gte('created_at', thirtyMinutesAgo)
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle();
 
       if (activeDraft) {
+        // ── FUNCIÓN DE NORMALIZACIÓN PARA MATCH FUZZY ──
+        const normalize = (text: string) =>
+          text
+            .toLowerCase()
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '') // quitar tildes
+            .replace(/[^a-z0-9\s]/g, ' ')    // solo alfanuméricos
+            .replace(/\s+/g, ' ')
+            .trim();
+
+        const incomingNorm = normalize(messageText);
+
         let matchedProject: { id: string; title: string; clientName: string } | null = null;
 
-        // 1. Buscar coincidencia exacta o por subcadenas en clientes y proyectos
+        // 1. Match directo normalizado
         for (const client of context) {
-          const clientMatch = incomingText.includes(client.name.toLowerCase()) || client.name.toLowerCase().includes(incomingText);
-          
+          const clientNorm = normalize(client.name);
+          const clientMatch = incomingNorm.includes(clientNorm) || clientNorm.includes(incomingNorm);
+
           for (const proj of client.projects) {
-            const projMatch = incomingText.includes(proj.title.toLowerCase()) || proj.title.toLowerCase().includes(incomingText);
+            const projNorm = normalize(proj.title);
+            const projMatch = incomingNorm.includes(projNorm) || projNorm.includes(incomingNorm);
             if (projMatch || (clientMatch && client.projects.length === 1)) {
               matchedProject = { id: proj.id, title: proj.title, clientName: client.name };
               break;
@@ -218,29 +251,32 @@ export async function POST(req: NextRequest) {
           if (matchedProject) break;
         }
 
-        // 2. Si no hubo match directo, buscar por palabras clave (ej: "zully", "guerrero", "demolicion", "acabados", "cocina")
+        // 2. Match por palabras clave individuales (ej: "zully", "demolicion", "cocina")
         if (!matchedProject) {
-          const stopWords = ['para', 'obra', 'proyecto', 'cliente', 'gasto', 'el', 'la', 'de', 'en', 'con', 'y', 'los', 'las', 'un', 'una'];
-          const words = incomingText
-            .replace(/[^\w\sáéíóúüñ]/gi, ' ')
+          const stopWords = new Set(['para', 'obra', 'proyecto', 'cliente', 'gasto', 'el', 'la', 'de', 'en', 'con', 'y', 'los', 'las', 'un', 'una', 'ese', 'esa', 'este', 'esta', 'del', 'al', 'por', 'que', 'a']);
+          const words = incomingNorm
             .split(/\s+/)
-            .filter((w: string) => w.length > 2 && !stopWords.includes(w));
+            .filter((w: string) => w.length > 2 && !stopWords.has(w));
+
+          let bestScore = 0;
+          let bestMatch: { id: string; title: string; clientName: string } | null = null;
 
           for (const client of context) {
             for (const proj of client.projects) {
-              const fullTarget = `${client.name} ${proj.title}`.toLowerCase();
-              const hasKeyWord = words.some((w: string) => fullTarget.includes(w));
-              if (hasKeyWord) {
-                matchedProject = { id: proj.id, title: proj.title, clientName: client.name };
-                break;
+              const fullTarget = normalize(`${client.name} ${proj.title}`);
+              const matchCount = words.filter((w: string) => fullTarget.includes(w)).length;
+              if (matchCount > 0 && matchCount > bestScore) {
+                bestScore = matchCount;
+                bestMatch = { id: proj.id, title: proj.title, clientName: client.name };
               }
             }
-            if (matchedProject) break;
           }
+
+          if (bestMatch) matchedProject = bestMatch;
         }
 
         if (matchedProject) {
-          // Asentar gasto determinísticamente con los datos de la factura
+          // ✅ MATCH ENCONTRADO: Ejecutar determinísticamente
           const parsed = activeDraft.ai_parsed_data || {};
           const isVes = parsed.original_currency === 'VES';
           const amount = parsed.original_amount || activeDraft.amount_usd;
@@ -277,6 +313,55 @@ export async function POST(req: NextRequest) {
           await saveTelegramChatMessage(chatId, 'assistant', successReply, 'create_cost', costRes.recordId);
           return NextResponse.json({ ok: true });
         }
+
+        // ❌ MATCH NO ENCONTRADO: Pasar el draft a la IA como contexto explícito
+        // (la IA sabe que hay una factura pendiente y NO debe crear otra)
+        const pendingDraftForAI: PendingDraftData = {
+          id: activeDraft.id,
+          description: activeDraft.description,
+          amount_usd: activeDraft.amount_usd,
+          provider: activeDraft.provider,
+          category: activeDraft.category,
+          payment_reference: activeDraft.payment_reference,
+          ai_parsed_data: activeDraft.ai_parsed_data
+        };
+
+        const agentResponseWithDraft = await processTelegramAgentMessage(
+          messageText,
+          context,
+          undefined,
+          chatId,
+          telegramUserName,
+          isAdmin,
+          chatHistory,
+          recentActivity,
+          undefined,
+          undefined,
+          pendingDraftForAI
+        );
+
+        // Si la IA resolvió y devolvió create_cost, marcar el draft como approved
+        if (agentResponseWithDraft.actionTaken === 'create_cost' && agentResponseWithDraft.pendingDraftId) {
+          await supabaseAdmin
+            .from('telegram_pending_entries')
+            .update({
+              status: 'approved',
+              created_record_id: agentResponseWithDraft.recordId
+            })
+            .eq('id', agentResponseWithDraft.pendingDraftId);
+        }
+
+        if (agentResponseWithDraft.replyText) {
+          await sendTelegramMessage(chatId, agentResponseWithDraft.replyText);
+          await saveTelegramChatMessage(
+            chatId,
+            'assistant',
+            agentResponseWithDraft.replyText,
+            agentResponseWithDraft.actionTaken,
+            agentResponseWithDraft.recordId
+          );
+        }
+        return NextResponse.json({ ok: true, action: agentResponseWithDraft.actionTaken });
       }
     }
 

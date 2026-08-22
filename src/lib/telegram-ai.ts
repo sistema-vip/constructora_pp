@@ -88,6 +88,23 @@ export async function getTelegramChatHistory(
   }
 }
 
+export interface PendingDraftData {
+  id: string;
+  description: string;
+  amount_usd: number;
+  provider: string | null;
+  category: string | null;
+  payment_reference: string | null;
+  ai_parsed_data: {
+    original_amount: number;
+    original_currency: string;
+    description: string;
+    provider: string | null;
+    payment_reference: string | null;
+    category: string | null;
+  } | null;
+}
+
 export async function processTelegramAgentMessage(
   rawMessage: string,
   context: ClientProjectContext[],
@@ -98,8 +115,9 @@ export async function processTelegramAgentMessage(
   chatHistory?: TelegramChatMessageItem[],
   recentActivity?: SystemActivityItem[],
   audioBase64?: string,
-  audioMimeType?: string
-): Promise<TelegramAgentResponse> {
+  audioMimeType?: string,
+  pendingDraft?: PendingDraftData | null
+): Promise<TelegramAgentResponse & { pendingDraftId?: string }> {
   if (!genAI) {
     return { replyText: '❌ Error: GEMINI_API_KEY no configurada en el servidor.' };
   }
@@ -113,13 +131,57 @@ export async function processTelegramAgentMessage(
 
   const clienteName = context.map(c => `${c.name}: ${c.projects.map(p => p.title + ' [' + p.id + ']').join(', ')}`).join(' | ');
 
+  // Historial enriquecido: incluye action_taken para que la IA sepa qué acciones se tomaron
   const formattedHistory = history.length > 0
-    ? history.map(m => `- [${m.role === 'user' ? 'Usuario' : 'Pepe (Tú)'}]: ${m.message_text}`).join('\n')
+    ? history.map(m => {
+        const role = m.role === 'user' ? 'Usuario' : 'Pepe (Tú)';
+        const action = m.action_taken ? ` [acción: ${m.action_taken}]` : '';
+        return `- [${role}]${action}: ${m.message_text}`;
+      }).join('\n')
     : 'Sin mensajes previos en esta sesión.';
 
   const formattedActivity = activity.length > 0
     ? activity.map(a => `• [${a.typeLabel}] $${a.amount_usd.toFixed(2)} - "${a.description}" | Obra: ${a.project_title || 'General'} (${a.client_name || 'Particular'})${a.provider_or_partner ? ' | Por/Para: ' + a.provider_or_partner : ''} [ID: ${a.id}]`).join('\n')
     : 'No hay registros recientes.';
+
+  // Sección de factura pendiente: solo se inyecta cuando hay un draft activo en BD
+  const pendingDraftSection = pendingDraft
+    ? (() => {
+        const parsed = pendingDraft.ai_parsed_data;
+        const originalAmount = parsed?.original_amount ?? pendingDraft.amount_usd;
+        const originalCurrency = parsed?.original_currency ?? 'USD';
+        const provider = parsed?.provider ?? pendingDraft.provider ?? 'Proveedor desconocido';
+        const description = parsed?.description ?? pendingDraft.description ?? 'Sin descripción';
+        const payRef = parsed?.payment_reference ?? pendingDraft.payment_reference;
+        const category = parsed?.category ?? pendingDraft.category ?? 'materials';
+        const amountFormatted = originalCurrency === 'VES'
+          ? `Bs. ${Number(originalAmount).toLocaleString('es-VE')}`
+          : `$${Number(originalAmount).toFixed(2)} USD`;
+        return `
+══════════════════════════════════════════════════════════════════════════════
+🚨 ESTADO CRÍTICO: HAY UNA FACTURA PENDIENTE ESPERANDO SER ASIGNADA A UN PROYECTO 🚨
+══════════════════════════════════════════════════════════════════════════════
+El usuario ya envió una factura/comprobante y TÚ ya la procesaste. Está guardada con estos datos:
+  • ID del Borrador: ${pendingDraft.id}
+  • Proveedor: ${provider}
+  • Monto: ${amountFormatted} (${originalCurrency})
+  • Concepto/Ítems: ${description}
+  ${payRef ? `• Nro. Factura/Referencia: ${payRef}` : ''}
+  • Categoría: ${category}
+
+TU ÚNICA TAREA EN ESTE MENSAJE:
+  → Identificar a qué cliente y proyecto pertenece el texto del usuario.
+  → Una vez identificado el proyecto, usar intent "create_cost" con los datos EXACTOS de arriba.
+  → Usar el projectId del contexto de clientes/obras.
+  → ¡ABSOLUTAMENTE PROHIBIDO volver a pedir la factura, el monto o el concepto!
+  → ¡ABSOLUTAMENTE PROHIBIDO usar intent "chat" si el usuario menciona cualquier cliente, obra o proyecto!
+  → Si el texto del usuario es ambiguo (ej: solo dice "Zully"), busca en el contexto y selecciona.
+  → Si hay varios proyectos del mismo cliente, usa intent "chat" y pregunta SOLO: "¿En cuál de estas obras de [Cliente]?".
+  → ¡NO CREES UN NUEVO BORRADOR! Los datos de esta factura son los únicos válidos para el registro.
+══════════════════════════════════════════════════════════════════════════════
+`;
+      })()
+    : '';
 
   const prompt = `
 Eres Pepe, el copiloto y asistente administrativo inteligente de P&P CONSTRUYE con permisos de Super Administrador.
@@ -127,7 +189,7 @@ Tu misión es actuar como un asistente de construcción humano: inteligente, met
 
 ── HABILIDADES Y REGLAS APRENDIDAS (BASE DE CONOCIMIENTO VIVA) ──
 ${learnedSkillsText}
-
+${pendingDraftSection}
 ── MEMORIA: HISTORIAL DE CONVERSACIÓN RECIENTE (LO QUE SE ESTÁ HABLANDO EN ESTE CHAT AHORA) ──
 ${formattedHistory}
 
@@ -607,14 +669,32 @@ Mensaje del usuario:
 
     // 5. CREATE COST (DIRECTO)
     if (intent === 'create_cost') {
+      // Si la IA resolvió el proyecto usando los datos del pendingDraft, usar esos datos
+      const draftParsed = pendingDraft?.ai_parsed_data;
+      const finalAmount = (pendingDraft && draftParsed?.original_amount)
+        ? draftParsed.original_amount
+        : params.amount;
+      const finalCurrency = (pendingDraft && draftParsed?.original_currency)
+        ? draftParsed.original_currency
+        : (params.currency || 'USD');
+      const finalDescription = (pendingDraft && draftParsed?.description)
+        ? draftParsed.description
+        : params.description;
+      const finalProvider = (pendingDraft && draftParsed?.provider)
+        ? draftParsed.provider
+        : params.provider;
+      const finalCategory = (pendingDraft && draftParsed?.category)
+        ? draftParsed.category
+        : (params.category || 'materials');
+
       const res = await createRecord({
         entry_type: 'cost',
-        amount: params.amount,
-        currency: params.currency || 'USD',
-        description: params.description,
+        amount: finalAmount,
+        currency: finalCurrency,
+        description: finalDescription,
         project_id: params.projectId,
-        category: params.category || 'materials',
-        provider: params.provider,
+        category: finalCategory,
+        provider: finalProvider,
         mode: 'direct'
       });
 
@@ -629,14 +709,16 @@ Mensaje del usuario:
         }
       }
 
-      const formattedAmount = params.currency === 'VES'
-        ? 'Bs ' + Number(params.amount).toLocaleString('es-VE')
-        : '$' + Number(params.amount).toFixed(2);
+      const formattedAmount = finalCurrency === 'VES'
+        ? 'Bs ' + Number(finalAmount).toLocaleString('es-VE')
+        : '$' + Number(finalAmount).toFixed(2);
 
       return {
-        replyText: `✅ *Gasto Asentado en Obra*${projectInfo}\n📝 *Concepto:* ${params.description}\n💰 *Monto:* ${formattedAmount}\n🏷️ *Categoría:* ${params.category || 'Materiales'}\n${params.provider ? '🏪 *Proveedor:* ' + params.provider : ''}`,
+        replyText: `✅ *Gasto Asentado en Obra*${projectInfo}\n📝 *Concepto:* ${finalDescription}\n💰 *Monto:* ${formattedAmount}\n🏷️ *Categoría:* ${finalCategory || 'Materiales'}\n${finalProvider ? '🏪 *Proveedor:* ' + finalProvider : ''}`,
         actionTaken: 'create_cost',
-        recordId: res.recordId
+        recordId: res.recordId,
+        // Indicar al route.ts cuál draft debe marcarse como approved
+        pendingDraftId: pendingDraft?.id
       };
     }
 
@@ -745,7 +827,8 @@ Mensaje del usuario:
     // 13. CHAT / GREETING / MEMORY RESPONSE (CON PERSISTENCIA DE BORRADOR SI HAY FACTURA)
     if (intent === 'chat') {
       const parsedAmount = Number(params.amount) || 0;
-      if (parsedAmount > 0 && (params.provider || params.description) && !params.projectId && telegramChatId) {
+      // GUARDAR DRAFT SOLO si hay factura nueva Y no hay ya un draft activo esperando (prevenir duplicados)
+      if (parsedAmount > 0 && (params.provider || params.description) && !params.projectId && telegramChatId && !pendingDraft) {
         try {
           const isVes = params.currency === 'VES';
           const { data: draft } = await supabaseAdmin.from('telegram_pending_entries').insert({
