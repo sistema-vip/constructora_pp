@@ -881,3 +881,141 @@ Mensaje del usuario:
     };
   }
 }
+
+// ══════════════════════════════════════════════════════════════════
+// FUNCIONES ENFOCADAS PARA LA STATE MACHINE
+// Estas funciones son pequeñas, con un solo propósito.
+// La IA solo extrae datos. El código (route.ts) decide el flujo.
+// ══════════════════════════════════════════════════════════════════
+
+export interface ExpenseEntities {
+  amount: number | null;
+  currency: string;
+  description: string | null;
+  provider: string | null;
+  payment_reference: string | null;
+  category: string;
+}
+
+/**
+ * Detecta si el mensaje del usuario es una intención de registrar un gasto.
+ * Retorna true si quiere registrar gasto, false si quiere otra cosa.
+ */
+export async function detectUserIntent(
+  text: string,
+  hasImage: boolean = false,
+  hasAudio: boolean = false
+): Promise<'register_expense' | 'cancel_session' | 'other'> {
+  if (!genAI) return 'other';
+
+  // Si es solo una imagen sin texto, es casi seguro una factura
+  if (hasImage && !text) return 'register_expense';
+
+  const lowerText = text.trim().toLowerCase();
+
+  // Detectar cancelación explícita
+  const cancelWords = ['cancelar', 'cancel', 'salir', 'exit', 'olvidar', 'nada', 'no importa', 'olvida'];
+  if (cancelWords.some(w => lowerText.includes(w))) return 'cancel_session';
+
+  // Detectar intención de gasto con palabras clave directas (evitar llamada a IA)
+  const expenseKeywords = [
+    'registrar gasto', 'cargar gasto', 'asentar gasto', 'registrar pago',
+    'gasté', 'gaste', 'compramos', 'compramos', 'compré', 'compre',
+    'cargame', 'cárgame', 'registra', 'asienta', 'anotar gasto',
+    'factura', 'recibo', 'nota de compra', 'nota de débito',
+    'pagamos', 'pagué', 'pague'
+  ];
+  if (expenseKeywords.some(kw => lowerText.includes(kw))) return 'register_expense';
+
+  // Para casos ambiguos, consultar a la IA con un prompt mínimo
+  try {
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash', generationConfig: { temperature: 0 } });
+    const result = await model.generateContent({
+      contents: [{
+        role: 'user',
+        parts: [{ text: `¿El siguiente mensaje indica que el usuario quiere REGISTRAR UN GASTO/FACTURA/COMPRA en el sistema? Responde SOLO con "si" o "no".\n\nMensaje: "${text}"` }]
+      }]
+    });
+    const answer = result.response.text().trim().toLowerCase();
+    return answer.startsWith('si') || answer.startsWith('sí') ? 'register_expense' : 'other';
+  } catch {
+    return 'other';
+  }
+}
+
+/**
+ * Extrae las entidades del gasto desde texto libre, imagen de factura o nota de voz.
+ * No decide el flujo. Solo extrae datos.
+ */
+export async function extractExpenseEntities(
+  text: string,
+  imageBase64?: string,
+  audioBase64?: string,
+  audioMimeType?: string
+): Promise<ExpenseEntities> {
+  const defaultResult: ExpenseEntities = {
+    amount: null,
+    currency: 'USD',
+    description: null,
+    provider: null,
+    payment_reference: null,
+    category: 'materials'
+  };
+
+  if (!genAI) return defaultResult;
+
+  const extractPrompt = `Eres un sistema de extracción de datos de gastos de construcción. Extrae con máxima precisión los datos del comprobante/factura/texto.
+
+REGLAS:
+- Si hay una imagen adjunta, analiza TODOS los datos de la imagen (OCR completo).
+- Si hay audio, transcribe y extrae los datos.
+- Si es texto, analiza el texto.
+- "amount": el TOTAL FINAL de la factura (número sin símbolo). Si está en Bs o Bolívares → currency = "VES". Si está en $ → currency = "USD".
+- "description": lista los ítems comprados o concepto del gasto. Sé detallado.
+- "provider": razón social o nombre del proveedor/tienda/persona.
+- "payment_reference": número de factura, nota, comprobante o referencia. Puede ser null.
+- "category": clasifica en: "materials" (materiales/ferretería), "labor" (mano de obra), "equipment" (equipos/herramientas), "subcontract" (subcontratista), "other".
+
+Responde ÚNICAMENTE con este JSON (sin markdown, sin texto extra):
+{
+  "amount": <número o null>,
+  "currency": "<USD|VES>",
+  "description": "<string o null>",
+  "provider": "<string o null>",
+  "payment_reference": "<string o null>",
+  "category": "<materials|labor|equipment|subcontract|other>"
+}
+
+${text ? `Texto del mensaje: "${text}"` : 'Sin texto (analizar solo multimedia)'}`;
+
+  const fallbackModels = imageBase64 || audioBase64
+    ? ['gemini-2.5-flash', 'gemini-3.6-flash']
+    : ['gemini-2.5-flash', 'gemini-3.6-flash'];
+
+  for (const modelName of fallbackModels) {
+    try {
+      const model = genAI.getGenerativeModel({ model: modelName, generationConfig: { temperature: 0 } });
+      const parts: any[] = [{ text: extractPrompt }];
+      if (imageBase64) parts.push({ inlineData: { mimeType: 'image/jpeg', data: imageBase64 } });
+      if (audioBase64) parts.push({ inlineData: { mimeType: audioMimeType || 'audio/ogg', data: audioBase64 } });
+
+      const result = await model.generateContent({ contents: [{ role: 'user', parts }] });
+      const rawText = result.response.text();
+      const jsonMatch = rawText.match(/```(?:json)?\s*([\s\S]*?)```/) || rawText.match(/(\{[\s\S]*\})/);
+      const parsed = JSON.parse((jsonMatch ? jsonMatch[1] : rawText).trim());
+
+      return {
+        amount: parsed.amount ? Number(parsed.amount) : null,
+        currency: parsed.currency || 'USD',
+        description: parsed.description || null,
+        provider: parsed.provider || null,
+        payment_reference: parsed.payment_reference || null,
+        category: parsed.category || 'materials'
+      };
+    } catch (e: any) {
+      console.warn(`extractExpenseEntities - Error en ${modelName}:`, e.message);
+    }
+  }
+
+  return defaultResult;
+}
