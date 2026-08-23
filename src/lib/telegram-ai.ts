@@ -22,6 +22,60 @@ import {
 const apiKey = process.env.GEMINI_API_KEY || '';
 const genAI = apiKey ? new GoogleGenerativeAI(apiKey) : null;
 
+export const ACTIVE_GEMINI_MODELS = [
+  'gemini-3.6-flash',
+  'gemini-3.5-flash',
+  'gemini-3.5-flash-lite',
+  'gemini-3.7-flash',
+  'gemini-flash-lite-latest'
+];
+
+async function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Ejecutor resiliente de Gemini: itera por los modelos activos y realiza
+ * reintentos automáticos con pausa (backoff) si se reciben errores 503/429.
+ */
+export async function callGeminiResilient<T>(
+  fn: (model: any, modelName: string) => Promise<T>,
+  models: string[] = ACTIVE_GEMINI_MODELS
+): Promise<T> {
+  if (!genAI) throw new Error('GEMINI_API_KEY no configurada');
+
+  let lastError: any = null;
+
+  for (const modelName of models) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const model = genAI.getGenerativeModel({ model: modelName });
+        return await fn(model, modelName);
+      } catch (err: any) {
+        lastError = err;
+        const msg = err?.message || String(err);
+        const isTransient =
+          msg.includes('503') ||
+          msg.includes('429') ||
+          msg.includes('UNAVAILABLE') ||
+          msg.includes('high demand') ||
+          msg.includes('RESOURCE_EXHAUSTED') ||
+          msg.includes('overloaded');
+
+        console.warn(`[Gemini Resilient] Error en ${modelName} (intento ${attempt + 1}):`, msg);
+
+        if (isTransient && attempt === 0) {
+          await sleep(600);
+          continue;
+        }
+        break;
+      }
+    }
+  }
+
+  throw lastError || new Error('Todos los modelos de Gemini fallaron o están temporalmente ocupados.');
+}
+
 export interface ClientProjectContext {
   id: string;
   name: string;
@@ -187,6 +241,16 @@ TU ÚNICA TAREA EN ESTE MENSAJE:
 Eres Pepe, el copiloto y asistente administrativo inteligente de P&P CONSTRUYE con permisos de Super Administrador.
 Tu misión es actuar como un asistente de construcción humano: inteligente, metódico, guiado paso a paso y con cero alucinaciones.
 
+── MAPA Y CAPACIDADES DEL SISTEMA WEB (P&P CONSTRUYE) ──
+Tienes visibilidad total y capacidad de consulta/registro sobre todos los módulos de la constructora:
+1. 🏗️ OBRAS Y PROYECTOS (/proyectos): Presupuestos, extras, estatus (Propuesta, En Ejecución, Finalizada, Cancelada), desglose de gastos y cobros.
+2. 💵 CUENTAS POR COBRAR (/cuentas-por-cobrar): Control de cuentas por cobrar a clientes, abonos recibidos y saldo por cobrar.
+3. 💳 CUENTAS POR PAGAR (/cuentas-por-pagar): Compromisos adquiridos con ferreterías, obreros, alquileres y subcontratistas.
+4. 📦 MATERIALES Y GASTOS (/materiales): Relación detallada de compras de insumos, herramientas y fletes.
+5. 👥 CLIENTES (/clientes): Directorio de clientes, teléfonos, empresas y contactos.
+6. 🕒 AUDITORÍA Y TRAZABILIDAD (/auditoria): Historial de movimientos contables y administrativos.
+7. 🤝 RETIROS DE SOCIOS: Registro de adelantos o retiros de socios de la constructora.
+
 ── HABILIDADES Y REGLAS APRENDIDAS (BASE DE CONOCIMIENTO VIVA) ──
 ${learnedSkillsText}
 ${pendingDraftSection}
@@ -342,21 +406,10 @@ Mensaje del usuario:
 "${rawMessage || (audioBase64 ? 'Nota de voz adjunta' : imageBase64 ? 'Foto adjunta' : 'Mensaje multimedia')}"
 `;
 
-  const fallbackModels = (imageBase64 || audioBase64)
-    ? ['gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-3.5-flash-lite']
-    : ['gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-3.5-flash-lite'];
-
   let parsedDecision: any = null;
 
-  for (const modelName of fallbackModels) {
-    try {
-      const model = genAI.getGenerativeModel({
-        model: modelName,
-        generationConfig: {
-          temperature: 0.1,
-        },
-      });
-
+  try {
+    parsedDecision = await callGeminiResilient(async (model) => {
       const contents: any[] = [{ role: 'user', parts: [{ text: prompt }] }];
       if (imageBase64) {
         contents[0].parts.push({
@@ -379,18 +432,22 @@ Mensaje del usuario:
       const rawText = result.response.text();
 
       // Extract JSON robustly from text (handles markdown code blocks)
-      const jsonMatch = rawText.match(/```(?:json)?\s*([\s\S]*?)```/) ||
-                        rawText.match(/(\{[\s\S]*\})/);
+      const jsonMatch =
+        rawText.match(/```(?:json)?\s*([\s\S]*?)```/) ||
+        rawText.match(/(\{[\s\S]*\})/);
       const jsonStr = jsonMatch ? jsonMatch[1] : rawText;
-      parsedDecision = JSON.parse(jsonStr.trim());
-      break;
-    } catch (e: any) {
-      console.warn(`Error en modelo ${modelName}:`, e.message);
-    }
+      return JSON.parse(jsonStr.trim());
+    });
+  } catch (err: any) {
+    console.error('Error al ejecutar processTelegramAgentMessage con Gemini:', err);
+    return {
+      replyText: '⚠️ Pepe está experimentando alta demanda de conexión en este momento. Por favor reenvía tu mensaje en unos segundos.',
+      actionTaken: 'gemini_unavailable'
+    };
   }
 
   if (!parsedDecision) {
-    return { replyText: '🤔 No pude procesar tu mensaje. Por favor intenta de nuevo.' };
+    return { replyText: '🤔 No pude interpretar completamente el mensaje. Por favor intenta de nuevo.' };
   }
 
   const { intent, params } = parsedDecision;
@@ -906,37 +963,39 @@ export async function detectUserIntent(
   hasImage: boolean = false,
   hasAudio: boolean = false
 ): Promise<'register_expense' | 'cancel_session' | 'other'> {
-  if (!genAI) return 'other';
-
-  // Si es solo una imagen sin texto, es casi seguro una factura
-  if (hasImage && !text) return 'register_expense';
-
   const lowerText = text.trim().toLowerCase();
 
   // Detectar cancelación explícita
   const cancelWords = ['cancelar', 'cancel', 'salir', 'exit', 'olvidar', 'nada', 'no importa', 'olvida'];
   if (cancelWords.some(w => lowerText.includes(w))) return 'cancel_session';
 
-  // Detectar intención de gasto con palabras clave directas (evitar llamada a IA)
+  // Si hay una foto/imagen adjunta, en el contexto de la constructora es una factura o comprobante
+  // a menos que sea una pregunta expresa
+  if (hasImage) return 'register_expense';
+
+  // Detectar intención de gasto con palabras clave directas (evitar llamada innecesaria a IA)
   const expenseKeywords = [
     'registrar gasto', 'cargar gasto', 'asentar gasto', 'registrar pago',
-    'gasté', 'gaste', 'compramos', 'compramos', 'compré', 'compre',
+    'gasté', 'gaste', 'compramos', 'compré', 'compre',
     'cargame', 'cárgame', 'registra', 'asienta', 'anotar gasto',
     'factura', 'recibo', 'nota de compra', 'nota de débito',
-    'pagamos', 'pagué', 'pague'
+    'pagamos', 'pagué', 'pague', 'transferencia', 'pago movil', 'pago móvil'
   ];
   if (expenseKeywords.some(kw => lowerText.includes(kw))) return 'register_expense';
 
-  // Para casos ambiguos, consultar a la IA con un prompt mínimo
+  if (!genAI || (!text && !hasAudio)) return 'other';
+
+  // Para casos ambiguos de texto o audio, consultar a la IA con el ejecutor resiliente
   try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash', generationConfig: { temperature: 0 } });
-    const result = await model.generateContent({
-      contents: [{
-        role: 'user',
-        parts: [{ text: `¿El siguiente mensaje indica que el usuario quiere REGISTRAR UN GASTO/FACTURA/COMPRA en el sistema? Responde SOLO con "si" o "no".\n\nMensaje: "${text}"` }]
-      }]
+    const answer = await callGeminiResilient(async (model) => {
+      const result = await model.generateContent({
+        contents: [{
+          role: 'user',
+          parts: [{ text: `¿El siguiente mensaje indica que el usuario quiere REGISTRAR UN GASTO/FACTURA/COMPRA/PAGO en el sistema? Responde SOLO con "si" o "no".\n\nMensaje: "${text}"` }]
+        }]
+      });
+      return result.response.text().trim().toLowerCase();
     });
-    const answer = result.response.text().trim().toLowerCase();
     return answer.startsWith('si') || answer.startsWith('sí') ? 'register_expense' : 'other';
   } catch {
     return 'other';
@@ -945,7 +1004,7 @@ export async function detectUserIntent(
 
 /**
  * Extrae las entidades del gasto desde texto libre, imagen de factura o nota de voz.
- * No decide el flujo. Solo extrae datos.
+ * Utiliza el ejecutor resiliente con rotación de modelos activos y reintentos automáticos.
  */
 export async function extractExpenseEntities(
   text: string,
@@ -964,17 +1023,16 @@ export async function extractExpenseEntities(
 
   if (!genAI) return defaultResult;
 
-  const extractPrompt = `Eres un sistema de extracción de datos de gastos de construcción. Extrae con máxima precisión los datos del comprobante/factura/texto.
+  const extractPrompt = `Eres un asistente de extracción de datos contables y comprobantes de construcción de Venezuela.
+Extrae con máxima precisión todos los datos posibles del comprobante, factura, transferencia bancaria, pago móvil, nota de voz o texto.
 
-REGLAS:
-- Si hay una imagen adjunta, analiza TODOS los datos de la imagen (OCR completo).
-- Si hay audio, transcribe y extrae los datos.
-- Si es texto, analiza el texto.
-- "amount": el TOTAL FINAL de la factura (número sin símbolo). Si está en Bs o Bolívares → currency = "VES". Si está en $ → currency = "USD".
-- "description": lista los ítems comprados o concepto del gasto. Sé detallado.
-- "provider": razón social o nombre del proveedor/tienda/persona.
-- "payment_reference": número de factura, nota, comprobante o referencia. Puede ser null.
-- "category": clasifica en: "materials" (materiales/ferretería), "labor" (mano de obra), "equipment" (equipos/herramientas), "subcontract" (subcontratista), "other".
+REGLAS DE EXTRACCIÓN:
+1. "amount": Total numérico sin símbolos ni comas de miles (ej: si dice Bs. 83.000,00 -> 83000, si dice $150.50 -> 150.5).
+2. "currency": Si el comprobante o texto menciona Bs, Bolívares o bancos venezolanos (Banco de Venezuela, Banesco, Mercantil, Pago Móvil, etc.) -> "VES". Si menciona $ o USD o dólares -> "USD".
+3. "description": Concepto o detalle de lo comprado o transferido. Si el usuario escribió un pie de foto o texto complementario, INCLÚYELO o combínalo con el concepto del comprobante.
+4. "provider": Nombre del beneficiario, comercio, ferretería o persona receptora del pago (ej: "Nancy Bello", "Ferretería EPA", "0412-9710374").
+5. "payment_reference": Número de referencia, factura, comprobante o transferencia (ej: "62303160373", "T62305591875").
+6. "category": Clasifica en: "materials" (materiales/ferretería), "labor" (mano de obra/sueldos/obreros), "equipment" (alquiler de maquinarias/herramientas), "subcontract" (subcontratistas), "services" (recargas/servicios), "other".
 
 Responde ÚNICAMENTE con este JSON (sin markdown, sin texto extra):
 {
@@ -983,18 +1041,13 @@ Responde ÚNICAMENTE con este JSON (sin markdown, sin texto extra):
   "description": "<string o null>",
   "provider": "<string o null>",
   "payment_reference": "<string o null>",
-  "category": "<materials|labor|equipment|subcontract|other>"
+  "category": "<materials|labor|equipment|subcontract|services|other>"
 }
 
-${text ? `Texto del mensaje: "${text}"` : 'Sin texto (analizar solo multimedia)'}`;
+${text ? `Texto / Pie de foto del usuario: "${text}"` : 'Sin texto complementario (analizar imagen o audio adjunto)'}`;
 
-  const fallbackModels = imageBase64 || audioBase64
-    ? ['gemini-2.5-flash', 'gemini-3.6-flash']
-    : ['gemini-2.5-flash', 'gemini-3.6-flash'];
-
-  for (const modelName of fallbackModels) {
-    try {
-      const model = genAI.getGenerativeModel({ model: modelName, generationConfig: { temperature: 0 } });
+  try {
+    return await callGeminiResilient(async (model) => {
       const parts: any[] = [{ text: extractPrompt }];
       if (imageBase64) parts.push({ inlineData: { mimeType: 'image/jpeg', data: imageBase64 } });
       if (audioBase64) parts.push({ inlineData: { mimeType: audioMimeType || 'audio/ogg', data: audioBase64 } });
@@ -1004,18 +1057,35 @@ ${text ? `Texto del mensaje: "${text}"` : 'Sin texto (analizar solo multimedia)'
       const jsonMatch = rawText.match(/```(?:json)?\s*([\s\S]*?)```/) || rawText.match(/(\{[\s\S]*\})/);
       const parsed = JSON.parse((jsonMatch ? jsonMatch[1] : rawText).trim());
 
+      let cleanAmount: number | null = null;
+      if (parsed.amount !== null && parsed.amount !== undefined) {
+        if (typeof parsed.amount === 'number') {
+          cleanAmount = parsed.amount;
+        } else if (typeof parsed.amount === 'string') {
+          // Limpiar formato latino (83.000,00 -> 83000.00)
+          let s = parsed.amount.replace(/[^\d.,]/g, '').trim();
+          if (s.includes('.') && s.includes(',')) {
+            s = s.replace(/\./g, '').replace(',', '.');
+          } else if (s.includes(',') && !s.includes('.')) {
+            s = s.replace(',', '.');
+          }
+          const n = parseFloat(s);
+          if (!isNaN(n)) cleanAmount = n;
+        }
+      }
+
       return {
-        amount: parsed.amount ? Number(parsed.amount) : null,
+        amount: cleanAmount,
         currency: parsed.currency || 'USD',
-        description: parsed.description || null,
+        description: parsed.description || (text ? text : null),
         provider: parsed.provider || null,
         payment_reference: parsed.payment_reference || null,
         category: parsed.category || 'materials'
       };
-    } catch (e: any) {
-      console.warn(`extractExpenseEntities - Error en ${modelName}:`, e.message);
-    }
+    });
+  } catch (err: any) {
+    console.error('Error en extractExpenseEntities con callGeminiResilient:', err);
+    return defaultResult;
   }
-
-  return defaultResult;
 }
+

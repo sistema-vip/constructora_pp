@@ -146,6 +146,7 @@ export default function ProjectDashboard() {
   // Estado para pagos a compromisos
   const [showCommitmentPayModal, setShowCommitmentPayModal] = useState(false);
   const [commitmentToPay, setCommitmentToPay] = useState<any>(null);
+  const [commitmentPayMode, setCommitmentPayMode] = useState<'abono' | 'total'>('abono');
   const [commitmentPayForm, setCommitmentPayForm] = useState({
     amount_usd: '', description: '', reference: '', date: new Date().toISOString().split('T')[0]
   });
@@ -627,9 +628,19 @@ export default function ProjectDashboard() {
       if (payError) throw new Error(`Error al registrar abono en la cuenta por pagar: ${payError.message}`);
 
       // 2. Insert into project_costs
+      const previouslyPaid = commitmentToPay.payable_accounts?.[0]?.payable_payments?.reduce((s: any, p: any) => s + Number(p.amount_usd), 0) || 0;
+      const totalAmount = Number(commitmentToPay.amount_usd || (commitmentToPay.quantity * commitmentToPay.unit_price_usd));
+      const remainingBalance = totalAmount - previouslyPaid - monto;
+      const isFullPay = remainingBalance <= 0.01;
+
+      const descPrefix = isFullPay && previouslyPaid === 0 ? 'Pago compromiso' : isFullPay ? 'Liquidación compromiso' : 'Abono compromiso';
+      const costDescription = commitmentPayForm.description
+        ? `${descPrefix}: ${commitmentToPay.provider || 'Proveedor'} - ${commitmentPayForm.description}`
+        : `${descPrefix}: ${commitmentToPay.provider || 'Proveedor'} - ${commitmentToPay.description}`;
+
       const { error: costError } = await supabase.from('project_costs').insert([{
         project_id: projectId,
-        description: `Abono: ${commitmentToPay.provider || 'Proveedor'} - ${commitmentPayForm.description}`,
+        description: costDescription,
         provider: commitmentToPay.provider || 'N/A',
         category: commitmentToPay.category, // using original category
         quantity: 1,
@@ -640,10 +651,6 @@ export default function ProjectDashboard() {
       if (costError) throw new Error(`Error al registrar como gasto: ${costError.message}`);
 
       // 3. Update status if fully paid
-      const previouslyPaid = commitmentToPay.payable_accounts?.[0]?.payable_payments?.reduce((s: any, p: any) => s + Number(p.amount_usd), 0) || 0;
-      const totalAmount = Number(commitmentToPay.amount_usd || (commitmentToPay.quantity * commitmentToPay.unit_price_usd));
-      const remainingBalance = totalAmount - previouslyPaid - monto;
-
       // Usamos una tolerancia de 0.01 por problemas de precision en decimales
       if (remainingBalance <= 0.01) {
         // Update payable account to 'paid' status
@@ -1193,18 +1200,39 @@ export default function ProjectDashboard() {
                               <Printer size={14} />
                             </button>
                             {!isViewer && balance > 0 && (
-                              <button 
-                                className="btn-primary" 
-                                style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem' }} 
-                                onClick={() => {
-                                  setCommitmentToPay(c);
-                                  setCommitmentPayForm({ amount_usd: '', description: '', reference: '', date: new Date().toISOString().split('T')[0] });
-                                  setShowCommitmentPayModal(true);
-                                }} 
-                                title="Abonar al compromiso"
-                              >
-                                Abonar
-                              </button>
+                              <>
+                                <button 
+                                  className="btn-secondary" 
+                                  style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--primary-color)', borderColor: 'rgba(59,130,246,0.3)' }} 
+                                  onClick={() => {
+                                    setCommitmentToPay(c);
+                                    setCommitmentPayMode('abono');
+                                    setCommitmentPayForm({ amount_usd: '', description: '', reference: '', date: new Date().toISOString().split('T')[0] });
+                                    setShowCommitmentPayModal(true);
+                                  }} 
+                                  title="Abonar monto parcial al compromiso"
+                                >
+                                  <DollarSign size={13} style={{ marginRight: '2px', display: 'inline' }} /> Abonar
+                                </button>
+                                <button 
+                                  className="btn-primary" 
+                                  style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', background: 'var(--success)', borderColor: 'var(--success)' }} 
+                                  onClick={() => {
+                                    setCommitmentToPay(c);
+                                    setCommitmentPayMode('total');
+                                    setCommitmentPayForm({
+                                      amount_usd: formatCurrency(balance),
+                                      description: `Pago total: ${c.description}`,
+                                      reference: '',
+                                      date: new Date().toISOString().split('T')[0]
+                                    });
+                                    setShowCommitmentPayModal(true);
+                                  }} 
+                                  title="Pagar saldo total del compromiso"
+                                >
+                                  <CheckCircle size={13} style={{ marginRight: '2px', display: 'inline' }} /> Pagar
+                                </button>
+                              </>
                             )}
                             {!isViewer && (<button className="btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--primary-color)', borderColor: 'rgba(59,130,246,0.2)' }} onClick={() => initiateEditItem(c, 'commitment')} title="Editar compromiso"><Edit3 size={14} /></button>)}
                             {!isViewer && (<button className="btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--danger)', borderColor: 'rgba(239,68,68,0.2)' }} onClick={() => initiateDelete(c.id, 'commitment')}><Trash2 size={14} /></button>)}
@@ -1377,66 +1405,106 @@ export default function ProjectDashboard() {
 
         {/* Modales de Formulario */}
         
-        {/* Modal de Abono a Compromiso */}
-        {showCommitmentPayModal && commitmentToPay && (
-          <div className="modal-overlay">
-            <div className="card modal-content animate-fade" style={{ maxWidth: '500px', width: '90%' }}>
-              <h2 style={{ fontSize: '1.5rem', fontWeight: 800, marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <CheckCircle size={24} color="var(--success)" /> Registrar Abono a Compromiso
-              </h2>
-              
-              <div style={{ background: 'rgba(0,0,0,0.2)', padding: '1rem', borderRadius: '8px', marginBottom: '1.5rem' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
-                  <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Proveedor:</span>
-                  <span style={{ fontWeight: 'bold' }}>{commitmentToPay.provider || 'N/A'}</span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
-                  <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Total Compromiso:</span>
-                  <span style={{ fontWeight: 'bold' }}>${Number(commitmentToPay.amount_usd || (commitmentToPay.quantity * commitmentToPay.unit_price_usd)).toLocaleString('es-VE', { minimumFractionDigits: 2 })}</span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Saldo Pendiente:</span>
-                  <span style={{ fontWeight: 'bold', color: 'var(--danger)' }}>
-                    ${(Number(commitmentToPay.amount_usd || (commitmentToPay.quantity * commitmentToPay.unit_price_usd)) - (commitmentToPay.payable_accounts?.[0]?.payable_payments?.reduce((s: any, p: any) => s + Number(p.amount_usd), 0) || 0)).toLocaleString('es-VE', { minimumFractionDigits: 2 })}
-                  </span>
-                </div>
-              </div>
+        {/* Modal de Abono o Pago a Compromiso */}
+        {showCommitmentPayModal && commitmentToPay && (() => {
+          const previouslyPaid = commitmentToPay.payable_accounts?.[0]?.payable_payments?.reduce((s: any, p: any) => s + Number(p.amount_usd), 0) || 0;
+          const totalCommitmentAmount = Number(commitmentToPay.amount_usd || (commitmentToPay.quantity * commitmentToPay.unit_price_usd));
+          const currentBalance = Math.max(0, totalCommitmentAmount - previouslyPaid);
 
-              <form onSubmit={handleCommitmentPayment}>
-                <div style={{ display: 'grid', gap: '1rem' }}>
-                  <div className="form-group">
-                    <label>Monto a Abonar (USD)</label>
-                    <input
-                      type="text"
-                      required
-                      className="input-field"
-                      value={commitmentPayForm.amount_usd}
-                      onChange={e => setCommitmentPayForm({...commitmentPayForm, amount_usd: handleMoneyInput(e.target.value)})}
-                      onBlur={e => setCommitmentPayForm({...commitmentPayForm, amount_usd: formatOnBlur(e.target.value)})}
-                      placeholder="Ej. 1500.00"
-                    />
+          return (
+            <div className="modal-overlay">
+              <div className="card modal-content animate-fade" style={{ maxWidth: '500px', width: '90%' }}>
+                <h2 style={{ fontSize: '1.4rem', fontWeight: 800, marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'white' }}>
+                  <CheckCircle size={22} color="var(--success)" />
+                  {commitmentPayMode === 'total' ? 'Pagar Compromiso Total' : 'Abonar a Compromiso'}
+                </h2>
+                
+                <div style={{ background: 'rgba(0,0,0,0.2)', padding: '1rem', borderRadius: '8px', marginBottom: '1.5rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem' }}>
+                    <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Proveedor:</span>
+                    <span style={{ fontWeight: 'bold' }}>{commitmentToPay.provider || 'N/A'}</span>
                   </div>
-                  <div className="form-group">
-                    <label>Concepto / Descripción</label>
-                    <input type="text" required className="input-field" value={commitmentPayForm.description} onChange={e => setCommitmentPayForm({...commitmentPayForm, description: e.target.value})} placeholder="Ej. Pago primera parte" />
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem' }}>
+                    <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Total Compromiso:</span>
+                    <span style={{ fontWeight: 'bold' }}>${formatCurrency(totalCommitmentAmount)}</span>
                   </div>
-                  <div className="form-group">
-                    <label>Referencia / Recibo (Opcional)</label>
-                    <input type="text" className="input-field" value={commitmentPayForm.reference} onChange={e => setCommitmentPayForm({...commitmentPayForm, reference: e.target.value})} placeholder="Ej. Zelle 1234, Recibo 42" />
-                  </div>
-                  <div className="form-group">
-                    <label>Fecha de Abono</label>
-                    <input type="date" required className="input-field" value={commitmentPayForm.date} onChange={e => setCommitmentPayForm({...commitmentPayForm, date: e.target.value})} />
+                  {previouslyPaid > 0 && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem' }}>
+                      <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Abonado Previamente:</span>
+                      <span style={{ fontWeight: 'bold', color: 'var(--success)' }}>${formatCurrency(previouslyPaid)}</span>
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Saldo Pendiente:</span>
+                    <span style={{ fontWeight: 'bold', color: 'var(--danger)' }}>
+                      ${formatCurrency(currentBalance)}
+                    </span>
                   </div>
                 </div>
-                <div style={{ display: 'flex', gap: '1rem', marginTop: '2rem', justifyContent: 'flex-end' }}>
-                  <button type="button" className="btn-secondary" onClick={() => setShowCommitmentPayModal(false)}>Cancelar</button>
-                  <button type="submit" className="btn-primary">Confirmar Abono</button>
-                </div>
-              </form>
+
+                <form onSubmit={handleCommitmentPayment}>
+                  <div style={{ display: 'grid', gap: '1rem' }}>
+                    <div className="form-group">
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
+                        <label style={{ margin: 0 }}>Monto (USD)</label>
+                        {commitmentPayMode === 'abono' && (
+                          <button
+                            type="button"
+                            style={{ background: 'none', border: 'none', color: 'var(--primary-color)', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600, padding: 0 }}
+                            onClick={() => {
+                              setCommitmentPayMode('total');
+                              setCommitmentPayForm({
+                                ...commitmentPayForm,
+                                amount_usd: formatCurrency(currentBalance),
+                                description: commitmentPayForm.description || `Pago total: ${commitmentToPay.description}`
+                              });
+                            }}
+                          >
+                            ⚡ Pagar saldo completo (${formatCurrency(currentBalance)})
+                          </button>
+                        )}
+                      </div>
+                      <input
+                        type="text"
+                        required
+                        className="input-field"
+                        value={commitmentPayForm.amount_usd}
+                        onChange={e => setCommitmentPayForm({...commitmentPayForm, amount_usd: handleMoneyInput(e.target.value)})}
+                        onBlur={e => setCommitmentPayForm({...commitmentPayForm, amount_usd: formatOnBlur(e.target.value)})}
+                        placeholder="Ej. 1500.00"
+                      />
+                    </div>
+                    <div className="form-group">
+                      <label>Concepto / Descripción</label>
+                      <input
+                        type="text"
+                        required
+                        className="input-field"
+                        value={commitmentPayForm.description}
+                        onChange={e => setCommitmentPayForm({...commitmentPayForm, description: e.target.value})}
+                        placeholder={commitmentPayMode === 'total' ? `Pago total: ${commitmentToPay.description}` : 'Ej. Pago primera parte'}
+                      />
+                    </div>
+                    <div className="form-group">
+                      <label>Referencia / Recibo (Opcional)</label>
+                      <input type="text" className="input-field" value={commitmentPayForm.reference} onChange={e => setCommitmentPayForm({...commitmentPayForm, reference: e.target.value})} placeholder="Ej. Zelle 1234, Recibo 42" />
+                    </div>
+                    <div className="form-group">
+                      <label>Fecha de Pago</label>
+                      <input type="date" required className="input-field" value={commitmentPayForm.date} onChange={e => setCommitmentPayForm({...commitmentPayForm, date: e.target.value})} />
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: '1rem', marginTop: '1.5rem', justifyContent: 'flex-end' }}>
+                    <button type="button" className="btn-secondary" onClick={() => setShowCommitmentPayModal(false)}>Cancelar</button>
+                    <button type="submit" className="btn-primary">
+                      {commitmentPayMode === 'total' ? 'Confirmar Pago Total' : 'Confirmar Abono'}
+                    </button>
+                  </div>
+                </form>
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
       {showPaymentModal && (
         <div className="modal-overlay">
@@ -1939,34 +2007,48 @@ export default function ProjectDashboard() {
 
         {/* Detalle de Compromisos */}
         <h3 style={{ fontSize: '16px', borderBottom: '1px solid #ccc', paddingBottom: '0.5rem', marginBottom: '1rem' }}>3. COMPROMISOS (GASTOS POR EJECUTAR)</h3>
-        {commitments.length === 0 ? (
-          <p style={{ fontSize: '12px', color: '#555', marginBottom: '1.5rem' }}>No hay compromisos registrados.</p>
-        ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '1.5rem', fontSize: '12px' }}>
-            <thead>
-              <tr style={{ background: '#f1f1f1' }}>
-                <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'left' }}>FECHA</th>
-                <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'left' }}>PROVEEDOR</th>
-                <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'left' }}>CONCEPTO</th>
-                <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>TOTAL PENDIENTE (USD)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {commitments.map(c => (
-                <tr key={c.id}>
-                  <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{c.date}</td>
-                  <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{c.provider || 'N/A'}</td>
-                  <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{c.description}</td>
-                  <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>${formatCurrency(c.amount_usd || (c.quantity * c.unit_price_usd))}</td>
+        {(() => {
+          const pendingCommitments = commitments.map(c => {
+            const paid = c.payable_accounts?.[0]?.payable_payments?.reduce((s: any, p: any) => s + Number(p.amount_usd), 0) || 0;
+            const total = Number(c.amount_usd || (c.quantity * c.unit_price_usd) || 0);
+            const balance = Math.max(0, total - paid);
+            return { ...c, total_amount: total, paid_amount: paid, balance };
+          }).filter(c => c.balance > 0.01);
+          const printCommitmentsTotal = pendingCommitments.reduce((sum, c) => sum + c.balance, 0);
+
+          return pendingCommitments.length === 0 ? (
+            <p style={{ fontSize: '12px', color: '#555', marginBottom: '1.5rem' }}>No hay compromisos pendientes por ejecutar.</p>
+          ) : (
+            <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '1.5rem', fontSize: '12px' }}>
+              <thead>
+                <tr style={{ background: '#f1f1f1' }}>
+                  <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'left' }}>FECHA</th>
+                  <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'left' }}>PROVEEDOR</th>
+                  <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'left' }}>CONCEPTO</th>
+                  <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>TOTAL PACTADO</th>
+                  <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>ABONADO</th>
+                  <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>SALDO PENDIENTE (USD)</th>
                 </tr>
-              ))}
-              <tr style={{ background: '#f8f9fa', fontWeight: 'bold' }}>
-                <td colSpan={3} style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>Total Compromisos:</td>
-                <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right', color: '#d32f2f' }}>${formatCurrency(totalCommitments)}</td>
-              </tr>
-            </tbody>
-          </table>
-        )}
+              </thead>
+              <tbody>
+                {pendingCommitments.map(c => (
+                  <tr key={c.id}>
+                    <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{c.date}</td>
+                    <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{c.provider || 'N/A'}</td>
+                    <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{c.description}</td>
+                    <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>${formatCurrency(c.total_amount)}</td>
+                    <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right', color: '#28a745' }}>${formatCurrency(c.paid_amount)}</td>
+                    <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right', fontWeight: 'bold', color: '#d32f2f' }}>${formatCurrency(c.balance)}</td>
+                  </tr>
+                ))}
+                <tr style={{ background: '#f8f9fa', fontWeight: 'bold' }}>
+                  <td colSpan={5} style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>Total Compromisos Pendientes:</td>
+                  <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right', color: '#d32f2f' }}>${formatCurrency(printCommitmentsTotal)}</td>
+                </tr>
+              </tbody>
+            </table>
+          );
+        })()}
 
         {/* Detalle de Retiros */}
         <h3 style={{ fontSize: '16px', borderBottom: '1px solid #ccc', paddingBottom: '0.5rem', marginBottom: '1rem' }}>4. RETIRO DE SOCIOS</h3>

@@ -915,17 +915,30 @@ INVERSIÓN TOTAL: $[Monto estimado en USD]
 Condiciones de Pago: 60% anticipo / 40% al finalizar.
 `;
 
-  const fallbackModels = ['gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-3.5-flash-lite', 'gemini-flash-latest'];
+  const fallbackModels = [
+    'gemini-3.6-flash',
+    'gemini-3.5-flash',
+    'gemini-3.5-flash-lite',
+    'gemini-3.7-flash',
+    'gemini-flash-lite-latest'
+  ];
   let lastErr: any;
 
   for (const modelName of fallbackModels) {
-    try {
-      const model = genAI.getGenerativeModel({ model: modelName });
-      const res = await model.generateContent(prompt);
-      return res.response.text();
-    } catch (err: any) {
-      lastErr = err;
-      continue;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const model = genAI.getGenerativeModel({ model: modelName });
+        const res = await model.generateContent(prompt);
+        return res.response.text();
+      } catch (err: any) {
+        lastErr = err;
+        const msg = err?.message || String(err);
+        if ((msg.includes('503') || msg.includes('429')) && attempt === 0) {
+          await new Promise((r) => setTimeout(r, 500));
+          continue;
+        }
+        break;
+      }
     }
   }
 

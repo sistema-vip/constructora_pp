@@ -90,25 +90,40 @@ Responde ÚNICAMENTE con este JSON:
 }
 `;
 
-  const fallbackModels = ['gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-3.5-flash-lite', 'gemini-flash-latest'];
+  const fallbackModels = [
+    'gemini-3.6-flash',
+    'gemini-3.5-flash',
+    'gemini-3.5-flash-lite',
+    'gemini-3.7-flash',
+    'gemini-flash-lite-latest'
+  ];
   let parsed: any = null;
 
   for (const modelName of fallbackModels) {
-    try {
-      const model = genAI.getGenerativeModel({
-        model: modelName,
-        generationConfig: { temperature: 0.1 }
-      });
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const model = genAI.getGenerativeModel({
+          model: modelName,
+          generationConfig: { temperature: 0.1 }
+        });
 
-      const result = await model.generateContent(prompt);
-      const rawText = result.response.text();
-      const jsonMatch = rawText.match(/```(?:json)?\s*([\s\S]*?)```/) || rawText.match(/(\{[\s\S]*\})/);
-      const jsonStr = jsonMatch ? jsonMatch[1] : rawText;
-      parsed = JSON.parse(jsonStr.trim());
-      break;
-    } catch (e: any) {
-      console.warn(`Error en modelo ${modelName} para teachSkill:`, e.message);
+        const result = await model.generateContent(prompt);
+        const rawText = result.response.text();
+        const jsonMatch = rawText.match(/```(?:json)?\s*([\s\S]*?)```/) || rawText.match(/(\{[\s\S]*\})/);
+        const jsonStr = jsonMatch ? jsonMatch[1] : rawText;
+        parsed = JSON.parse(jsonStr.trim());
+        break;
+      } catch (e: any) {
+        const msg = e?.message || String(e);
+        console.warn(`Error en modelo ${modelName} para teachSkill (intento ${attempt + 1}):`, msg);
+        if ((msg.includes('503') || msg.includes('429')) && attempt === 0) {
+          await new Promise((r) => setTimeout(r, 500));
+          continue;
+        }
+        break;
+      }
     }
+    if (parsed) break;
   }
 
   if (!parsed) {
@@ -190,24 +205,39 @@ Si es solo una negación casual sin regla duradera (ej. "no gracias", "no entien
 { "is_learnable": false }
 `;
 
-  const fallbackModels = ['gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-3.5-flash-lite', 'gemini-flash-latest'];
+  const fallbackModels = [
+    'gemini-3.6-flash',
+    'gemini-3.5-flash',
+    'gemini-3.5-flash-lite',
+    'gemini-3.7-flash',
+    'gemini-flash-lite-latest'
+  ];
   let parsed: any = null;
 
   for (const modelName of fallbackModels) {
-    try {
-      const model = genAI.getGenerativeModel({
-        model: modelName,
-        generationConfig: { temperature: 0.1 }
-      });
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const model = genAI.getGenerativeModel({
+          model: modelName,
+          generationConfig: { temperature: 0.1 }
+        });
 
-      const res = await model.generateContent(prompt);
-      const rawText = res.response.text();
-      const jsonMatch = rawText.match(/```(?:json)?\s*([\s\S]*?)```/) || rawText.match(/(\{[\s\S]*\})/);
-      parsed = JSON.parse((jsonMatch ? jsonMatch[1] : rawText).trim());
-      break;
-    } catch (e: any) {
-      console.warn(`Error en modelo ${modelName} para autoExtractLearning:`, e.message);
+        const res = await model.generateContent(prompt);
+        const rawText = res.response.text();
+        const jsonMatch = rawText.match(/```(?:json)?\s*([\s\S]*?)```/) || rawText.match(/(\{[\s\S]*\})/);
+        parsed = JSON.parse((jsonMatch ? jsonMatch[1] : rawText).trim());
+        break;
+      } catch (e: any) {
+        const msg = e?.message || String(e);
+        console.warn(`Error en modelo ${modelName} para autoExtractLearning (intento ${attempt + 1}):`, msg);
+        if ((msg.includes('503') || msg.includes('429')) && attempt === 0) {
+          await new Promise((r) => setTimeout(r, 500));
+          continue;
+        }
+        break;
+      }
     }
+    if (parsed) break;
   }
 
   try {

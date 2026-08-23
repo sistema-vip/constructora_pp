@@ -81,11 +81,15 @@ TAMBIÉN incluye al inicio un bloque JSON (antes del texto de la propuesta):
 
 const FALLBACK_MODELS = [
   'gemini-3.6-flash',
-  'gemini-2.5-flash',
+  'gemini-3.5-flash',
   'gemini-3.5-flash-lite',
-  'gemini-2.5-flash-lite',
-  'gemini-flash-latest'
+  'gemini-3.7-flash',
+  'gemini-flash-lite-latest'
 ];
+
+async function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 async function callGeminiWithFallback<T>(
   apiKey: string,
@@ -95,14 +99,28 @@ async function callGeminiWithFallback<T>(
   let lastError: any;
 
   for (const modelName of FALLBACK_MODELS) {
-    try {
-      const model = genAI.getGenerativeModel({ model: modelName });
-      return await fn(model, modelName);
-    } catch (error: any) {
-      lastError = error;
-      console.warn(`[Gemini Fallback] Error en modelo ${modelName}:`, error?.message || error);
-      // Continuar al siguiente modelo en cualquier error (503, 429, 500, etc.)
-      continue;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const model = genAI.getGenerativeModel({ model: modelName });
+        return await fn(model, modelName);
+      } catch (error: any) {
+        lastError = error;
+        const msg = error?.message || String(error);
+        const isTransient =
+          msg.includes('503') ||
+          msg.includes('429') ||
+          msg.includes('UNAVAILABLE') ||
+          msg.includes('high demand') ||
+          msg.includes('RESOURCE_EXHAUSTED');
+
+        console.warn(`[Gemini Fallback] Error en modelo ${modelName} (intento ${attempt + 1}):`, msg);
+
+        if (isTransient && attempt === 0) {
+          await sleep(500);
+          continue;
+        }
+        break;
+      }
     }
   }
 

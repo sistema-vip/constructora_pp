@@ -202,28 +202,31 @@ async function executeExpense(
 
   // Si es VES y no hay tasa, guardar pendiente para tasa de cambio
   if (isVes && isAdmin) {
-    // Guardar en pending_entries para que el admin aplique tasa después
-    await supabaseAdmin.from('telegram_pending_entries').insert({
-      description: session.description || 'Gasto en Bs',
-      amount_usd: 0,
-      entry_type: 'cost',
-      project_id: project.id,
-      category: session.category || 'materials',
-      provider: session.provider || null,
-      payment_reference: session.payment_reference || null,
-      status: 'pending',
-      telegram_chat_id: chatId,
-      telegram_user_name: telegramUserName,
-      raw_message: `Gasto de ${formattedAmount}`,
-      ai_parsed_data: {
-        original_amount: amount,
-        original_currency: 'VES',
-        description: session.description,
-        provider: session.provider,
-        payment_reference: session.payment_reference,
-        category: session.category
-      }
-    }).then(() => {}).catch(() => {}); // No bloquear si falla
+    try {
+      await supabaseAdmin.from('telegram_pending_entries').insert({
+        description: session.description || 'Gasto en Bs',
+        amount_usd: 0,
+        entry_type: 'cost',
+        project_id: project.id,
+        category: session.category || 'materials',
+        provider: session.provider || null,
+        payment_reference: session.payment_reference || null,
+        status: 'pending',
+        telegram_chat_id: chatId,
+        telegram_user_name: telegramUserName,
+        raw_message: `Gasto de ${formattedAmount}`,
+        ai_parsed_data: {
+          original_amount: amount,
+          original_currency: 'VES',
+          description: session.description,
+          provider: session.provider,
+          payment_reference: session.payment_reference,
+          category: session.category
+        }
+      });
+    } catch (e) {
+      console.error('Error insertando telegram_pending_entries:', e);
+    }
 
     return `✅ *Gasto Asentado en Obra*\n🏗️ *Obra:* ${project.title} (${project.clientName})\n📝 *Concepto:* ${session.description}\n💰 *Monto:* ${formattedAmount}\n🏷️ *Categoría:* ${session.category || 'Materiales'}${session.provider ? '\n🏪 *Proveedor:* ' + session.provider : ''}\n\n⚠️ *Gasto en Bolívares:* Para convertir a USD, responde con la tasa de cambio (ej: _"tasa 92"_).`;
   }
@@ -446,7 +449,7 @@ export async function POST(req: NextRequest) {
 
       // Si manda foto en este estado, es una NUEVA factura → reiniciar flujo
       if (imageBase64) {
-        const entities = await extractExpenseEntities('', imageBase64, undefined, undefined);
+        const entities = await extractExpenseEntities(messageText, imageBase64, audioBase64, audioMimeType);
         if (entities.amount && entities.description) {
           await updateSession(chatId, {
             state: 'awaiting_project',
@@ -461,10 +464,10 @@ export async function POST(req: NextRequest) {
           const formatted = entities.currency === 'VES'
             ? `Bs. ${Number(entities.amount).toLocaleString('es-VE')}`
             : `$${Number(entities.amount).toFixed(2)} USD`;
-          replyText = `🔄 *Nueva factura recibida:*\n📝 *Concepto:* ${entities.description}\n💰 *Monto:* ${formatted}${entities.provider ? '\n🏪 *Proveedor:* ' + entities.provider : ''}\n\n👤 *¿A qué cliente u obra corresponde?*`;
+          replyText = `🔄 *Nuevo comprobante recibido:*\n📝 *Concepto:* ${entities.description}\n💰 *Monto:* ${formatted}${entities.provider ? '\n🏪 *Proveedor/Beneficiario:* ' + entities.provider : ''}\n\n👤 *¿A qué cliente u obra corresponde?*`;
           actionTaken = 'awaiting_project';
         } else {
-          replyText = `❌ No pude leer los datos de la imagen. ¿A qué proyecto asigno el gasto anterior?`;
+          replyText = `❌ No pude leer con claridad los datos del comprobante. ¿A qué proyecto asigno el gasto anterior o deseas enviarlo de nuevo?`;
           actionTaken = 'awaiting_project';
         }
       } else {
@@ -536,7 +539,7 @@ export async function POST(req: NextRequest) {
 
   } catch (error: any) {
     console.error('Error en Telegram Webhook:', error);
-    return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+    return NextResponse.json({ ok: true, error: error.message });
   }
 }
 
