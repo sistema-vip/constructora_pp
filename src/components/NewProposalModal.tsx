@@ -18,8 +18,31 @@ const TEMPLATE_TODO_COSTO = 'La presente propuesta técnica y económica ha sido
 const TEMPLATE_MANO_OBRA = 'La presente propuesta técnica y económica ha sido estructurada bajo la modalidad de "Solo Mano de Obra". Bajo esta condición, P&P CONSTRUYE se encarga exclusivamente de la disposición de mano de obra altamente calificada y las herramientas necesarias para la ejecución del proyecto. El suministro integral de todos los materiales requeridos (tales como lajas, cemento, adhesivos, etc.), así como los costos de fletes de materiales, son responsabilidad directa del cliente.';
 const TEMPLATE_MATERIALES = 'La presente propuesta técnica y económica ha sido estructurada bajo la modalidad de "Solo Materiales" (Suministro de Materiales). Bajo esta condición, P&P CONSTRUYE se encarga exclusivamente de la procura, suministro y entrega en obra de la totalidad de los materiales especificados en la propuesta técnica. La contratación, supervisión y pago de la mano de obra para la ejecución, así como las herramientas y equipos necesarios para la instalación de los mismos, son responsabilidad directa y exclusiva del cliente.';
 
+function getTodayDateStr(): string {
+  const d = new Date();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+export function formatDisplayDate(dateStr?: string): string {
+  if (!dateStr) return new Date().toLocaleDateString('es-VE');
+  const parts = dateStr.split('-');
+  if (parts.length === 3) {
+    const year = parseInt(parts[0], 10);
+    const month = parseInt(parts[1], 10) - 1;
+    const day = parseInt(parts[2], 10);
+    const d = new Date(year, month, day);
+    if (!isNaN(d.getTime())) {
+      return d.toLocaleDateString('es-VE');
+    }
+  }
+  return dateStr;
+}
+
 const INIT_FORM = { 
-  title: '', clientId: '', clientName: '', area: '', objective: '', phases: '', 
+  title: '', clientId: '', clientName: '', date: getTodayDateStr(), area: '', objective: '', phases: '', 
   investmentModality: TEMPLATE_TODO_COSTO, 
   time: '', amount: '', payment: '60% anticipo / 40% al finalizar',
   currency: 'Divisas',
@@ -63,7 +86,9 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
     else if (selectedModality === 'materiales') modalityHeader = 'Presupuesto de Inversión (Materiales)';
     else if (selectedModality === 'personalizado') modalityHeader = 'Presupuesto de Inversión';
 
-    return `Proyecto: ${form.title}\nFecha: ${new Date().toLocaleDateString()}\nPara: ${form.clientName}\nÁrea de Ejecución: ${form.area}\n\nObjetivo del Proyecto\n${form.objective}\n\nFases del Trabajo (Alcance Técnico)\n${form.phases}${getCostBreakdownText()}\n\nTiempo de Ejecución y Entrega\n${form.time}\n\n${modalityHeader}\n${form.investmentModality}\n\nINVERSIÓN TOTAL: $${form.amount}\n\nCondiciones y Métodos de Pago\nEsquema de Pago: ${form.payment}\nMoneda de Pago: ${form.currency}\nFormas de Pago: ${form.paymentMethods}`;
+    const displayDate = formatDisplayDate(form.date);
+
+    return `Proyecto: ${form.title}\nFecha: ${displayDate}\nPara: ${form.clientName}\nÁrea de Ejecución: ${form.area}\n\nObjetivo del Proyecto\n${form.objective}\n\nFases del Trabajo (Alcance Técnico)\n${form.phases}${getCostBreakdownText()}\n\nTiempo de Ejecución y Entrega\n${form.time}\n\n${modalityHeader}\n${form.investmentModality}\n\nINVERSIÓN TOTAL: $${form.amount}\n\nCondiciones y Métodos de Pago\nEsquema de Pago: ${form.payment}\nMoneda de Pago: ${form.currency}\nFormas de Pago: ${form.paymentMethods}`;
   };
 
   /**
@@ -122,11 +147,19 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
 
   async function loadExistingProposal() {
     setMode('manual'); setStep('chat'); setShowPreviewModal(false); setError(''); setInput('');
+    
+    let initialDate = getTodayDateStr();
+    if (existingProposal.start_date) {
+      initialDate = existingProposal.start_date;
+    } else if (existingProposal.created_at) {
+      initialDate = new Date(existingProposal.created_at).toISOString().split('T')[0];
+    }
+
     setProposal({
        title: existingProposal.title,
        clientName: '',
        clientContact: '',
-       date: '',
+       date: formatDisplayDate(initialDate),
        area: '',
        investmentAmount: existingProposal.budget_usd?.toString() || '',
        executionTime: '',
@@ -140,15 +173,23 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
       setLoading(true);
       const res = await parseProposalTextToForm(existingProposal.description);
       if (res.success && res.form) {
-        setForm({ ...INIT_FORM, ...res.form, clientId: existingProposal.client_id || '', title: existingProposal.title || res.form.title, amount: existingProposal.budget_usd?.toString() || res.form.amount, workItems: res.form.workItems || [] });
+        setForm({ 
+          ...INIT_FORM, 
+          ...res.form, 
+          date: res.form.date || initialDate,
+          clientId: existingProposal.client_id || '', 
+          title: existingProposal.title || res.form.title, 
+          amount: existingProposal.budget_usd?.toString() || res.form.amount, 
+          workItems: res.form.workItems || [] 
+        });
         setSelectedModality(detectModalityType(res.form.investmentModality || ''));
       } else {
-        setForm({ ...INIT_FORM, title: existingProposal.title, clientId: existingProposal.client_id || '' });
+        setForm({ ...INIT_FORM, date: initialDate, title: existingProposal.title, clientId: existingProposal.client_id || '' });
         setSelectedModality('todo-costo');
       }
       setLoading(false);
     } else {
-      setForm({ ...INIT_FORM, title: existingProposal.title, clientId: existingProposal.client_id || '' });
+      setForm({ ...INIT_FORM, date: initialDate, title: existingProposal.title, clientId: existingProposal.client_id || '' });
       setSelectedModality('todo-costo');
     }
   }
@@ -167,7 +208,12 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
     setEditingProjectId(null);
     
     const initialClient = clients.find(c => c.id === initialClientId);
-    setForm({ ...INIT_FORM, clientId: initialClientId || '', clientName: initialClient?.name || '' });
+    setForm({ 
+      ...INIT_FORM, 
+      date: getTodayDateStr(),
+      clientId: initialClientId || '', 
+      clientName: initialClient?.name || '' 
+    });
   }
 
   const addWorkItem = () => {
@@ -242,6 +288,7 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
     try {
       const amountStr = String(proposal.investmentAmount ?? '');
       const amount = parseCurrency(amountStr);
+      const saveDateIso = form.date ? new Date(form.date + 'T12:00:00Z').toISOString() : new Date().toISOString();
 
       if (isEditing && editingProjectId) {
         const { error: err } = await supabase.from('projects').update({ 
@@ -249,6 +296,8 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
           title: proposal.title, 
           description: editableText, 
           budget_usd: amount,
+          start_date: form.date || null,
+          created_at: saveDateIso,
           status: 'proposal',
           archived_at: null
         }).eq('id', editingProjectId);
@@ -265,7 +314,16 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
           proposalNumber = (maxRow[0].proposal_number || 0) + 1;
         }
 
-        const { error: err } = await supabase.from('projects').insert([{ client_id: linkedClientId || null, title: proposal.title, description: editableText, status: 'proposal', budget_usd: amount, proposal_number: proposalNumber }]);
+        const { error: err } = await supabase.from('projects').insert([{ 
+          client_id: linkedClientId || null, 
+          title: proposal.title, 
+          description: editableText, 
+          status: 'proposal', 
+          budget_usd: amount, 
+          proposal_number: proposalNumber,
+          start_date: form.date || null,
+          created_at: saveDateIso
+        }]);
         if (err) throw new Error(err.message);
       }
       setStep('done'); onSaved?.();
@@ -281,12 +339,13 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
       else if (selectedModality === 'materiales') modalityHeader = 'Presupuesto de Inversión (Materiales)';
       else if (selectedModality === 'personalizado') modalityHeader = 'Presupuesto de Inversión';
 
-      const fullText = `Proyecto: ${form.title}\nFecha: ${new Date().toLocaleDateString()}\nPara: ${form.clientName}\nÁrea de Ejecución: ${form.area}\n\nObjetivo del Proyecto\n${form.objective}\n\nFases del Trabajo (Alcance Técnico)\n${form.phases}${getCostBreakdownText()}\n\nTiempo de Ejecución y Entrega\n${form.time}\n\n${modalityHeader}\n${form.investmentModality}\n\nINVERSIÓN TOTAL: $${form.amount}\n\nCondiciones y Métodos de Pago\nEsquema de Pago: ${form.payment}\nMoneda de Pago: ${form.currency}\nFormas de Pago: ${form.paymentMethods}`;
+      const displayDate = formatDisplayDate(form.date);
+      const fullText = `Proyecto: ${form.title}\nFecha: ${displayDate}\nPara: ${form.clientName}\nÁrea de Ejecución: ${form.area}\n\nObjetivo del Proyecto\n${form.objective}\n\nFases del Trabajo (Alcance Técnico)\n${form.phases}${getCostBreakdownText()}\n\nTiempo de Ejecución y Entrega\n${form.time}\n\n${modalityHeader}\n${form.investmentModality}\n\nINVERSIÓN TOTAL: $${form.amount}\n\nCondiciones y Métodos de Pago\nEsquema de Pago: ${form.payment}\nMoneda de Pago: ${form.currency}\nFormas de Pago: ${form.paymentMethods}`;
       setProposal({
         title: form.title,
         clientName: form.clientName,
         clientContact: '',
-        date: new Date().toLocaleDateString(),
+        date: displayDate,
         area: form.area,
         investmentAmount: form.amount,
         executionTime: form.time,
@@ -314,13 +373,18 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
       else if (selectedModality === 'materiales') modalityHeader = 'Presupuesto de Inversión (Materiales)';
       else if (selectedModality === 'personalizado') modalityHeader = 'Presupuesto de Inversión';
 
-      const fullText = `Proyecto: ${form.title}\nFecha: ${new Date().toLocaleDateString()}\nPara: ${form.clientName}\nÁrea de Ejecución: ${form.area}\n\nObjetivo del Proyecto\n${form.objective}\n\nFases del Trabajo (Alcance Técnico)\n${form.phases}${getCostBreakdownText()}\n\nTiempo de Ejecución y Entrega\n${form.time}\n\n${modalityHeader}\n${form.investmentModality}\n\nINVERSIÓN TOTAL: $${form.amount}\n\nCondiciones y Métodos de Pago\nEsquema de Pago: ${form.payment}\nMoneda de Pago: ${form.currency}\nFormas de Pago: ${form.paymentMethods}`;
+      const displayDate = formatDisplayDate(form.date);
+      const fullText = `Proyecto: ${form.title}\nFecha: ${displayDate}\nPara: ${form.clientName}\nÁrea de Ejecución: ${form.area}\n\nObjetivo del Proyecto\n${form.objective}\n\nFases del Trabajo (Alcance Técnico)\n${form.phases}${getCostBreakdownText()}\n\nTiempo de Ejecución y Entrega\n${form.time}\n\n${modalityHeader}\n${form.investmentModality}\n\nINVERSIÓN TOTAL: $${form.amount}\n\nCondiciones y Métodos de Pago\nEsquema de Pago: ${form.payment}\nMoneda de Pago: ${form.currency}\nFormas de Pago: ${form.paymentMethods}`;
+
+      const saveDateIso = form.date ? new Date(form.date + 'T12:00:00Z').toISOString() : new Date().toISOString();
 
       const { error: err } = await supabase.from('projects').update({ 
         client_id: form.clientId || null, 
         title: form.title, 
         description: fullText, 
         budget_usd: amount,
+        start_date: form.date || null,
+        created_at: saveDateIso,
         status: 'proposal',
         archived_at: null
       }).eq('id', editingProjectId);
@@ -479,7 +543,17 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
                     <label style={{ display: 'block', marginBottom: '.4rem', fontSize: '.85rem', color: 'var(--text-muted)' }}>Nombre en Propuesta</label>
                     <input className="input-field" style={{ transition: 'all 0.3s', boxShadow: highlightedFields.clientName ? '0 0 0 2px var(--primary-color)' : 'none' }} placeholder="Ej: Familia Martínez" value={form.clientName} onChange={e => setForm({ ...form, clientName: e.target.value })} />
                   </div>
-                  <div style={{ gridColumn: 'span 2' }}>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '.4rem', fontSize: '.85rem', color: 'var(--text-muted)' }}>Fecha de la Propuesta</label>
+                    <input 
+                      type="date" 
+                      className="input-field" 
+                      style={{ transition: 'all 0.3s', boxShadow: highlightedFields.date ? '0 0 0 2px var(--primary-color)' : 'none' }} 
+                      value={form.date} 
+                      onChange={e => setForm({ ...form, date: e.target.value })} 
+                    />
+                  </div>
+                  <div>
                     <label style={{ display: 'block', marginBottom: '.4rem', fontSize: '.85rem', color: 'var(--text-muted)' }}>Área de Ejecución</label>
                     <input className="input-field" style={{ transition: 'all 0.3s', boxShadow: highlightedFields.area ? '0 0 0 2px var(--primary-color)' : 'none' }} placeholder="Ej: 17 m²" value={form.area} onChange={e => setForm({ ...form, area: e.target.value })} />
                   </div>
@@ -770,7 +844,7 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
               <div id="printable-draft">
                 <ProposalPrintLayout 
                   proposalNumber={undefined} // it's a draft
-                  date={new Date().toLocaleDateString('es-VE')}
+                  date={formatDisplayDate(form.date)}
                   contentText={getPreviewText()}
                 />
               </div>

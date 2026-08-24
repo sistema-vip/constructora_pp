@@ -35,6 +35,7 @@ interface Project {
   description: string;
   status: string;
   budget_usd: number;
+  start_date?: string;
   created_at: string;
   proposal_number?: number;
   clients?: { name: string };
@@ -644,7 +645,7 @@ export default function ProyectosPage() {
             {/* Contenido (Visible al imprimir) */}
             <ProposalPrintLayout 
               proposalNumber={selectedProject.proposal_number}
-              date={new Date(selectedProject.created_at).toLocaleDateString()}
+              date={selectedProject.start_date ? new Date(selectedProject.start_date + 'T12:00:00Z').toLocaleDateString('es-VE') : (selectedProject.created_at ? new Date(selectedProject.created_at).toLocaleDateString('es-VE') : new Date().toLocaleDateString('es-VE'))}
               contentText={selectedProject.description}
             />
           </div>

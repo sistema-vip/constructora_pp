@@ -398,6 +398,7 @@ export async function chatAndUpdateForm(
     title: string;
     clientId: string;
     clientName: string;
+    date?: string;
     area: string;
     objective: string;
     phases: string;
@@ -426,6 +427,7 @@ El estado actual de los campos del formulario es el siguiente:
 - Título del proyecto (title): "${currentForm.title}"
 - ID del cliente registrado (clientId): "${currentForm.clientId}"
 - Nombre en propuesta (clientName): "${currentForm.clientName}"
+- Fecha de la propuesta (date): "${currentForm.date || ''}" (formato YYYY-MM-DD)
 - Área de Ejecución (area): "${currentForm.area}"
 - Objetivo del proyecto (objective): "${currentForm.objective}"
 - Fases del trabajo (phases): "${currentForm.phases}" — IMPORTANTE: Este campo es SOLO narrativo/descriptivo. Describe las fases de trabajo sin precios.
@@ -445,8 +447,8 @@ ${conversationHistory}
 
 Instrucciones:
 1. Analiza el último mensaje del usuario en el historial.
-2. Si el usuario proporciona información relevante sobre la obra (como qué se va a construir, el área o medidas, materiales, montos, tiempos, o cliente), actualiza o rellena el formulario correspondientemente.
-3. Si el usuario pide explícitamente modificar un campo o agregar un detalle (ej. "Ponle 1200 dólares", "Cambia el área a 50m2", "En las fases agrega pintar las vigas"), realiza esa modificación sobre el estado actual del formulario.
+2. Si el usuario proporciona información relevante sobre la obra (como qué se va a construir, la fecha, el área o medidas, materiales, montos, tiempos, o cliente), actualiza o rellena el formulario correspondientemente.
+3. Si el usuario pide explícitamente modificar un campo o agregar un detalle (ej. "Ponle 1200 dólares", "Ponle fecha de ayer", "Fecha 15 de agosto", "Cambia el área a 50m2", "En las fases agrega pintar las vigas"), realiza esa modificación sobre el estado actual del formulario. Para fechas, usa siempre formato YYYY-MM-DD.
 4. Intenta buscar coincidencias claras en la lista de clientes registrados. Si encuentras una, coloca su ID en 'clientId' y su nombre exacto en 'clientName'. Si no hay cliente registrado pero se menciona un nombre, colócalo en 'clientName' y deja 'clientId' vacío.
 5. Si el usuario te pide que "hagas el presupuesto", "calcules" o "estimes", genera descripciones técnicas profesionales y estimaciones realistas basadas en tu conocimiento de ingeniería para rellenar los campos (objetivo, fases, tiempo, etc.), manteniendo siempre la coherencia.
 6. En cuanto a la 'Modalidad del Presupuesto' (investmentModality): si el usuario menciona "mano de obra", actualiza este campo con una descripción formal para Solo Mano de Obra. Si menciona "materiales", usa una descripción formal para Solo Materiales. Por defecto, usa la descripción de "A Todo Costo".
@@ -459,6 +461,7 @@ Instrucciones:
     "title": "...",
     "clientId": "...",
     "clientName": "...",
+    "date": "YYYY-MM-DD",
     "area": "...",
     "objective": "...",
     "phases": "...",
@@ -525,6 +528,7 @@ Texto de la propuesta:
 Campos a extraer:
 - title: Título del proyecto (extrae del campo 'Proyecto:')
 - clientName: Nombre del cliente (extrae del campo 'Para:')
+- date: Fecha de la propuesta en formato YYYY-MM-DD (extrae del campo 'Fecha:' si está presente, convirtiéndolo a YYYY-MM-DD)
 - area: Área de ejecución (extrae del campo 'Área de Ejecución:')
 - objective: El texto completo de la sección 'Objetivo del Proyecto' (sin el título 'Objetivo del Proyecto')
 - phases: Las fases de trabajo en texto libre.
@@ -540,6 +544,7 @@ IMPORTANTE: Responde ÚNICAMENTE con un objeto JSON válido con las siguientes c
 {
   "title": "",
   "clientName": "",
+  "date": "",
   "area": "",
   "objective": "",
   "phases": "",
