@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { supabase } from '@/lib/supabase';
 import { extractServicesFromProposalWithPepe } from '@/app/actions/ai-actions';
 import { parseProposalTasks } from '@/lib/projectTaskHelper';
@@ -70,6 +71,11 @@ export default function ProjectTracking({
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
   
   // UI states
   const [expandedPhases, setExpandedPhases] = useState<Record<string, boolean>>({});
@@ -1070,161 +1076,164 @@ export default function ProjectTracking({
         </div>
       )}
 
-      {/* ── DOCUMENTO OFICIAL DIRECTO PARA IMPRESIÓN ── */}
-      <div id="printable-tracking-report-root" className="print-only show-only-on-print" style={{ color: '#0f172a', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
-        <div style={{ backgroundColor: '#ffffff', color: '#0f172a', width: '100%', padding: '0' }}>
-          {/* Membrete Oficial */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', borderBottom: '2.5px solid #0f172a', paddingBottom: '1rem', marginBottom: '1.4rem' }}>
-            <div>
-              <h1 style={{ margin: 0, fontSize: '22px', fontWeight: 900, color: '#000', letterSpacing: '-0.02em' }}>P&P CONSTRUYE</h1>
-              <p style={{ margin: '2px 0 0 0', fontSize: '11px', color: '#475569', fontWeight: 600 }}>Ingeniería, Arquitectura y Construcción</p>
-            </div>
-            <div style={{ textAlign: 'right' }}>
-              <h2 style={{ margin: 0, fontSize: '16px', fontWeight: 800, color: '#0f172a' }}>INFORME DE AVANCE DE OBRA</h2>
-              <p style={{ margin: '3px 0 0 0', fontSize: '11px', color: '#64748b' }}>
-                Fecha: <strong>{new Date(reportDate).toLocaleDateString('es-VE')}</strong>
-                {proposalNumber && ` | Obra Nº: #${proposalNumber}`}
-              </p>
-            </div>
-          </div>
-
-          {/* Ficha de Información de Obra */}
-          <div style={{ marginBottom: '1.4rem', padding: '0.8rem 1rem', background: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '11.5px', lineHeight: '1.5' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '0.6rem' }}>
+      {/* ── DOCUMENTO OFICIAL DIRECTO PARA IMPRESIÓN (PORTAL DIRECTO A BODY PARA IMPRESIÓN LIMPIA) ── */}
+      {mounted && typeof document !== 'undefined' && createPortal(
+        <div id="printable-tracking-report-root" className="show-only-on-print print-only" style={{ color: '#0f172a', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
+          <div style={{ backgroundColor: '#ffffff', color: '#0f172a', width: '100%', padding: '0' }}>
+            {/* Membrete Oficial */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', borderBottom: '2.5px solid #0f172a', paddingBottom: '1rem', marginBottom: '1.4rem' }}>
               <div>
-                <div><strong>PROYECTO:</strong> {projectTitle}</div>
-                <div><strong>CLIENTE:</strong> {clientName}</div>
-                {clientData?.company_name && <div><strong>EMPRESA:</strong> {clientData.company_name}</div>}
+                <h1 style={{ margin: 0, fontSize: '22px', fontWeight: 900, color: '#000', letterSpacing: '-0.02em' }}>P&P CONSTRUYE</h1>
+                <p style={{ margin: '2px 0 0 0', fontSize: '11px', color: '#475569', fontWeight: 600 }}>Ingeniería, Arquitectura y Construcción</p>
               </div>
-              <div>
-                {startDate && <div><strong>INICIO:</strong> {new Date(startDate).toLocaleDateString('es-VE')}</div>}
-                {area && <div><strong>ÁREA:</strong> {area}</div>}
-                {clientData?.address && <div><strong>UBICACIÓN:</strong> {clientData.address}</div>}
-              </div>
-            </div>
-          </div>
-
-          {/* Resumen de Estados */}
-          <div style={{ marginBottom: '1.4rem', padding: '0.9rem', background: '#f1f5f9', border: '1.5px solid #94a3b8', borderRadius: '6px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-              <span style={{ fontSize: '12px', fontWeight: 800, color: '#1e293b' }}>
-                AVANCE GENERAL DE LA OBRA:
-              </span>
-              <span style={{ fontSize: '16px', fontWeight: 900, color: stats.completedPct === 100 ? '#166534' : '#0369a1' }}>
-                {stats.completedPct}% CULMINADO
-              </span>
-            </div>
-
-            {/* Barra Tricolor en Papel */}
-            <div style={{ width: '100%', height: '10px', backgroundColor: '#e2e8f0', borderRadius: '999px', overflow: 'hidden', display: 'flex', marginBottom: '0.6rem', border: '1px solid #cbd5e1' }}>
-              <div style={{ width: `${stats.completedPct}%`, height: '100%', backgroundColor: '#16a34a' }} />
-              <div style={{ width: `${stats.inProgressPct}%`, height: '100%', backgroundColor: '#0284c7' }} />
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.5rem', textAlign: 'center', fontSize: '10.5px' }}>
-              <div style={{ background: '#fff', padding: '0.35rem', borderRadius: '4px', border: '1px solid #cbd5e1' }}>
-                <div style={{ color: '#64748b' }}>Total</div>
-                <div style={{ fontWeight: 800, fontSize: '13px' }}>{stats.total}</div>
-              </div>
-              <div style={{ background: '#f0fdf4', padding: '0.35rem', borderRadius: '4px', border: '1px solid #86efac' }}>
-                <div style={{ color: '#166534' }}>Culminadas</div>
-                <div style={{ fontWeight: 800, fontSize: '13px', color: '#166534' }}>{stats.completed} ({stats.completedPct}%)</div>
-              </div>
-              <div style={{ background: '#f0f9ff', padding: '0.35rem', borderRadius: '4px', border: '1px solid #7dd3fc' }}>
-                <div style={{ color: '#0369a1' }}>En Ejecución</div>
-                <div style={{ fontWeight: 800, fontSize: '13px', color: '#0369a1' }}>{stats.inProgress} ({stats.inProgressPct}%)</div>
-              </div>
-              <div style={{ background: '#fffbeb', padding: '0.35rem', borderRadius: '4px', border: '1px solid #fde68a' }}>
-                <div style={{ color: '#b45309' }}>Pendientes</div>
-                <div style={{ fontWeight: 800, fontSize: '13px', color: '#b45309' }}>{stats.pending} ({stats.pendingPct}%)</div>
+              <div style={{ textAlign: 'right' }}>
+                <h2 style={{ margin: 0, fontSize: '16px', fontWeight: 800, color: '#0f172a' }}>INFORME DE AVANCE DE OBRA</h2>
+                <p style={{ margin: '3px 0 0 0', fontSize: '11px', color: '#64748b' }}>
+                  Fecha: <strong>{new Date(reportDate).toLocaleDateString('es-VE')}</strong>
+                  {proposalNumber && ` | Obra Nº: #${proposalNumber}`}
+                </p>
               </div>
             </div>
-          </div>
 
-          {/* Desglose de Fases */}
-          <h3 style={{ fontSize: '12px', fontWeight: 800, borderBottom: '1.5px solid #0f172a', paddingBottom: '0.3rem', marginBottom: '0.8rem', textTransform: 'uppercase' }}>
-            DESGLOSE DE PARTIDAS Y ESTADO DE EJECUCIÓN
-          </h3>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.9rem', marginBottom: '1.5rem' }}>
-            {Object.entries(phasesData).map(([phaseName, phaseInfo]) => (
-              <div key={phaseName} style={{ border: '1px solid #cbd5e1', borderRadius: '6px', overflow: 'hidden' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f1f5f9', padding: '0.45rem 0.8rem', borderBottom: '1px solid #cbd5e1' }}>
-                  <span style={{ fontWeight: 800, fontSize: '11px', color: '#1e293b' }}>
-                    {phaseName}
-                  </span>
-                  <span style={{ fontSize: '10.5px', fontWeight: 700, color: phaseInfo.pct === 100 ? '#166534' : '#0369a1' }}>
-                    {phaseInfo.completed}/{phaseInfo.total} ({phaseInfo.pct}%)
-                  </span>
+            {/* Ficha de Información de Obra */}
+            <div style={{ marginBottom: '1.4rem', padding: '0.8rem 1rem', background: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '11.5px', lineHeight: '1.5' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '0.6rem' }}>
+                <div>
+                  <div><strong>PROYECTO:</strong> {projectTitle}</div>
+                  <div><strong>CLIENTE:</strong> {clientName}</div>
+                  {clientData?.company_name && <div><strong>EMPRESA:</strong> {clientData.company_name}</div>}
                 </div>
-
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '10.5px' }}>
-                  <thead>
-                    <tr style={{ background: '#f8fafc', color: '#475569', borderBottom: '1px solid #e2e8f0' }}>
-                      <th style={{ padding: '0.35rem 0.6rem', textAlign: 'left', width: '52%' }}>PARTIDA / ALCANCE TÉCNICO</th>
-                      <th style={{ padding: '0.35rem 0.6rem', textAlign: 'center', width: '23%' }}>ESTADO</th>
-                      <th style={{ padding: '0.35rem 0.6rem', textAlign: 'left', width: '25%' }}>OBSERVACIONES</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {phaseInfo.tasks.map((task, idx) => {
-                      const isComp = task.status === 'completed' || task.completed;
-                      const isInProg = task.status === 'in_progress';
-
-                      return (
-                        <tr key={task.id} style={{ borderBottom: idx < phaseInfo.tasks.length - 1 ? '1px solid #f1f5f9' : 'none' }}>
-                          <td style={{ padding: '0.45rem 0.6rem', color: '#1e293b', fontWeight: 500 }}>
-                            {task.title}
-                          </td>
-                          <td style={{ padding: '0.45rem 0.6rem', textAlign: 'center' }}>
-                            {isComp ? (
-                              <span style={{ color: '#166534', fontWeight: 700, background: '#dcfce7', padding: '0.1rem 0.4rem', borderRadius: '3px' }}>
-                                ✓ Culminado
-                              </span>
-                            ) : isInProg ? (
-                              <span style={{ color: '#0369a1', fontWeight: 700, background: '#e0f2fe', padding: '0.1rem 0.4rem', borderRadius: '3px' }}>
-                                ⏳ En Ejecución
-                              </span>
-                            ) : (
-                              <span style={{ color: '#64748b', fontWeight: 600, background: '#f1f5f9', padding: '0.1rem 0.4rem', borderRadius: '3px' }}>
-                                ⚪ Pendiente
-                              </span>
-                            )}
-                          </td>
-                          <td style={{ padding: '0.45rem 0.6rem', color: '#475569', fontSize: '10px' }}>
-                            {task.notes || '—'}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+                <div>
+                  {startDate && <div><strong>INICIO:</strong> {new Date(startDate).toLocaleDateString('es-VE')}</div>}
+                  {area && <div><strong>ÁREA:</strong> {area}</div>}
+                  {clientData?.address && <div><strong>UBICACIÓN:</strong> {clientData.address}</div>}
+                </div>
               </div>
-            ))}
-          </div>
+            </div>
 
-          {/* Observaciones generales si existen */}
-          {reportNotes && (
-            <div style={{ marginBottom: '1.4rem', padding: '0.75rem', background: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '10.5px' }}>
-              <strong>OBSERVACIONES DE SUPERVISIÓN:</strong> {reportNotes}
-            </div>
-          )}
+            {/* Resumen de Estados */}
+            <div style={{ marginBottom: '1.4rem', padding: '0.9rem', background: '#f1f5f9', border: '1.5px solid #94a3b8', borderRadius: '6px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                <span style={{ fontSize: '12px', fontWeight: 800, color: '#1e293b' }}>
+                  AVANCE GENERAL DE LA OBRA:
+                </span>
+                <span style={{ fontSize: '16px', fontWeight: 900, color: stats.completedPct === 100 ? '#166534' : '#0369a1' }}>
+                  {stats.completedPct}% CULMINADO
+                </span>
+              </div>
 
-          {/* Firmas Oficiales */}
-          <div style={{ marginTop: '2.5rem', paddingTop: '1rem', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem', fontSize: '10.5px', textAlign: 'center' }}>
-            <div>
-              <div style={{ borderTop: '1px solid #0f172a', width: '70%', margin: '0 auto 0.3rem auto' }}></div>
-              <div style={{ fontWeight: 700 }}>Ing. Supervisor de Obra</div>
-              <div style={{ color: '#64748b', fontSize: '9.5px' }}>P&P Construye C.A.</div>
+              {/* Barra Tricolor en Papel */}
+              <div style={{ width: '100%', height: '10px', backgroundColor: '#e2e8f0', borderRadius: '999px', overflow: 'hidden', display: 'flex', marginBottom: '0.6rem', border: '1px solid #cbd5e1' }}>
+                <div style={{ width: `${stats.completedPct}%`, height: '100%', backgroundColor: '#16a34a' }} />
+                <div style={{ width: `${stats.inProgressPct}%`, height: '100%', backgroundColor: '#0284c7' }} />
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.5rem', textAlign: 'center', fontSize: '10.5px' }}>
+                <div style={{ background: '#fff', padding: '0.35rem', borderRadius: '4px', border: '1px solid #cbd5e1' }}>
+                  <div style={{ color: '#64748b' }}>Total</div>
+                  <div style={{ fontWeight: 800, fontSize: '13px' }}>{stats.total}</div>
+                </div>
+                <div style={{ background: '#f0fdf4', padding: '0.35rem', borderRadius: '4px', border: '1px solid #86efac' }}>
+                  <div style={{ color: '#166534' }}>Culminadas</div>
+                  <div style={{ fontWeight: 800, fontSize: '13px', color: '#166534' }}>{stats.completed} ({stats.completedPct}%)</div>
+                </div>
+                <div style={{ background: '#f0f9ff', padding: '0.35rem', borderRadius: '4px', border: '1px solid #7dd3fc' }}>
+                  <div style={{ color: '#0369a1' }}>En Ejecución</div>
+                  <div style={{ fontWeight: 800, fontSize: '13px', color: '#0369a1' }}>{stats.inProgress} ({stats.inProgressPct}%)</div>
+                </div>
+                <div style={{ background: '#fffbeb', padding: '0.35rem', borderRadius: '4px', border: '1px solid #fde68a' }}>
+                  <div style={{ color: '#b45309' }}>Pendientes</div>
+                  <div style={{ fontWeight: 800, fontSize: '13px', color: '#b45309' }}>{stats.pending} ({stats.pendingPct}%)</div>
+                </div>
+              </div>
             </div>
-            <div>
-              <div style={{ borderTop: '1px solid #0f172a', width: '70%', margin: '0 auto 0.3rem auto' }}></div>
-              <div style={{ fontWeight: 700 }}>Conformidad del Cliente</div>
-              <div style={{ color: '#64748b', fontSize: '9.5px' }}>{clientName}</div>
+
+            {/* Desglose de Fases */}
+            <h3 style={{ fontSize: '12px', fontWeight: 800, borderBottom: '1.5px solid #0f172a', paddingBottom: '0.3rem', marginBottom: '0.8rem', textTransform: 'uppercase' }}>
+              DESGLOSE DE PARTIDAS Y ESTADO DE EJECUCIÓN
+            </h3>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.9rem', marginBottom: '1.5rem' }}>
+              {Object.entries(phasesData).map(([phaseName, phaseInfo]) => (
+                <div key={phaseName} style={{ border: '1px solid #cbd5e1', borderRadius: '6px', overflow: 'hidden' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f1f5f9', padding: '0.45rem 0.8rem', borderBottom: '1px solid #cbd5e1' }}>
+                    <span style={{ fontWeight: 800, fontSize: '11px', color: '#1e293b' }}>
+                      {phaseName}
+                    </span>
+                    <span style={{ fontSize: '10.5px', fontWeight: 700, color: phaseInfo.pct === 100 ? '#166534' : '#0369a1' }}>
+                      {phaseInfo.completed}/{phaseInfo.total} ({phaseInfo.pct}%)
+                    </span>
+                  </div>
+
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '10.5px' }}>
+                    <thead>
+                      <tr style={{ background: '#f8fafc', color: '#475569', borderBottom: '1px solid #e2e8f0' }}>
+                        <th style={{ padding: '0.35rem 0.6rem', textAlign: 'left', width: '52%' }}>PARTIDA / ALCANCE TÉCNICO</th>
+                        <th style={{ padding: '0.35rem 0.6rem', textAlign: 'center', width: '23%' }}>ESTADO</th>
+                        <th style={{ padding: '0.35rem 0.6rem', textAlign: 'left', width: '25%' }}>OBSERVACIONES</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {phaseInfo.tasks.map((task, idx) => {
+                        const isComp = task.status === 'completed' || task.completed;
+                        const isInProg = task.status === 'in_progress';
+
+                        return (
+                          <tr key={task.id} style={{ borderBottom: idx < phaseInfo.tasks.length - 1 ? '1px solid #f1f5f9' : 'none' }}>
+                            <td style={{ padding: '0.45rem 0.6rem', color: '#1e293b', fontWeight: 500 }}>
+                              {task.title}
+                            </td>
+                            <td style={{ padding: '0.45rem 0.6rem', textAlign: 'center' }}>
+                              {isComp ? (
+                                <span style={{ color: '#166534', fontWeight: 700, background: '#dcfce7', padding: '0.1rem 0.4rem', borderRadius: '3px' }}>
+                                  ✓ Culminado
+                                </span>
+                              ) : isInProg ? (
+                                <span style={{ color: '#0369a1', fontWeight: 700, background: '#e0f2fe', padding: '0.1rem 0.4rem', borderRadius: '3px' }}>
+                                  ⏳ En Ejecución
+                                </span>
+                              ) : (
+                                <span style={{ color: '#64748b', fontWeight: 600, background: '#f1f5f9', padding: '0.1rem 0.4rem', borderRadius: '3px' }}>
+                                  ⚪ Pendiente
+                                </span>
+                              )}
+                            </td>
+                            <td style={{ padding: '0.45rem 0.6rem', color: '#475569', fontSize: '10px' }}>
+                              {task.notes || '—'}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              ))}
+            </div>
+
+            {/* Observaciones generales si existen */}
+            {reportNotes && (
+              <div style={{ marginBottom: '1.4rem', padding: '0.75rem', background: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '10.5px' }}>
+                <strong>OBSERVACIONES DE SUPERVISIÓN:</strong> {reportNotes}
+              </div>
+            )}
+
+            {/* Firmas Oficiales */}
+            <div style={{ marginTop: '2.5rem', paddingTop: '1rem', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem', fontSize: '10.5px', textAlign: 'center' }}>
+              <div>
+                <div style={{ borderTop: '1px solid #0f172a', width: '70%', margin: '0 auto 0.3rem auto' }}></div>
+                <div style={{ fontWeight: 700 }}>Ing. Supervisor de Obra</div>
+                <div style={{ color: '#64748b', fontSize: '9.5px' }}>P&P Construye C.A.</div>
+              </div>
+              <div>
+                <div style={{ borderTop: '1px solid #0f172a', width: '70%', margin: '0 auto 0.3rem auto' }}></div>
+                <div style={{ fontWeight: 700 }}>Conformidad del Cliente</div>
+                <div style={{ color: '#64748b', fontSize: '9.5px' }}>{clientName}</div>
+              </div>
             </div>
           </div>
-        </div>
-      </div>
+        </div>,
+        document.body
+      )}
 
       {/* ESTILOS DE IMPRESIÓN OFICIALES */}
       <style>{`
@@ -1232,30 +1241,6 @@ export default function ProjectTracking({
           display: none;
         }
         @media print {
-          body {
-            background: white !important;
-            color: #0f172a !important;
-            margin: 0 !important;
-            padding: 0 !important;
-            font-family: system-ui, -apple-system, sans-serif !important;
-          }
-          .app-container, .main-content {
-            padding: 0 !important;
-            margin: 0 !important;
-            max-width: 100% !important;
-            width: 100% !important;
-            display: block !important;
-          }
-          .card {
-            border: none !important;
-            box-shadow: none !important;
-            background: transparent !important;
-            padding: 0 !important;
-            margin: 0 !important;
-          }
-          .hide-on-print, nav, header, aside, .sidebar, .top-bar, .modal-overlay {
-            display: none !important;
-          }
           #printable-tracking-report-root {
             display: block !important;
             visibility: visible !important;
@@ -1269,10 +1254,6 @@ export default function ProjectTracking({
           }
           #printable-tracking-report-root * {
             visibility: visible !important;
-          }
-          @page {
-            margin: 1.2cm;
-            size: auto;
           }
         }
       `}</style>

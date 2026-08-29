@@ -781,9 +781,9 @@ export default function ProjectDashboard() {
 
   return (
     <>
-      <div className={`animate-fade ${activePrintJob && activePrintJob !== 'none' ? 'hide-on-print' : ''}`} style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+      <div className="animate-fade hide-on-print" style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
         
-      <div className="hide-on-print" style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', justifyContent: 'space-between' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem' }}>
           <button className="btn-secondary" style={{ padding: '0.75rem' }} onClick={handleBack}>
             <ArrowLeft size={20} />
@@ -909,7 +909,7 @@ export default function ProjectDashboard() {
 
       {/* ACTION BAR */}
       {!isViewer && (
-        <div className="hide-on-print" style={{ display: 'flex', gap: '0.6rem', flexWrap: 'nowrap', overflowX: 'auto', justifyContent: 'flex-start', alignItems: 'center', background: 'rgba(255,255,255,0.02)', padding: '0.75rem', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.05)' }}>
+        <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'nowrap', overflowX: 'auto', justifyContent: 'flex-start', alignItems: 'center', background: 'rgba(255,255,255,0.02)', padding: '0.75rem', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.05)' }}>
           <button className="btn-secondary" onClick={() => setShowPaymentModal(true)} style={{ height: '38px', padding: '0 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', borderColor: 'var(--success)', color: 'var(--success)' }}>
             <DollarSign size={15} /> Registrar Abono
           </button>
@@ -934,19 +934,17 @@ export default function ProjectDashboard() {
 
       {/* Panel de Entradas Pendientes de Telegram para este Proyecto */}
       {project && (
-        <div className="hide-on-print">
-          <TelegramPendingPanel
-            projectIdFilter={project.id}
-            projects={[{
-              id: project.id,
-              title: project.title,
-              clientName: project.clients?.name || 'Cliente sin nombre',
-            }]}
-          />
-        </div>
+        <TelegramPendingPanel
+          projectIdFilter={project.id}
+          projects={[{
+            id: project.id,
+            title: project.title,
+            clientName: project.clients?.name || 'Cliente sin nombre',
+          }]}
+        />
       )}
 
-      <div className="hide-on-print" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '1.25rem' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '1.25rem' }}>
         {/* 1. MONTO DEL PROYECTO */}
         <div className="card" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.4rem', background: 'linear-gradient(145deg, rgba(255,255,255,0.03) 0%, rgba(0,0,0,0) 100%)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-muted)', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
@@ -1036,8 +1034,8 @@ export default function ProjectDashboard() {
         </div>
       </div>
 
-      <div className={`card ${activeTab !== 'seguimiento' ? 'hide-on-print' : ''}`} style={{ padding: '1.5rem', height: '100%' }}>
-        <div className="hide-on-print" style={{ display: 'flex', gap: '1rem', borderBottom: '1px solid var(--border-color)', marginBottom: '1.5rem', paddingBottom: '0.5rem', overflowX: 'auto' }}>
+      <div className="card" style={{ padding: '1.5rem', height: '100%' }}>
+        <div style={{ display: 'flex', gap: '1rem', borderBottom: '1px solid var(--border-color)', marginBottom: '1.5rem', paddingBottom: '0.5rem', overflowX: 'auto' }}>
           <button
             className={`btn-secondary ${activeTab === 'pagos' ? 'btn-primary' : ''}`}
             style={{ padding: '0.5rem 1rem', background: activeTab === 'pagos' ? 'var(--accent-blue)' : 'transparent', border: 'none', whiteSpace: 'nowrap' }}
@@ -1079,7 +1077,7 @@ export default function ProjectDashboard() {
 
         {/* TAB: PAGOS */}
         {activeTab === 'pagos' && (
-          <div className="animate-fade hide-on-print">
+          <div className="animate-fade">
             {payments.length === 0 ? (
               <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>No hay pagos registrados.</div>
             ) : (
