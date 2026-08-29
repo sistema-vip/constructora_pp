@@ -178,7 +178,7 @@ export default function TelegramPendingPanel({ projects, projectIdFilter, client
       return <span className="badge" style={{ background: 'rgba(168, 85, 247, 0.15)', color: '#c084fc', border: '1px solid rgba(168, 85, 247, 0.3)' }}>💼 Retiro Socio</span>;
     }
     if (entry.entry_type === 'commitment') {
-      return <span className="badge" style={{ background: 'rgba(59, 130, 246, 0.15)', color: '#60a5fa', border: '1px solid rgba(59, 130, 246, 0.3)' }}>📝 Compromiso</span>;
+      return <span className="badge" style={{ background: 'rgba(59, 130, 246, 0.15)', color: '#60a5fa', border: '1px solid rgba(59, 130, 246, 0.3)' }}>📝 Cuenta por Pagar</span>;
     }
     if (entry.entry_type === 'cost') {
       if (entry.category === 'labor') {
@@ -239,7 +239,7 @@ export default function TelegramPendingPanel({ projects, projectIdFilter, client
           { id: 'cost_materials', label: '🏗️ Materiales', count: targetEntries.filter(e => e.entry_type === 'cost' && (e.category === 'materials' || !e.category)).length },
           { id: 'cost_labor', label: '🔨 Mano de Obra', count: targetEntries.filter(e => e.entry_type === 'cost' && e.category === 'labor').length },
           { id: 'partner_advance', label: '💼 Retiro Socios', count: targetEntries.filter(e => e.entry_type === 'partner_advance').length },
-          { id: 'commitment', label: '📝 Compromisos', count: targetEntries.filter(e => e.entry_type === 'commitment').length },
+          { id: 'commitment', label: '📝 Cuentas por Pagar', count: targetEntries.filter(e => e.entry_type === 'commitment').length },
         ].map(tab => (
           <button
             key={tab.id}

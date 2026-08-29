@@ -41,7 +41,8 @@ import {
   Check,
   Ban,
   AlertTriangle,
-  BarChart3
+  BarChart3,
+  GitMerge
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency, handleMoneyInput, parseCurrency, formatOnBlur } from '@/lib/formatters';
@@ -271,7 +272,7 @@ export default function ClienteDashboard() {
   };
   
   // Tabs State
-  const [activeTab, setActiveTab] = useState<'proyectos' | 'pagos' | 'gastos' | 'adicionales' | 'compromisos' | 'cuentas_pagar' | 'retiros' | 'propuestas' | 'historial'>('proyectos');
+  const [activeTab, setActiveTab] = useState<'proyectos' | 'pagos' | 'gastos' | 'adicionales' | 'cuentas_pagar' | 'retiros' | 'propuestas' | 'historial'>('proyectos');
 
   // Modals state
   const [showPaymentModal, setShowPaymentModal] = useState(false);
@@ -324,6 +325,13 @@ export default function ClienteDashboard() {
   const [printMode, setPrintMode] = useState<'client-statement' | 'partner-report'>('client-statement');
   const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(new Set());
 
+  const openPrintSelection = (mode: 'client-statement' | 'partner-report') => {
+    setPrintMode(mode);
+    const active = projects.filter(p => p.status === 'in_progress' || p.status === 'completed');
+    setSelectedProjectIds(new Set(active.map(p => p.id)));
+    setShowPrintModal(true);
+  };
+
   useEffect(() => {
     if (clientId) {
       fetchClientData();
@@ -354,7 +362,7 @@ export default function ClienteDashboard() {
       let projectsData: any[] | null = null;
       const { data: richData, error: richError } = await supabase
         .from('projects')
-        .select('*, project_payments(*), project_costs(*), project_extras(*), project_commitments(*, payable_accounts(payable_payments(amount_usd))), partner_advances(*)')
+        .select('*, project_payments(*), project_costs(*), project_extras(*), project_commitments(*, payable_accounts(id, status, payable_payments(amount_usd))), partner_advances(*)')
         .eq('client_id', clientId)
         .order('created_at', { ascending: false });
 
@@ -628,6 +636,8 @@ export default function ClienteDashboard() {
       setMerging(false);
     }
   };
+
+  const openMergeModal = () => setShowMergeModal(true);
 
   const initiateReopen = (projectId: string) => {
     setProjectToReopen(projectId);
@@ -965,7 +975,7 @@ export default function ClienteDashboard() {
       const remainingBalance = totalAmount - previouslyPaid - monto;
       const isFullPay = remainingBalance <= 0.01;
 
-      const descPrefix = isFullPay && previouslyPaid === 0 ? 'Pago compromiso' : isFullPay ? 'Liquidación compromiso' : 'Abono compromiso';
+      const descPrefix = isFullPay && previouslyPaid === 0 ? 'Pago CxP' : isFullPay ? 'Liquidación CxP' : 'Abono CxP';
       const costDescription = commitmentPayForm.description
         ? `${descPrefix}: ${commitmentToPay.provider || 'Proveedor'} - ${commitmentPayForm.description}`
         : `${descPrefix}: ${commitmentToPay.provider || 'Proveedor'} - ${commitmentToPay.description}`;
@@ -1056,8 +1066,12 @@ export default function ClienteDashboard() {
   const totalPaid = allPayments.reduce((sum, p) => sum + Number(p.amount_usd), 0);
   const totalCostsValue = allCosts.reduce((sum, c) => sum + (Number(c.quantity) * Number(c.unit_price_usd)), 0);
   const totalCommitted = allCommitments.reduce((sum, c) => {
+    const status = c.payable_accounts?.[0]?.status;
+    if (status === 'paid' || status === 'cancelled') return sum;
     const paid = c.payable_accounts?.[0]?.payable_payments?.reduce((s: any, p: any) => s + Number(p.amount_usd), 0) || 0;
-    const balance = Number(c.amount_usd || (c.quantity * c.unit_price_usd)) - paid;
+    const total = Number(c.amount_usd || (c.quantity * c.unit_price_usd));
+    if (paid >= total - 0.01) return sum;
+    const balance = total - paid;
     return sum + Math.max(0, balance);
   }, 0);
   const totalAdvances = allAdvances.reduce((sum, a) => sum + Number(a.amount_usd), 0);
@@ -1078,9 +1092,11 @@ export default function ClienteDashboard() {
   const printExtras = printProjects.flatMap(p => p.project_extras.map((x: any) => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })));
   const printCommitments = printProjects.flatMap(p => 
     (p.project_commitments || []).map((x: any) => {
+      const status = x.payable_accounts?.[0]?.status;
+      const isPaidOrCancelled = status === 'paid' || status === 'cancelled';
       const paid = x.payable_accounts?.[0]?.payable_payments?.reduce((s: any, pm: any) => s + Number(pm.amount_usd), 0) || 0;
       const total = Number(x.amount_usd || (x.quantity * x.unit_price_usd));
-      const balance = Math.max(0, total - paid);
+      const balance = isPaidOrCancelled || paid >= total - 0.01 ? 0 : Math.max(0, total - paid);
       return {
         ...x,
         project_title: p.title,
@@ -1110,99 +1126,83 @@ export default function ClienteDashboard() {
               <ArrowLeft size={20} />
             </button>
             <div>
-              <h1 style={{ fontSize: '2.2rem', margin: 0, fontWeight: 800, letterSpacing: '-0.03em', display: 'flex', alignItems: 'center', gap: '0.75rem', color: 'white' }}>
-                {client.name}
-                <span className={`badge ${client.status === 'active' ? 'badge-active' : ''}`} style={{ fontSize: '0.7rem', padding: '0.25rem 0.6rem', borderRadius: '6px' }}>
-                  {client.status === 'active' ? 'ACTIVO' : 'INACTIVO'}
-                </span>
-              </h1>
-              <div style={{ display: 'flex', gap: '1.2rem', alignItems: 'center', marginTop: '0.4rem', color: 'var(--text-muted)', fontSize: '0.85rem', flexWrap: 'wrap' }}>
-                {client.company_name && <span style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}><Building size={13} /> {client.company_name}</span>}
-                {client.tax_id && <span style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}><span style={{ color: 'var(--accent-blue)', fontWeight: 600 }}>RIF:</span> {client.tax_id}</span>}
-                {client.phone && <span style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}><Phone size={13} /> {client.phone}</span>}
-                {client.email && <span style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}><Mail size={13} /> {client.email}</span>}
-                {client.address && <span style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}><MapPin size={13} /> {client.address}</span>}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+                <h1 style={{ fontSize: '2rem', fontWeight: 800, color: 'white', letterSpacing: '-0.02em', margin: 0 }}>
+                  {client?.name}
+                </h1>
+                {client?.company_name && (
+                  <span className="badge" style={{ background: 'rgba(59,130,246,0.1)', color: 'var(--primary-color)', border: '1px solid rgba(59,130,246,0.2)', fontSize: '0.85rem', padding: '0.3rem 0.8rem' }}>
+                    🏢 {client.company_name}
+                  </span>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: '1.5rem', color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: '0.4rem', flexWrap: 'wrap' }}>
+                {client?.tax_id && <span><strong>RIF/CI:</strong> {client.tax_id}</span>}
+                {client?.phone && <span><strong>Tel:</strong> {client.phone}</span>}
+                {client?.email && <span><strong>Email:</strong> {client.email}</span>}
+                {client?.address && <span><strong>Dir:</strong> {client.address}</span>}
               </div>
             </div>
           </div>
           
           <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
-            {canEdit && (
-              <button 
-                className="btn-secondary" 
-                onClick={handleOpenEditClient} 
-                style={{ padding: '0.7rem 1.2rem', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600, color: 'var(--accent-blue)', borderColor: 'rgba(56, 189, 248, 0.3)' }}
-                title="Editar Datos del Cliente"
-              >
-                <Edit3 size={16} /> Editar Cliente
-              </button>
-            )}
-            {canDelete && (
-              <button 
-                className="btn-secondary" 
-                onClick={handleInitiateDeleteClient} 
-                style={{ padding: '0.7rem 1.2rem', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600, color: 'var(--danger)', borderColor: 'rgba(239, 68, 68, 0.3)' }}
-                title="Eliminar Cliente"
-              >
-                <Trash2 size={16} /> Eliminar Cliente
-              </button>
-            )}
-            <button 
-              className="btn-primary" 
-              onClick={() => { 
-                setSelectedProjectIds(new Set(currentProjects.map((p: any) => p.id))); 
-                setPrintMode('client-statement');
-                setShowPrintModal(true); 
-              }} 
-              style={{ padding: '0.65rem 1.1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', fontWeight: 600, boxShadow: '0 4px 12px rgba(245,158,11,0.2)' }}
+            <button
+              className="btn-secondary"
+              onClick={() => openPrintSelection('client-statement')}
+              style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.65rem 1.1rem', fontSize: '0.85rem' }}
             >
               <FileText size={16} /> Estado de Cuenta
             </button>
-            <button 
-              className="btn-secondary" 
-              onClick={() => { 
-                setSelectedProjectIds(new Set(currentProjects.map((p: any) => p.id))); 
-                setPrintMode('partner-report');
-                setShowPrintModal(true); 
-              }} 
-              style={{ padding: '0.65rem 1.1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', fontWeight: 600, background: 'rgba(139, 92, 246, 0.1)', borderColor: 'rgba(139, 92, 246, 0.3)', color: '#c4b5fd' }}
+            <button
+              className="btn-secondary"
+              onClick={() => openPrintSelection('partner-report')}
+              style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.65rem 1.1rem', background: 'rgba(139, 92, 246, 0.1)', borderColor: 'rgba(139, 92, 246, 0.3)', color: '#c4b5fd', fontSize: '0.85rem', fontWeight: 600 }}
             >
-              <BarChart3 size={16} /> Reporte para Socios
+              <BarChart3 size={16} /> Reporte Socios
             </button>
+            {projects.length >= 2 && !isViewer && (
+              <button
+                className="btn-secondary"
+                onClick={openMergeModal}
+                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.65rem 1.1rem', background: 'rgba(245, 158, 11, 0.1)', borderColor: 'rgba(245, 158, 11, 0.3)', color: '#fbbf24', fontSize: '0.85rem', fontWeight: 600 }}
+              >
+                <GitMerge size={16} /> Unificar Proyectos
+              </button>
+            )}
+            {!isViewer && (
+              <button
+                className="btn-primary"
+                onClick={() => setShowProposalModal(true)}
+                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.65rem 1.2rem', fontSize: '0.85rem', fontWeight: 600 }}
+              >
+                <Plus size={16} /> Nueva Propuesta
+              </button>
+            )}
           </div>
         </div>
 
       {/* ACTION BAR */}
-      {!isObserver && (
-        <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'nowrap', overflowX: 'auto', justifyContent: 'flex-start', alignItems: 'center', background: 'rgba(255,255,255,0.02)', padding: '0.75rem', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.05)' }}>
-          {/* Cliente, Sales y Admin pueden crear propuestas */}
-          <button className="btn-primary" onClick={() => setShowProposalModal(true)} style={{ height: '38px', padding: '0 1.1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', boxShadow: '0 4px 12px rgba(245,158,11,0.2)' }}>
-            <PlusCircle size={16} /> Nueva Propuesta
-          </button>
-          
-          {/* Solo Admin pueden ver el resto de botones transaccionales */}
-          {!isClient && !isSales && (
-            <>
-              <button className="btn-primary" onClick={() => setShowMergeModal(true)} style={{ height: '38px', padding: '0 1.1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', background: '#8b5cf6', borderColor: '#8b5cf6' }}>
-                <PlusCircle size={16} /> Unificar Proyectos
-              </button>
-              <button className="btn-primary" onClick={() => setShowPaymentModal(true)} style={{ height: '38px', padding: '0 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', background: 'var(--success)', borderColor: 'var(--success)', boxShadow: '0 4px 12px rgba(16,185,129,0.15)' }}>
-                <BriefcaseIcon size={15} /> Registrar Pago
-              </button>
-              <button className="btn-secondary" onClick={() => setShowAdvanceModal(true)} style={{ height: '38px', padding: '0 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', borderColor: '#8b5cf6', color: '#8b5cf6' }}>
-                <Users size={15} /> Retiro de Socio
-              </button>
-              <button className="btn-secondary" onClick={() => setShowCommitmentModal(true)} style={{ height: '38px', padding: '0 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', borderColor: 'var(--primary-color)', color: 'var(--primary-color)' }}>
-                <ClipboardList size={15} /> Registrar Compromiso
-              </button>
-              <button className="btn-secondary" onClick={() => setShowExtraModal(true)} style={{ height: '38px', padding: '0 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                <Plus size={15} /> Servicio Adicional
-              </button>
-              <button className="btn-secondary" onClick={() => setShowCostModal(true)} style={{ height: '38px', padding: '0 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', borderColor: 'var(--danger)', color: 'var(--danger)' }}>
-                <DollarIcon size={15} /> Registrar Gasto
-              </button>
-            </>
-          )}
+      {!isViewer && (
+        <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'nowrap', overflowX: 'auto', alignItems: 'center', background: 'rgba(255,255,255,0.02)', padding: '0.75rem', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.05)' }}>
+            <button className="btn-secondary" onClick={() => setShowPaymentModal(true)} style={{ height: '38px', padding: '0 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', borderColor: 'var(--success)', color: 'var(--success)' }}>
+              <DollarSign size={15} /> Registrar Abono
+            </button>
+            {role !== 'sales' && (
+              <>
+                <button className="btn-secondary" onClick={() => setShowCostModal(true)} style={{ height: '38px', padding: '0 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', borderColor: 'var(--danger)', color: 'var(--danger)' }}>
+                  <DollarIcon size={15} /> Registrar Gasto
+                </button>
+                <button className="btn-secondary" onClick={() => setShowExtraModal(true)} style={{ height: '38px', padding: '0 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', borderColor: 'var(--accent-blue)', color: 'var(--accent-blue)' }}>
+                  <Plus size={15} /> Servicio Adicional
+                </button>
+                <button className="btn-secondary" onClick={() => setShowCommitmentModal(true)} style={{ height: '38px', padding: '0 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', borderColor: 'rgba(245,158,11,0.5)', color: 'var(--primary-color)' }}>
+                  <ClipboardList size={15} /> Cuenta por Pagar
+                </button>
+                <button className="btn-secondary" onClick={() => setShowAdvanceModal(true)} style={{ height: '38px', padding: '0 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', borderColor: 'rgba(168,85,247,0.5)', color: '#c084fc' }}>
+                  <Wallet size={15} /> Retiro de Socio
+                </button>
+              </>
+            )}
         </div>
       )}
 
@@ -1222,40 +1222,40 @@ export default function ClienteDashboard() {
       <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
         
         {/* Fila 1: Indicadores Principales (Contratos y Pagos) */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1.5rem' }}>
-          <div className="card" style={{ padding: '1.5rem', background: 'linear-gradient(145deg, rgba(56,189,248,0.08) 0%, rgba(0,0,0,0) 100%)', borderColor: 'rgba(56,189,248,0.25)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--accent-blue)', marginBottom: '0.75rem', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              <Briefcase size={16} /> <span style={{ fontWeight: 700 }}>Total Contratado</span>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1.25rem' }}>
+          <div className="card" style={{ padding: '1.5rem', background: 'linear-gradient(145deg, rgba(255,255,255,0.03) 0%, rgba(0,0,0,0) 100%)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-muted)', marginBottom: '0.75rem', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              <TrendingUp size={16} /> Total Contratado
             </div>
             <div style={{ fontSize: '2.2rem', fontWeight: 800, color: 'white', letterSpacing: '-0.02em' }}>
               ${formatCurrency(totalContracted)}
             </div>
           </div>
           
-          <div className="card" style={{ padding: '1.5rem', background: 'linear-gradient(145deg, rgba(16,185,129,0.08) 0%, rgba(0,0,0,0) 100%)', borderColor: 'rgba(16, 185, 129, 0.35)' }}>
+          <div className="card" style={{ padding: '1.5rem', background: 'linear-gradient(145deg, rgba(16,185,129,0.08) 0%, rgba(0,0,0,0) 100%)', borderColor: 'rgba(16,185,129,0.2)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--success)', marginBottom: '0.75rem', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              <TrendingUp size={16} /> <span style={{ fontWeight: 700 }}>Total Abonado</span>
+              <DollarSign size={16} /> Total Pagado
             </div>
-            <div style={{ fontSize: '2.2rem', fontWeight: 800, color: 'white', letterSpacing: '-0.02em' }}>
+            <div style={{ fontSize: '2.2rem', fontWeight: 800, color: 'var(--success)', letterSpacing: '-0.02em' }}>
               ${formatCurrency(totalPaid)}
             </div>
           </div>
 
-          <div className="card" style={{ padding: '1.5rem', background: 'linear-gradient(145deg, rgba(245,158,11,0.08) 0%, rgba(0,0,0,0) 100%)', borderColor: 'rgba(245, 158, 11, 0.4)' }}>
+          <div className="card" style={{ padding: '1.5rem', background: 'linear-gradient(145deg, rgba(245,158,11,0.08) 0%, rgba(0,0,0,0) 100%)', borderColor: 'rgba(245,158,11,0.3)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--primary-color)', marginBottom: '0.75rem', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              <Activity size={16} /> <span style={{ fontWeight: 700 }}>Saldo Pendiente</span>
+              <Clock size={16} /> <span style={{ fontWeight: 700 }}>Saldo Pendiente</span>
             </div>
-            <div style={{ fontSize: '2.2rem', fontWeight: 800, color: 'white', letterSpacing: '-0.02em' }}>
+            <div style={{ fontSize: '2.2rem', fontWeight: 800, color: 'var(--primary-color)', letterSpacing: '-0.02em' }}>
               ${formatCurrency(balanceDue)}
             </div>
           </div>
         </div>
 
         {/* Fila 2: Indicadores de Rentabilidad (Egresos y Ganancia) */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1.5rem' }}>
-          <div className="card" style={{ padding: '1.5rem', background: 'linear-gradient(145deg, rgba(239,68,68,0.08) 0%, rgba(0,0,0,0) 100%)', borderColor: 'rgba(239,68,68,0.25)' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1.25rem' }}>
+          <div className="card" style={{ padding: '1.5rem', background: 'linear-gradient(145deg, rgba(239,68,68,0.08) 0%, rgba(0,0,0,0) 100%)', borderColor: 'rgba(239,68,68,0.3)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--danger)', marginBottom: '0.75rem', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              <TrendingDown size={16} /> <span style={{ fontWeight: 700 }}>Gastos Ejecutados</span>
+              <TrendingDown size={16} /> Costos Totales
             </div>
             <div style={{ fontSize: '2.2rem', fontWeight: 800, color: 'white', letterSpacing: '-0.02em' }}>
               ${formatCurrency(totalCostsValue)}
@@ -1264,7 +1264,7 @@ export default function ClienteDashboard() {
 
           <div className="card" style={{ padding: '1.5rem', background: 'linear-gradient(145deg, rgba(245,158,11,0.08) 0%, rgba(0,0,0,0) 100%)', borderColor: 'rgba(245,158,11,0.4)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--primary-color)', marginBottom: '0.75rem', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              <AlertCircle size={16} /> <span style={{ fontWeight: 700 }}>Compromisos</span>
+              <AlertCircle size={16} /> <span style={{ fontWeight: 700 }}>Cuentas por Pagar</span>
             </div>
             <div style={{ fontSize: '2.2rem', fontWeight: 800, color: 'white', letterSpacing: '-0.02em' }}>
               ${formatCurrency(totalCommitted)}
@@ -1283,36 +1283,9 @@ export default function ClienteDashboard() {
             </div>
             <div style={{ position: 'relative', zIndex: 1, marginTop: '0.5rem' }}>
                <span className="badge" style={{ background: 'rgba(139,92,246,0.15)', color: '#a78bfa', fontSize: '0.8rem', padding: '0.2rem 0.6rem' }}>
-                 Contrato − Gastos − Compromisos
+                 Contrato − Gastos − Cuentas por Pagar
                </span>
             </div>
-          </div>
-        </div>
-
-        {/* Fila 2: Indicadores Secundarios */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '1rem' }}>
-          <div className="card" style={{ padding: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.02)' }}>
-            <div>
-              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Proyectos Activos</div>
-              <div style={{ fontSize: '1.4rem', fontWeight: 'bold', color: 'white' }}>{currentProjects.length}</div>
-            </div>
-            <Briefcase size={24} color="var(--accent-blue)" opacity={0.5} />
-          </div>
-
-          <div className="card" style={{ padding: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.02)' }}>
-            <div>
-              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Pagos Registrados</div>
-              <div style={{ fontSize: '1.4rem', fontWeight: 'bold', color: 'white' }}>{allPayments.length}</div>
-            </div>
-            <DollarSign size={24} color="var(--success)" opacity={0.5} />
-          </div>
-
-          <div className="card" style={{ padding: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.02)', borderColor: 'rgba(167, 139, 250, 0.2)' }}>
-            <div>
-              <div style={{ fontSize: '0.8rem', color: '#a78bfa' }}>Propuestas por Aprobar</div>
-              <div style={{ fontSize: '1.4rem', fontWeight: 'bold', color: 'white' }}>{pendingProposals.length}</div>
-            </div>
-            <ClipboardList size={24} color="#a78bfa" opacity={0.5} />
           </div>
         </div>
 
@@ -1358,13 +1331,6 @@ export default function ClienteDashboard() {
               onClick={() => setActiveTab('adicionales')}
             >
               Adicionales
-            </button>
-            <button 
-              className={`btn-secondary ${activeTab === 'compromisos' ? 'btn-primary' : ''}`}
-              style={{ padding: '0.5rem 1rem', background: activeTab === 'compromisos' ? 'var(--primary-color)' : 'transparent', border: 'none', whiteSpace: 'nowrap' }}
-              onClick={() => setActiveTab('compromisos')}
-            >
-              Compromisos
             </button>
             <button 
               className={`btn-secondary ${activeTab === 'cuentas_pagar' ? 'btn-primary' : ''}`}
@@ -1515,8 +1481,12 @@ export default function ClienteDashboard() {
                         const pContratado = Number(project.budget_usd) + pExtras;
                         const pEgresos = project.project_costs?.reduce((acc, c) => acc + (Number(c.quantity) * Number(c.unit_price_usd)), 0) || 0;
                         const pCompromisos = project.project_commitments?.reduce((acc: number, c: any) => {
+                          const status = c.payable_accounts?.[0]?.status;
+                          if (status === 'paid' || status === 'cancelled') return acc;
                           const paid = c.payable_accounts?.[0]?.payable_payments?.reduce((s: any, pm: any) => s + Number(pm.amount_usd), 0) || 0;
-                          const balance = Math.max(0, Number(c.amount_usd || (c.quantity * c.unit_price_usd)) - paid);
+                          const total = Number(c.amount_usd || (c.quantity * c.unit_price_usd));
+                          if (paid >= total - 0.01) return acc;
+                          const balance = Math.max(0, total - paid);
                           return acc + balance;
                         }, 0) || 0;
                         const pGanancia = pContratado - pEgresos - pCompromisos;
@@ -1581,125 +1551,6 @@ export default function ClienteDashboard() {
             </div>
           )}
 
-          {activeTab === 'compromisos' && (
-            <div>
-              {(() => {
-                const activeCommitments = allCommitments.filter(c => {
-                  const paid = c.payable_accounts?.[0]?.payable_payments?.reduce((s: any, p: any) => s + Number(p.amount_usd), 0) || 0;
-                  const balance = Number(c.amount_usd || (c.quantity * c.unit_price_usd)) - paid;
-                  return balance > 0.01;
-                });
-                return activeCommitments.length === 0 ? (
-                  <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>No hay compromisos (gastos por ejecutar) registrados.</div>
-                ) : (
-                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <thead>
-                      <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                        <th style={{ textAlign: 'left', padding: '1rem' }}>FECHA</th>
-                        <th style={{ textAlign: 'left', padding: '1rem' }}>CONCEPTO</th>
-                        <th style={{ textAlign: 'left', padding: '1rem' }}>PROVEEDOR</th>
-                        <th style={{ textAlign: 'left', padding: '1rem' }}>PROYECTO</th>
-                        <th style={{ textAlign: 'right', padding: '1rem' }}>ESTADO</th>
-                        <th style={{ textAlign: 'right', padding: '1rem' }}>SALDO (USD)</th>
-                        <th style={{ textAlign: 'right', padding: '1rem' }}></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {activeCommitments.map(c => {
-                      const paid = c.payable_accounts?.[0]?.payable_payments?.reduce((s: any, p: any) => s + Number(p.amount_usd), 0) || 0;
-                      const balance = Number(c.amount_usd || (c.quantity * c.unit_price_usd)) - paid;
-                      const isPaid = paid >= Number(c.amount_usd || (c.quantity * c.unit_price_usd));
-                      return (
-                      <tr key={c.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                        <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>{c.date || new Date(c.created_at).toISOString().split('T')[0]}</td>
-                        <td style={{ padding: '1rem' }}>{c.description} <br/><span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{c.quantity} x ${formatCurrency(c.unit_price_usd)}</span></td>
-                        <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>{c.provider || 'N/A'}</td>
-                        <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>{c.proposal_number ? `#${c.proposal_number} - ` : ''}{c.project_title}</td>
-                        <td style={{ padding: '1rem', textAlign: 'right' }}>
-                          {paid > 0 ? (
-                            <div style={{ fontSize: '0.8rem' }}>
-                              <div style={{ color: isPaid ? 'var(--success)' : 'var(--warning)', fontWeight: 'bold' }}>{isPaid ? 'Pagado' : 'Abonado'}</div>
-                              <div style={{ color: 'var(--text-muted)' }}>${paid.toLocaleString('es-VE', { minimumFractionDigits: 2 })} / ${Number(c.amount_usd || (c.quantity * c.unit_price_usd)).toLocaleString('es-VE', { minimumFractionDigits: 2 })}</div>
-                            </div>
-                          ) : (
-                            <span style={{ fontSize: '0.8rem', color: 'var(--danger)', fontWeight: 'bold', padding: '0.2rem 0.5rem', background: 'rgba(239,68,68,0.1)', borderRadius: '4px' }}>Pendiente</span>
-                          )}
-                        </td>
-                        <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold', color: 'var(--primary-color)' }}>- ${formatCurrency(balance)}</td>
-                        <td style={{ padding: '1rem', textAlign: 'right', display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
-                          <button 
-                            className="btn-secondary" 
-                            style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--primary-color)', borderColor: 'rgba(59,130,246,0.2)' }}
-                            onClick={() => setSelectedCommitmentForDetails(c)}
-                            title="Ver detalles"
-                          >
-                            <Eye size={14} /> Detalles
-                          </button>
-                          {!isViewer && balance > 0 && !isActionDisabledForSales(c.project_id) && (
-                            <>
-                              <button
-                                className="btn-secondary"
-                                style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--primary-color)', borderColor: 'rgba(59,130,246,0.3)' }}
-                                onClick={() => {
-                                  setCommitmentToPay(c);
-                                  setCommitmentPayMode('abono');
-                                  setCommitmentPayForm({ amount_usd: '', description: '', reference: '', date: new Date().toISOString().split('T')[0] });
-                                  setShowCommitmentPayModal(true);
-                                }}
-                                title="Abonar monto parcial al compromiso"
-                              >
-                                <DollarSign size={13} style={{ marginRight: '2px', display: 'inline' }} /> Abonar
-                              </button>
-                              <button
-                                className="btn-primary"
-                                style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', background: 'var(--success)', borderColor: 'var(--success)' }}
-                                onClick={() => {
-                                  setCommitmentToPay(c);
-                                  setCommitmentPayMode('total');
-                                  setCommitmentPayForm({
-                                    amount_usd: formatCurrency(balance),
-                                    description: `Pago total: ${c.description}`,
-                                    reference: '',
-                                    date: new Date().toISOString().split('T')[0]
-                                  });
-                                  setShowCommitmentPayModal(true);
-                                }}
-                                title="Pagar saldo total del compromiso"
-                              >
-                                <CheckCircle size={13} style={{ marginRight: '2px', display: 'inline' }} /> Pagar
-                              </button>
-                            </>
-                          )}
-                          {!isViewer && !isActionDisabledForSales(c.project_id) && (
-                            <button
-                              className="btn-secondary"
-                              style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--primary-color)', borderColor: 'rgba(59, 130, 246, 0.2)' }}
-                              onClick={() => initiateEditItem(c, 'commitment')}
-                              title="Editar compromiso"
-                            >
-                              <Edit3 size={14} />
-                            </button>
-                          )}
-                          {!isViewer && !isActionDisabledForSales(c.project_id) && (
-                            <button
-                              className="btn-secondary"
-                              style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--danger)', borderColor: 'rgba(239, 68, 68, 0.2)' }}
-                              onClick={() => initiateDelete(c.id, 'commitment')}
-                            >
-                              <Trash2 size={14} />
-                            </button>
-                          )}
-                        </td>
-                      </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              );
-            })()}
-            </div>
-          )}
-
           {activeTab === 'cuentas_pagar' && (
             <div>
               {clientPayableAccounts.length === 0 ? (
@@ -1718,7 +1569,13 @@ export default function ClienteDashboard() {
                     <div className="card" style={{ padding: '1rem', background: 'rgba(239,68,68,0.05)', borderColor: 'rgba(239, 68, 68, 0.2)' }}>
                       <div style={{ fontSize: '0.75rem', color: 'var(--danger)', textTransform: 'uppercase', marginBottom: '0.25rem' }}>Saldo Pendiente</div>
                       <div style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>
-                        ${formatCurrency(clientPayableAccounts.reduce((acc, a) => acc + Number(a.total_amount_usd), 0) - clientPayableAccounts.reduce((acc, a) => acc + (a.payable_payments?.reduce((s: any, p: any) => s + Number(p.amount_usd), 0) || 0), 0))}
+                        ${formatCurrency(clientPayableAccounts.reduce((acc, a) => {
+                          if (a.status === 'paid' || a.status === 'cancelled') return acc;
+                          const paid = (a.payable_payments || []).reduce((s: any, p: any) => s + Number(p.amount_usd || 0), 0);
+                          const total = Number(a.total_amount_usd || 0);
+                          if (paid >= total - 0.01) return acc;
+                          return acc + Math.max(0, total - paid);
+                        }, 0))}
                       </div>
                     </div>
                   </div>
@@ -1738,10 +1595,11 @@ export default function ClienteDashboard() {
                     <tbody>
                       {clientPayableAccounts.map(account => {
                         const paid = account.payable_payments?.reduce((s: any, p: any) => s + Number(p.amount_usd), 0) || 0;
-                        const balance = Number(account.total_amount_usd) - paid;
+                        const isPaid = account.status === 'paid' || paid >= Number(account.total_amount_usd) - 0.01;
+                        const isCancelled = account.status === 'cancelled';
+                        const balance = (isPaid || isCancelled) ? 0 : Math.max(0, Number(account.total_amount_usd) - paid);
                         const isExpanded = payableExpandedRows.has(account.id);
                         const progress = account.total_amount_usd > 0 ? Math.min(100, Math.round((paid / account.total_amount_usd) * 100)) : 0;
-                        const isFromCommitment = Boolean(account.commitment_id);
 
                         return (
                           <React.Fragment key={account.id}>
@@ -1752,11 +1610,6 @@ export default function ClienteDashboard() {
                               <td style={{ padding: '1rem' }}>
                                 <div style={{ fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                                   {account.name}
-                                  {isFromCommitment && (
-                                    <span style={{ fontSize: '0.65rem', background: 'rgba(59,130,246,0.1)', color: 'var(--primary-color)', padding: '0.1rem 0.4rem', borderRadius: '4px', border: '1px solid rgba(59,130,246,0.2)' }}>
-                                      COMPROMISO
-                                    </span>
-                                  )}
                                 </div>
                                 <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'capitalize' }}>{account.type}</div>
                               </td>
@@ -1765,9 +1618,9 @@ export default function ClienteDashboard() {
                               </td>
                               <td style={{ padding: '1rem', textAlign: 'right' }}>${formatCurrency(account.total_amount_usd)}</td>
                               <td style={{ padding: '1rem', textAlign: 'right', color: 'var(--success)' }}>${formatCurrency(paid)}</td>
-                              <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold', color: 'var(--danger)' }}>${formatCurrency(balance)}</td>
+                              <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold', color: balance > 0 ? 'var(--danger)' : 'var(--success)' }}>${formatCurrency(balance)}</td>
                               <td style={{ padding: '1rem', textAlign: 'right' }}>
-                                {!isViewer && !isActionDisabledForSales(account.project_id) && (
+                                {!isViewer && !isActionDisabledForSales(account.project_id) && balance > 0 && !isPaid && !isCancelled && (
                                   <button 
                                     className="btn-primary" 
                                     style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem' }}
@@ -2255,7 +2108,7 @@ export default function ClienteDashboard() {
       {showCommitmentModal && (
         <div className="modal-overlay">
           <div className="card modal-content animate-fade" style={{ maxWidth: '500px', width: '90%' }}>
-            <h2 style={{ marginBottom: '1.5rem', color: 'white' }}>Registrar Compromiso</h2>
+            <h2 style={{ marginBottom: '1.5rem', color: 'white' }}>Registrar Cuenta por Pagar</h2>
             <form onSubmit={handleAddCommitment} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               <div>
                 <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Proyecto Relacionado</label>
@@ -2266,7 +2119,7 @@ export default function ClienteDashboard() {
                 </select>
               </div>
               <div>
-                <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Fecha del Compromiso</label>
+                <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Fecha</label>
                 <input type="date" required className="input-field" value={commitmentForm.date} onChange={e => setCommitmentForm({...commitmentForm, date: e.target.value})} />
               </div>
               <div>
@@ -2302,7 +2155,7 @@ export default function ClienteDashboard() {
               </div>
               <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
                 <button type="button" className="btn-secondary" style={{ flex: 1 }} onClick={() => setShowCommitmentModal(false)}>Cancelar</button>
-                <button type="submit" className="btn-primary" style={{ flex: 1, justifyContent: 'center' }}>Guardar Compromiso</button>
+                <button type="submit" className="btn-primary" style={{ flex: 1, justifyContent: 'center' }}>Guardar Cuenta por Pagar</button>
               </div>
             </form>
           </div>
@@ -2451,7 +2304,7 @@ export default function ClienteDashboard() {
             <p style={{ color: 'var(--text-muted)', fontSize: '0.83rem', marginBottom: '1.2rem', marginTop: 0 }}>
               {printMode === 'client-statement' 
                 ? 'Documento formal para el cliente: muestra presupuestos base, adicionales y abonos recibidos (sin costos internos ni utilidades).' 
-                : 'Reporte confidencial de socios: incluye gastos detallados, compromisos con proveedores, margen de ganancia y retiros.'}
+                : 'Reporte confidencial de socios: incluye gastos detallados, cuentas por pagar a proveedores, margen de ganancia y retiros.'}
             </p>
 
             {/* Proyectos activos/completados */}
@@ -2794,7 +2647,7 @@ export default function ClienteDashboard() {
                   <td style={{ padding: '0.5rem', border: '1px solid #ccc', textAlign: 'right', color: '#d32f2f' }}>${formatCurrency(printTotalCostsValue)}</td>
                 </tr>
                 <tr>
-                  <td style={{ padding: '0.5rem', border: '1px solid #ccc', background: '#f8f9fa' }}><strong>Compromisos Pendientes:</strong></td>
+                  <td style={{ padding: '0.5rem', border: '1px solid #ccc', background: '#f8f9fa' }}><strong>Cuentas por Pagar Pendientes:</strong></td>
                   <td style={{ padding: '0.5rem', border: '1px solid #ccc', textAlign: 'right', color: '#d32f2f' }}>${formatCurrency(printTotalCommitted)}</td>
                 </tr>
                 <tr>
@@ -2913,10 +2766,10 @@ export default function ClienteDashboard() {
               </table>
             )}
 
-            {/* Detalle de Compromisos */}
-            <h3 style={{ fontSize: '16px', borderBottom: '1px solid #ccc', paddingBottom: '0.5rem', marginBottom: '1rem' }}>4. COMPROMISOS (GASTOS POR EJECUTAR)</h3>
+            {/* Detalle de Cuentas por Pagar */}
+            <h3 style={{ fontSize: '16px', borderBottom: '1px solid #ccc', paddingBottom: '0.5rem', marginBottom: '1rem' }}>4. CUENTAS POR PAGAR (PENDIENTES)</h3>
             {printCommitments.length === 0 ? (
-               <p style={{ fontSize: '12px', color: '#555', marginBottom: '2rem' }}>No hay compromisos pendientes por ejecutar.</p>
+               <p style={{ fontSize: '12px', color: '#555', marginBottom: '2rem' }}>No hay cuentas por pagar pendientes por liquidar.</p>
             ) : (
               <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '2rem', fontSize: '12px' }}>
                 <thead>
@@ -2943,7 +2796,7 @@ export default function ClienteDashboard() {
                     </tr>
                   ))}
                   <tr style={{ background: '#f8f9fa', fontWeight: 'bold' }}>
-                    <td colSpan={6} style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>Total Compromisos Pendientes:</td>
+                    <td colSpan={6} style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>Total Cuentas por Pagar Pendientes:</td>
                     <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right', color: '#d32f2f' }}>${formatCurrency(printTotalCommitted)}</td>
                   </tr>
                 </tbody>
@@ -3255,13 +3108,13 @@ export default function ClienteDashboard() {
       />
 
 
-      {/* Modal de Edición de Items (Pagos, Gastos, Compromisos) */}
+      {/* Modal de Edición de Items (Pagos, Gastos, Cuentas por Pagar) */}
       {showEditItemModal && editingItem && editItemType && (
         <div className="modal-overlay">
           <div className="card modal-content animate-fade" style={{ maxWidth: '700px', width: '95%', maxHeight: '90vh', overflowY: 'auto' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
               <h2 style={{ margin: 0, color: 'white', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <Edit3 size={20} /> Editar {editItemType === 'payment' ? 'Pago' : editItemType === 'cost' ? 'Gasto' : 'Compromiso'}
+                <Edit3 size={20} /> Editar {editItemType === 'payment' ? 'Pago' : editItemType === 'cost' ? 'Gasto' : 'Cuenta por Pagar'}
               </h2>
               <button onClick={() => { setShowEditItemModal(false); setEditingItem(null); }} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>
                 <X size={24} />
@@ -3500,7 +3353,7 @@ export default function ClienteDashboard() {
         </div>
       )}
 
-      {/* Modal de Abono o Pago a Compromiso */}
+      {/* Modal de Abono o Pago a Cuenta por Pagar */}
       {showCommitmentPayModal && commitmentToPay && (() => {
         const previouslyPaid = commitmentToPay.payable_accounts?.[0]?.payable_payments?.reduce((s: any, p: any) => s + Number(p.amount_usd), 0) || 0;
         const totalCommitmentAmount = Number(commitmentToPay.amount_usd || (commitmentToPay.quantity * commitmentToPay.unit_price_usd));
@@ -3511,15 +3364,15 @@ export default function ClienteDashboard() {
             <div className="card modal-content animate-fade" style={{ maxWidth: '450px', width: '90%', padding: '2rem' }}>
               <h2 style={{ fontSize: '1.3rem', color: 'white', margin: '0 0 1rem 0', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <CheckCircle size={22} color="var(--success)" />
-                {commitmentPayMode === 'total' ? 'Pagar Compromiso Total' : 'Abonar a Compromiso'}
+                {commitmentPayMode === 'total' ? 'Pagar Cuenta por Pagar Total' : 'Abonar a Cuenta por Pagar'}
               </h2>
               <div style={{ marginBottom: '1.5rem', color: 'var(--text-muted)', fontSize: '0.9rem', background: 'rgba(0,0,0,0.2)', padding: '1rem', borderRadius: '8px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem' }}>
-                  <span>Proveedor:</span>
+                  <span>Proveedor / Beneficiario:</span>
                   <strong style={{ color: 'white' }}>{commitmentToPay.provider || 'N/A'}</strong>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem' }}>
-                  <span>Total Compromiso:</span>
+                  <span>Total Cuenta por Pagar:</span>
                   <strong style={{ color: 'white' }}>${formatCurrency(totalCommitmentAmount)}</strong>
                 </div>
                 {previouslyPaid > 0 && (
@@ -3617,7 +3470,7 @@ export default function ClienteDashboard() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.5rem', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '1rem' }}>
               <div>
                 <h2 style={{ fontSize: '1.4rem', color: 'white', margin: '0 0 0.5rem 0', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <ClipboardList size={24} color="var(--primary-color)" /> Detalles del Compromiso
+                  <ClipboardList size={24} color="var(--primary-color)" /> Detalles de la Cuenta por Pagar
                 </h2>
                 <div style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>
                   <strong>Concepto:</strong> {selectedCommitmentForDetails.description} <br/>
@@ -3656,7 +3509,7 @@ export default function ClienteDashboard() {
                     </h4>
                     {!c.payable_accounts?.[0]?.payable_payments || c.payable_accounts[0].payable_payments.length === 0 ? (
                       <div style={{ padding: '1.5rem', textAlign: 'center', background: 'rgba(0,0,0,0.2)', borderRadius: '8px', color: 'var(--text-muted)' }}>
-                        No hay abonos registrados para este compromiso.
+                        No hay abonos registrados para esta cuenta por pagar.
                       </div>
                     ) : (
                       <div style={{ overflowX: 'auto', background: 'rgba(0,0,0,0.2)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.05)' }}>
@@ -3875,7 +3728,7 @@ export default function ClienteDashboard() {
                     )}
                     {clientPendingSummary.commitmentsCount > 0 && (
                       <li style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#fde047' }}>
-                        • <strong>{clientPendingSummary.commitmentsCount}</strong> Compromisos / Cuentas por pagar vinculadas
+                        • <strong>{clientPendingSummary.commitmentsCount}</strong> Cuentas por pagar vinculadas
                       </li>
                     )}
                     {clientPendingSummary.pendingTelegramCount > 0 && (

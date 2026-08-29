@@ -264,7 +264,12 @@ export default function CuentasPorPagarPage() {
   const totalPaidActive = activeAccounts.reduce((acc, a) => 
     acc + (a.payable_payments?.reduce((s, p) => s + Number(p.amount_usd), 0) || 0)
   , 0);
-  const pendingBalance = totalCommitted - totalPaidActive;
+  const pendingBalance = activeAccounts.reduce((sum, a) => {
+    const paid = a.payable_payments?.reduce((s, p) => s + Number(p.amount_usd), 0) || 0;
+    const total = Number(a.total_amount_usd);
+    if (paid >= total - 0.01) return sum;
+    return sum + Math.max(0, total - paid);
+  }, 0);
 
   return (
     <div className="animate-fade-in">
@@ -349,19 +354,15 @@ export default function CuentasPorPagarPage() {
               <tbody>
                 {accounts.map(account => {
                   const paid = account.payable_payments?.reduce((s, p) => s + Number(p.amount_usd), 0) || 0;
-                  const balance = Number(account.total_amount_usd) - paid;
-                  const isFromCommitment = Boolean(account.commitment_id);
+                  const isPaid = account.status === 'paid' || paid >= Number(account.total_amount_usd) - 0.01;
+                  const isCancelled = account.status === 'cancelled';
+                  const balance = (isPaid || isCancelled) ? 0 : Math.max(0, Number(account.total_amount_usd) - paid);
 
                   return (
                     <tr key={account.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
                       <td style={{ padding: '1rem' }}>
                           <div style={{ fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                             {account.name}
-                            {isFromCommitment && (
-                              <span style={{ fontSize: '0.65rem', background: 'rgba(59,130,246,0.1)', color: 'var(--primary-color)', padding: '0.1rem 0.4rem', borderRadius: '4px', border: '1px solid rgba(59,130,246,0.2)' }}>
-                                COMPROMISO
-                              </span>
-                            )}
                           </div>
                           {account.contact_info && <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{account.contact_info}</div>}
                         </td>
@@ -466,7 +467,9 @@ export default function CuentasPorPagarPage() {
               const account = selectedAccountForDetails;
               const paid = account.payable_payments?.reduce((s: any, p: any) => s + Number(p.amount_usd), 0) || 0;
               const total = Number(account.total_amount_usd);
-              const balance = total - paid;
+              const isPaid = account.status === 'paid' || paid >= total - 0.01;
+              const isCancelled = account.status === 'cancelled';
+              const balance = (isPaid || isCancelled) ? 0 : Math.max(0, total - paid);
               const progress = total > 0 ? Math.min(100, Math.round((paid / total) * 100)) : 0;
 
               return (

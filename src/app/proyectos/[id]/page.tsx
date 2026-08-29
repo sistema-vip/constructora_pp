@@ -85,16 +85,23 @@ interface ProjectExtra {
   created_at: string;
 }
 
-interface Commitment {
+interface PayableAccount {
   id: string;
+  name?: string;
   description: string;
   provider?: string;
-  category: string;
-  quantity: number;
-  unit_price_usd: number;
-  amount_usd: number;
-  date: string;
-  payable_accounts?: { payable_payments?: { amount_usd: number }[] }[];
+  category?: string;
+  type?: string;
+  quantity?: number;
+  unit_price_usd?: number;
+  amount_usd?: number;
+  total_amount_usd?: number;
+  date?: string;
+  created_at?: string;
+  status?: string;
+  commitment_id?: string;
+  payable_accounts?: { id?: string; status?: string; payable_payments?: { id?: string; amount_usd: number; description?: string; reference?: string; date?: string }[] }[];
+  payable_payments?: { id?: string; amount_usd: number; description?: string; reference?: string; date?: string }[];
 }
 
 export default function ProjectDashboard() {
@@ -123,16 +130,16 @@ export default function ProjectDashboard() {
   const [payments, setPayments] = useState<Payment[]>([]);
   const [costs, setCosts] = useState<Cost[]>([]);
   const [extras, setExtras] = useState<ProjectExtra[]>([]);
-  const [commitments, setCommitments] = useState<Commitment[]>([]);
+  const [payables, setPayables] = useState<PayableAccount[]>([]);
   const [advances, setAdvances] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [isPrintingReport, setIsPrintingReport] = useState(false);
-  const [activeTab, setActiveTab] = useState<'pagos' | 'gastos' | 'adicionales' | 'compromisos' | 'retiros' | 'detalles' | 'seguimiento'>('pagos');
+  const [activeTab, setActiveTab] = useState<'pagos' | 'gastos' | 'adicionales' | 'cuentas_pagar' | 'retiros' | 'detalles' | 'seguimiento'>('pagos');
 
-  // Estado para impresión y detalles de compromiso
-  const [activePrintJob, setActivePrintJob] = useState<'none' | 'project-report' | 'client-statement' | 'commitment-voucher'>('none');
-  const [printCommitmentData, setPrintCommitmentData] = useState<any>(null);
-  const [selectedCommitmentForDetails, setSelectedCommitmentForDetails] = useState<any>(null);
+  // Estado para impresión y detalles de cuentas por pagar
+  const [activePrintJob, setActivePrintJob] = useState<'none' | 'project-report' | 'client-statement' | 'payable-voucher'>('none');
+  const [printPayableData, setPrintPayableData] = useState<any>(null);
+  const [selectedPayableForDetails, setSelectedPayableForDetails] = useState<any>(null);
 
   // Permisos
   const { role } = useUser();
@@ -144,21 +151,20 @@ export default function ProjectDashboard() {
   const [showCostModal, setShowCostModal] = useState(false);
   const [showExtraModal, setShowExtraModal] = useState(false);
   const [showAdvanceModal, setShowAdvanceModal] = useState(false);
-  const [showCommitmentModal, setShowCommitmentModal] = useState(false);
-
+  const [showPayableModal, setShowPayableModal] = useState(false);
 
   // Forms state
   const [paymentForm, setPaymentForm] = useState({ amount_usd: '', reference: '', description: '', date: new Date().toISOString().split('T')[0] });
   const [costForm, setCostForm] = useState({ description: '', provider: '', category: 'materials', quantity: 1, unit_price_usd: '', date: new Date().toISOString().split('T')[0] });
   const [extraForm, setExtraForm] = useState({ description: '', amount_usd: '' });
   const [advanceForm, setAdvanceForm] = useState({ partner_name: 'Henry Peraza', amount_usd: '', description: '', date: new Date().toISOString().split('T')[0] });
-  const [commitmentForm, setCommitmentForm] = useState({ description: '', provider: '', category: 'materials', quantity: 1, unit_price_usd: '', date: new Date().toISOString().split('T')[0] });
+  const [payableForm, setPayableForm] = useState({ description: '', provider: '', category: 'materials', type: 'proveedor', quantity: 1, unit_price_usd: '', total_amount_usd: '', date: new Date().toISOString().split('T')[0] });
 
-  // Estado para pagos a compromisos
-  const [showCommitmentPayModal, setShowCommitmentPayModal] = useState(false);
-  const [commitmentToPay, setCommitmentToPay] = useState<any>(null);
-  const [commitmentPayMode, setCommitmentPayMode] = useState<'abono' | 'total'>('abono');
-  const [commitmentPayForm, setCommitmentPayForm] = useState({
+  // Estado para pagos a cuentas por pagar
+  const [showPayablePayModal, setShowPayablePayModal] = useState(false);
+  const [payableToPay, setPayableToPay] = useState<any>(null);
+  const [payablePayMode, setPayablePayMode] = useState<'abono' | 'total'>('abono');
+  const [payablePayForm, setPayablePayForm] = useState({
     amount_usd: '', description: '', reference: '', date: new Date().toISOString().split('T')[0]
   });
 
@@ -166,14 +172,14 @@ export default function ProjectDashboard() {
   const [showCloseConfirm, setShowCloseConfirm] = useState(false);
   const [showArchiveConfirm, setShowArchiveConfirm] = useState(false);
 
-  // Estado para edición de gastos y compromisos
+  // Estado para edición de gastos y cuentas por pagar
   const [editingCost, setEditingCost] = useState<Cost | null>(null);
-  const [editingCommitment, setEditingCommitment] = useState<Commitment | null>(null);
+  const [editingPayable, setEditingPayable] = useState<PayableAccount | null>(null);
 
   // Estados para edición inline (estilo clientes)
   const [showEditItemModal, setShowEditItemModal] = useState(false);
   const [editingItem, setEditingItem] = useState<any>(null);
-  const [editItemType, setEditItemType] = useState<'payment' | 'cost' | 'commitment' | 'advance' | null>(null);
+  const [editItemType, setEditItemType] = useState<'payment' | 'cost' | 'payable' | 'commitment' | 'advance' | null>(null);
   const [editItemForm, setEditItemForm] = useState<any>({});
 
   // Estados para eliminación protegida (estilo clientes)
@@ -182,8 +188,8 @@ export default function ProjectDashboard() {
   const [authError, setAuthError] = useState('');
   const [deleting, setDeleting] = useState(false);
   const [adminActionType, setAdminActionType] = useState<'delete' | 'edit' | 'revert' | 'approve_proposal' | 'reject_proposal'>('delete');
-  const [itemToDelete, setItemToDelete] = useState<{ id: string, type: 'payment' | 'cost' | 'extra' | 'commitment' | 'advance' } | null>(null);
-  const [pendingEditItem, setPendingEditItem] = useState<{ item: any, type: 'payment' | 'cost' | 'commitment' | 'advance' } | null>(null);
+  const [itemToDelete, setItemToDelete] = useState<{ id: string, type: 'payment' | 'cost' | 'extra' | 'payable' | 'commitment' | 'advance' } | null>(null);
+  const [pendingEditItem, setPendingEditItem] = useState<{ item: any, type: 'payment' | 'cost' | 'payable' | 'commitment' | 'advance' } | null>(null);
 
   useEffect(() => {
     if (projectId) {
@@ -194,11 +200,13 @@ export default function ProjectDashboard() {
       
       const urlParams = new URLSearchParams(window.location.search);
       const tabParam = urlParams.get('tab');
-      if (tabParam === 'compromisos' || tabParam === 'gastos' || tabParam === 'pagos' || tabParam === 'adicionales' || tabParam === 'retiros' || tabParam === 'detalles' || tabParam === 'seguimiento') {
+      if (tabParam === 'compromisos' || tabParam === 'cuentas_pagar') {
+        setActiveTab('cuentas_pagar');
+      } else if (tabParam === 'gastos' || tabParam === 'pagos' || tabParam === 'adicionales' || tabParam === 'retiros' || tabParam === 'detalles' || tabParam === 'seguimiento') {
         setActiveTab(tabParam as any);
       }
     }
-  }, [projectId, role]); // removed isViewer to prevent infinite loops when project.status changes
+  }, [projectId, role]);
 
   async function fetchProjectData() {
     setLoading(true);
@@ -208,24 +216,18 @@ export default function ProjectDashboard() {
         paymentsRes,
         costsRes,
         extrasRes,
-        advancesRes
+        advancesRes,
+        payablesRes,
+        legacyCommitRes
       ] = await Promise.all([
         supabase.from('projects').select('*, clients(*)').eq('id', projectId).single(),
         supabase.from('project_payments').select('*').eq('project_id', projectId).order('date', { ascending: false }),
         supabase.from('project_costs').select('*').eq('project_id', projectId).order('created_at', { ascending: false }),
         supabase.from('project_extras').select('*').eq('project_id', projectId).order('created_at', { ascending: true }),
-        supabase.from('partner_advances').select('*').eq('project_id', projectId).order('date', { ascending: false })
+        supabase.from('partner_advances').select('*').eq('project_id', projectId).order('date', { ascending: false }),
+        supabase.from('payable_accounts').select('*, payable_payments(id, amount_usd, description, reference, date)').eq('project_id', projectId).order('created_at', { ascending: false }),
+        supabase.from('project_commitments').select('*, payable_accounts(id, status, payable_payments(id, amount_usd, description, reference, date))').eq('project_id', projectId).order('date', { ascending: false })
       ]);
-
-      // Intentar query con payable_accounts; fallback si migración no aplicada
-      let commitmentsData: any[] = [];
-      const richCommit = await supabase.from('project_commitments').select('*, payable_accounts(id, payable_payments(id, amount_usd, description, reference, date))').eq('project_id', projectId).order('date', { ascending: false });
-      if (richCommit.error) {
-        const fallbackCommit = await supabase.from('project_commitments').select('*').eq('project_id', projectId).order('date', { ascending: false });
-        if (!fallbackCommit.error) commitmentsData = fallbackCommit.data || [];
-      } else {
-        commitmentsData = richCommit.data || [];
-      }
 
       if (projectRes.error) throw projectRes.error;
       if (paymentsRes.error) throw paymentsRes.error;
@@ -233,12 +235,66 @@ export default function ProjectDashboard() {
       if (extrasRes.error) throw extrasRes.error;
       if (advancesRes.error) throw advancesRes.error;
 
+      // Unificar datos de Cuentas por Pagar (payable_accounts como fuente principal + compromisos heredados)
+      const unifiedPayables: PayableAccount[] = [];
+      const seenCommitmentIds = new Set<string>();
+
+      if (!payablesRes.error && payablesRes.data) {
+        payablesRes.data.forEach((p: any) => {
+          if (p.commitment_id) seenCommitmentIds.add(p.commitment_id);
+          unifiedPayables.push({
+            ...p,
+            provider: p.name,
+            total_amount_usd: Number(p.total_amount_usd || 0),
+            amount_usd: Number(p.total_amount_usd || 0),
+            date: p.date || (p.created_at ? new Date(p.created_at).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]),
+            payable_payments: p.payable_payments || []
+          });
+        });
+      }
+
+      if (!legacyCommitRes.error && legacyCommitRes.data) {
+        legacyCommitRes.data.forEach((c: any) => {
+          if (!seenCommitmentIds.has(c.id)) {
+            let payableType = 'otro';
+            if (c.category === 'materials') payableType = 'proveedor';
+            else if (c.category === 'labor') payableType = 'obrero';
+            else if (c.category === 'equipment') payableType = 'alquiler';
+            else if (c.category === 'subcontract') payableType = 'subcontratista';
+
+            const linkedPayable = c.payable_accounts?.[0];
+            const payments = linkedPayable?.payable_payments || [];
+            const status = linkedPayable?.status || 'active';
+            const totalAmt = Number(c.amount_usd || (Number(c.quantity || 1) * Number(c.unit_price_usd || 0)));
+
+            unifiedPayables.push({
+              id: c.id,
+              name: c.provider || 'Proveedor sin nombre',
+              provider: c.provider || 'Proveedor sin nombre',
+              type: payableType,
+              category: c.category,
+              description: c.description,
+              quantity: c.quantity || 1,
+              unit_price_usd: c.unit_price_usd || totalAmt,
+              amount_usd: totalAmt,
+              total_amount_usd: totalAmt,
+              date: c.date,
+              created_at: c.created_at || c.date,
+              status: status,
+              commitment_id: c.id,
+              payable_payments: payments,
+              payable_accounts: c.payable_accounts
+            });
+          }
+        });
+      }
+
       setProject(projectRes.data);
       setPayments(paymentsRes.data || []);
       setCosts(costsRes.data || []);
       setExtras(extrasRes.data || []);
       setAdvances(advancesRes.data || []);
-      setCommitments(commitmentsData);
+      setPayables(unifiedPayables);
 
     } catch (error: any) {
       console.error("Error fetching data:", error);
@@ -252,16 +308,21 @@ export default function ProjectDashboard() {
   const baseBudget = Number(project?.budget_usd || 0);
   const totalExtra = extras.reduce((sum, e) => sum + (Number(e.amount_usd) || 0), 0);
   const totalAdvances = advances.reduce((sum, a) => sum + (Number(a.amount_usd) || 0), 0);
-  const totalCommitments = commitments.reduce((sum, c) => {
-    const paid = c.payable_accounts?.[0]?.payable_payments?.reduce((s: any, p: any) => s + Number(p.amount_usd), 0) || 0;
-    const balance = Number(c.amount_usd || (c.quantity * c.unit_price_usd)) - paid;
-    return sum + Math.max(0, balance);
+  const totalPayablesPending = payables.reduce((sum, p) => {
+    // Si la cuenta está saldada o cancelada, se excluye de la deuda pendiente
+    if (p.status === 'paid' || p.status === 'cancelled') return sum;
+    const paid = (p.payable_payments || []).reduce((s: any, pay: any) => s + Number(pay.amount_usd || 0), 0);
+    const totalAmount = Number(p.total_amount_usd || p.amount_usd || ((p.quantity || 1) * (p.unit_price_usd || 0)) || 0);
+    const isPaid = paid >= totalAmount - 0.01;
+    if (isPaid) return sum;
+    const balance = Math.max(0, totalAmount - paid);
+    return sum + balance;
   }, 0);
   const totalBudget = baseBudget + totalExtra;
   const totalPaid = payments.reduce((sum, p) => sum + (Number(p.amount_usd) || 0), 0);
   const balanceDue = totalBudget - totalPaid;
   const totalCosts = costs.reduce((sum, c) => sum + (Number(c.quantity || 0) * (Number(c.unit_price_usd) || 0)), 0);
-  const estimatedProfit = totalBudget - totalCosts - totalCommitments;
+  const estimatedProfit = totalBudget - totalCosts - totalPayablesPending;
   const netProfit = estimatedProfit - totalAdvances;
 
   // Partner advances calculation
@@ -338,27 +399,36 @@ export default function ProjectDashboard() {
     else fetchProjectData();
   }
 
-  function openEditCommitment(c: Commitment) {
-    setEditingCommitment(c);
-    setCommitmentForm({
-      description: c.description,
-      provider: c.provider || '',
-      category: c.category,
-      quantity: c.quantity,
-      unit_price_usd: c.unit_price_usd.toString(),
-      date: c.date || new Date().toISOString().split('T')[0]
+  function openEditPayable(p: PayableAccount) {
+    setEditingPayable(p);
+    setPayableForm({
+      description: p.description,
+      provider: p.provider || p.name || '',
+      category: p.category || 'materials',
+      type: p.type || 'proveedor',
+      quantity: p.quantity || 1,
+      unit_price_usd: (p.unit_price_usd || p.total_amount_usd || p.amount_usd || '').toString(),
+      total_amount_usd: (p.total_amount_usd || p.amount_usd || '').toString(),
+      date: p.date || (p.created_at ? new Date(p.created_at).toISOString().split('T')[0] : new Date().toISOString().split('T')[0])
     });
-    setShowCommitmentModal(true);
+    setShowPayableModal(true);
   }
 
-  async function handleDeleteCommitment(id: string) {
-    if (!confirm('¿Eliminar este compromiso? Esta acción no se puede deshacer.')) return;
-    const { error } = await supabase.from('project_commitments').delete().eq('id', id);
-    if (error) alert('Error al eliminar compromiso: ' + error.message);
-    else fetchProjectData();
+  async function handleDeletePayable(id: string) {
+    if (!confirm('¿Eliminar esta cuenta por pagar? Esta acción no se puede deshacer.')) return;
+    const item = payables.find(p => p.id === id);
+    if (item?.commitment_id) {
+      await supabase.from('project_commitments').delete().eq('id', item.commitment_id);
+    }
+    const { error } = await supabase.from('payable_accounts').delete().eq('id', id);
+    if (error) {
+      // Intentar eliminar de project_commitments si es un registro legacy
+      await supabase.from('project_commitments').delete().eq('id', id);
+    }
+    fetchProjectData();
   }
 
-  const initiateDelete = (id: string, type: 'payment' | 'cost' | 'extra' | 'commitment' | 'advance') => {
+  const initiateDelete = (id: string, type: 'payment' | 'cost' | 'extra' | 'payable' | 'commitment' | 'advance') => {
     setItemToDelete({ id, type });
     setAdminActionType('delete');
     setShowAdminAuth(true);
@@ -377,12 +447,21 @@ export default function ProjectDashboard() {
       if (!itemToDelete) return;
       setDeleting(true);
       try {
-        const tableMap: Record<string, string> = {
-          payment: 'project_payments', cost: 'project_costs',
-          extra: 'project_extras', commitment: 'project_commitments', advance: 'partner_advances'
-        };
-        const { error } = await supabase.from(tableMap[itemToDelete.type]).delete().eq('id', itemToDelete.id);
-        if (error) throw error;
+        if (itemToDelete.type === 'payable' || itemToDelete.type === 'commitment') {
+          const item = payables.find(p => p.id === itemToDelete.id);
+          if (item?.commitment_id) {
+            await supabase.from('project_commitments').delete().eq('id', item.commitment_id);
+          }
+          await supabase.from('payable_accounts').delete().eq('id', itemToDelete.id);
+          await supabase.from('project_commitments').delete().eq('id', itemToDelete.id);
+        } else {
+          const tableMap: Record<string, string> = {
+            payment: 'project_payments', cost: 'project_costs',
+            extra: 'project_extras', advance: 'partner_advances'
+          };
+          const { error } = await supabase.from(tableMap[itemToDelete.type]).delete().eq('id', itemToDelete.id);
+          if (error) throw error;
+        }
         setShowAdminAuth(false);
         setItemToDelete(null);
         fetchProjectData();
@@ -425,7 +504,7 @@ export default function ProjectDashboard() {
     }
   };
 
-  const initiateEditItem = (item: any, type: 'payment' | 'cost' | 'commitment' | 'advance') => {
+  const initiateEditItem = (item: any, type: 'payment' | 'cost' | 'payable' | 'commitment' | 'advance') => {
     if (isViewer) return;
     setPendingEditItem({ item, type });
     setAdminActionType('edit');
@@ -455,26 +534,47 @@ export default function ProjectDashboard() {
           description: editItemForm.description,
           date: editItemForm.date
         };
-      } else if (editItemType === 'commitment') {
-        table = 'project_commitments';
-        const up = parseCurrency(editItemForm.unit_price_usd);
-        const amount_usd = editItemForm.quantity * up;
-        updateData = { description: editItemForm.description, provider: editItemForm.provider, category: editItemForm.category, quantity: editItemForm.quantity, unit_price_usd: up, amount_usd: amount_usd, date: editItemForm.date };
-        
-        const { error } = await supabase.from(table).update(updateData).eq('id', editingItem.id);
-        if (error) throw error;
-        
+      } else if (editItemType === 'payable' || editItemType === 'commitment') {
+        const up = parseCurrency(String(editItemForm.unit_price_usd || editItemForm.total_amount_usd || 0));
+        const qty = Number(editItemForm.quantity || 1);
+        const amount_usd = qty > 1 ? qty * up : (parseCurrency(String(editItemForm.total_amount_usd)) || up);
+
+        // Actualizar payable_accounts
         await supabase.from('payable_accounts').update({
-          name: editItemForm.provider || 'Proveedor sin nombre',
+          name: editItemForm.provider || editItemForm.name || 'Proveedor sin nombre',
           total_amount_usd: amount_usd,
-          description: editItemForm.description
-        }).eq('commitment_id', editingItem.id);
+          description: editItemForm.description,
+          status: editItemForm.status || 'active'
+        }).eq('id', editingItem.id);
+
+        if (editingItem.commitment_id) {
+          await supabase.from('project_commitments').update({
+            description: editItemForm.description,
+            provider: editItemForm.provider || editItemForm.name,
+            category: editItemForm.category || 'materials',
+            quantity: qty,
+            unit_price_usd: up,
+            amount_usd: amount_usd,
+            date: editItemForm.date
+          }).eq('id', editingItem.commitment_id);
+        } else {
+          // Intentar actualizar en project_commitments por id directo si fuera legacy
+          await supabase.from('project_commitments').update({
+            description: editItemForm.description,
+            provider: editItemForm.provider || editItemForm.name,
+            category: editItemForm.category || 'materials',
+            quantity: qty,
+            unit_price_usd: up,
+            amount_usd: amount_usd,
+            date: editItemForm.date
+          }).eq('id', editingItem.id);
+        }
         
         setShowEditItemModal(false);
         setEditingItem(null);
         setEditItemType(null);
         fetchProjectData();
-        return; // Return early since we already handled the state updates
+        return;
       }
       const { error } = await supabase.from(table).update(updateData).eq('id', editingItem.id);
       if (error) throw error;
@@ -524,161 +624,162 @@ export default function ProjectDashboard() {
     }
   }
 
-  async function handleAddCommitment(e: React.FormEvent) {
+  async function handleAddPayable(e: React.FormEvent) {
     e.preventDefault();
-    const data = {
-      description: commitmentForm.description,
-      provider: commitmentForm.provider,
-      category: commitmentForm.category,
-      quantity: commitmentForm.quantity,
-      unit_price_usd: parseCurrency(String(commitmentForm.unit_price_usd)),
-      amount_usd: commitmentForm.quantity * parseCurrency(String(commitmentForm.unit_price_usd)),
-      date: commitmentForm.date
-    };
+    const qty = Number(payableForm.quantity || 1);
+    const unitPrice = parseCurrency(String(payableForm.unit_price_usd));
+    const totalAmt = qty > 1 && unitPrice > 0 ? qty * unitPrice : (parseCurrency(String(payableForm.total_amount_usd)) || unitPrice);
 
-    let errorToReport = null;
+    let payableType = payableForm.type || 'proveedor';
+    if (payableForm.category === 'materials') payableType = 'proveedor';
+    else if (payableForm.category === 'labor') payableType = 'obrero';
+    else if (payableForm.category === 'equipment') payableType = 'alquiler';
+    else if (payableForm.category === 'subcontract') payableType = 'subcontratista';
 
-    if (editingCommitment) {
-      const { error } = await supabase.from('project_commitments').update(data).eq('id', editingCommitment.id);
-      errorToReport = error;
-      
-      if (!error) {
-        const { data: updatedPayables, error: updatePayableErr } = await supabase.from('payable_accounts').update({
-          name: data.provider || 'Proveedor sin nombre',
-          total_amount_usd: data.amount_usd,
-          description: data.description
-        }).eq('commitment_id', editingCommitment.id).select();
+    try {
+      if (editingPayable) {
+        // Actualizar cuenta existente
+        const { error: paErr } = await supabase.from('payable_accounts').update({
+          name: payableForm.provider || 'Proveedor sin nombre',
+          type: payableType,
+          total_amount_usd: totalAmt,
+          description: payableForm.description
+        }).eq('id', editingPayable.id);
 
-        if (!updatePayableErr && (!updatedPayables || updatedPayables.length === 0)) {
-          let payableType = 'otro';
-          if (data.category === 'materials') payableType = 'proveedor';
-          else if (data.category === 'labor') payableType = 'obrero';
-          else if (data.category === 'equipment') payableType = 'alquiler';
-          else if (data.category === 'subcontract') payableType = 'subcontratista';
-
-          await supabase.from('payable_accounts').insert([{
-            name: data.provider || 'Proveedor sin nombre',
-            type: payableType,
-            total_amount_usd: data.amount_usd,
-            project_id: projectId,
-            commitment_id: editingCommitment.id,
-            description: data.description
-          }]);
+        if (editingPayable.commitment_id) {
+          await supabase.from('project_commitments').update({
+            description: payableForm.description,
+            provider: payableForm.provider,
+            category: payableForm.category,
+            quantity: qty,
+            unit_price_usd: unitPrice || totalAmt,
+            amount_usd: totalAmt,
+            date: payableForm.date
+          }).eq('id', editingPayable.commitment_id);
         }
-      }
-    } else {
-      const { data: newCommitment, error } = await supabase.from('project_commitments').insert([{ project_id: projectId, ...data }]).select().single();
-      errorToReport = error;
-      
-      if (!error && newCommitment) {
-        let payableType = 'otro';
-        if (data.category === 'materials') payableType = 'proveedor';
-        else if (data.category === 'labor') payableType = 'obrero';
-        else if (data.category === 'equipment') payableType = 'alquiler';
-        else if (data.category === 'subcontract') payableType = 'subcontratista';
+        if (paErr) throw paErr;
+      } else {
+        // Crear nuevo registro sincronizado en project_commitments y payable_accounts
+        const { data: newCommitment } = await supabase.from('project_commitments').insert([{
+          project_id: projectId,
+          description: payableForm.description,
+          provider: payableForm.provider,
+          category: payableForm.category,
+          quantity: qty,
+          unit_price_usd: unitPrice || totalAmt,
+          amount_usd: totalAmt,
+          date: payableForm.date
+        }]).select().single();
 
         const { error: payableError } = await supabase.from('payable_accounts').insert([{
-          name: data.provider || 'Proveedor sin nombre',
+          name: payableForm.provider || 'Proveedor sin nombre',
           type: payableType,
-          total_amount_usd: data.amount_usd,
+          total_amount_usd: totalAmt,
           project_id: projectId,
-          commitment_id: newCommitment.id,
-          description: data.description
+          commitment_id: newCommitment?.id || null,
+          description: payableForm.description,
+          status: 'active'
         }]);
-        
-        if (payableError) {
-          console.error('Error creating payable account:', payableError);
-          alert(`Compromiso creado pero falló al generar la cuenta por pagar: ${payableError.message}. \n\nAsegúrate de haber ejecutado las migraciones SQL en Supabase.`);
-        }
-      }
-    }
 
-    if (!errorToReport) {
-      setShowCommitmentModal(false);
-      setEditingCommitment(null);
-      setCommitmentForm({ description: '', provider: '', category: 'materials', quantity: 1, unit_price_usd: '', date: new Date().toISOString().split('T')[0] });
+        if (payableError) throw payableError;
+      }
+
+      setShowPayableModal(false);
+      setEditingPayable(null);
+      setPayableForm({ description: '', provider: '', category: 'materials', type: 'proveedor', quantity: 1, unit_price_usd: '', total_amount_usd: '', date: new Date().toISOString().split('T')[0] });
       fetchProjectData();
-    } else {
-      alert(`Error al guardar compromiso: ${errorToReport.message}`);
+    } catch (err: any) {
+      alert(`Error al guardar cuenta por pagar: ${err.message}`);
     }
   }
 
-  async function handleCommitmentPayment(e: React.FormEvent) {
+  async function handlePayablePayment(e: React.FormEvent) {
     e.preventDefault();
-    if (isViewer || !commitmentToPay) return;
+    if (isViewer || !payableToPay) return;
 
-    const monto = parseFloat(commitmentPayForm.amount_usd) || 0;
+    const monto = parseFloat(payablePayForm.amount_usd) || 0;
     if (monto <= 0) return alert('El monto debe ser mayor a 0');
 
     try {
-      let payableAccountId = commitmentToPay.payable_accounts?.[0]?.id;
+      let payableAccountId = payableToPay.id;
 
-      if (!payableAccountId) {
-        let payableType = 'otro';
-        if (commitmentToPay.category === 'materials') payableType = 'proveedor';
-        else if (commitmentToPay.category === 'labor') payableType = 'obrero';
-        else if (commitmentToPay.category === 'equipment') payableType = 'alquiler';
-        else if (commitmentToPay.category === 'subcontract') payableType = 'subcontratista';
-
-        const { data: newPayable, error: payableError } = await supabase.from('payable_accounts').insert([{
-          name: commitmentToPay.provider || 'Proveedor sin nombre',
-          type: payableType,
-          total_amount_usd: commitmentToPay.amount_usd,
-          project_id: projectId,
-          commitment_id: commitmentToPay.id,
-          description: commitmentToPay.description
-        }]).select().single();
-
-        if (payableError) throw new Error(`Error al crear la cuenta por pagar vinculada: ${payableError.message}`);
-        payableAccountId = newPayable.id;
-        commitmentToPay.payable_accounts = [{ id: payableAccountId, payable_payments: [] }];
+      // Si es un objeto legacy sin id directo en payable_accounts
+      if (!payableAccountId || payableToPay.payable_accounts?.[0]?.id) {
+        payableAccountId = payableToPay.payable_accounts?.[0]?.id || payableToPay.id;
       }
 
-      // 1. Insert into payable_payments
+      // Verificar que exista en payable_accounts
+      const { data: existingPayable } = await supabase.from('payable_accounts').select('id, total_amount_usd, status').eq('id', payableAccountId).maybeSingle();
+
+      if (!existingPayable) {
+        let payableType = 'otro';
+        if (payableToPay.category === 'materials' || payableToPay.type === 'proveedor') payableType = 'proveedor';
+        else if (payableToPay.category === 'labor' || payableToPay.type === 'obrero') payableType = 'obrero';
+        else if (payableToPay.category === 'equipment' || payableToPay.type === 'alquiler') payableType = 'alquiler';
+        else if (payableToPay.category === 'subcontract' || payableToPay.type === 'subcontratista') payableType = 'subcontratista';
+
+        const { data: newPayable, error: createPayableErr } = await supabase.from('payable_accounts').insert([{
+          name: payableToPay.provider || payableToPay.name || 'Proveedor sin nombre',
+          type: payableType,
+          total_amount_usd: Number(payableToPay.total_amount_usd || payableToPay.amount_usd || 0),
+          project_id: projectId,
+          commitment_id: payableToPay.commitment_id || payableToPay.id,
+          description: payableToPay.description,
+          status: 'active'
+        }]).select().single();
+
+        if (createPayableErr) throw new Error(`Error al crear la cuenta por pagar vinculada: ${createPayableErr.message}`);
+        payableAccountId = newPayable.id;
+      }
+
+      // 1. Insertar en payable_payments
       const { error: payError } = await supabase.from('payable_payments').insert([{
         payable_account_id: payableAccountId,
         amount_usd: monto,
-        description: commitmentPayForm.description,
-        reference: commitmentPayForm.reference,
-        date: commitmentPayForm.date
+        description: payablePayForm.description,
+        reference: payablePayForm.reference,
+        date: payablePayForm.date
       }]);
       if (payError) throw new Error(`Error al registrar abono en la cuenta por pagar: ${payError.message}`);
 
-      // 2. Insert into project_costs
-      const previouslyPaid = commitmentToPay.payable_accounts?.[0]?.payable_payments?.reduce((s: any, p: any) => s + Number(p.amount_usd), 0) || 0;
-      const totalAmount = Number(commitmentToPay.amount_usd || (commitmentToPay.quantity * commitmentToPay.unit_price_usd));
+      // 2. Insertar en project_costs (Gastos)
+      const previouslyPaid = (payableToPay.payable_payments || payableToPay.payable_accounts?.[0]?.payable_payments || []).reduce((s: any, p: any) => s + Number(p.amount_usd), 0);
+      const totalAmount = Number(payableToPay.total_amount_usd || payableToPay.amount_usd || (payableToPay.quantity * payableToPay.unit_price_usd) || 0);
       const remainingBalance = totalAmount - previouslyPaid - monto;
       const isFullPay = remainingBalance <= 0.01;
 
-      const descPrefix = isFullPay && previouslyPaid === 0 ? 'Pago compromiso' : isFullPay ? 'Liquidación compromiso' : 'Abono compromiso';
-      const costDescription = commitmentPayForm.description
-        ? `${descPrefix}: ${commitmentToPay.provider || 'Proveedor'} - ${commitmentPayForm.description}`
-        : `${descPrefix}: ${commitmentToPay.provider || 'Proveedor'} - ${commitmentToPay.description}`;
+      const descPrefix = isFullPay && previouslyPaid === 0 ? 'Pago CxP' : isFullPay ? 'Liquidación CxP' : 'Abono CxP';
+      const costDescription = payablePayForm.description
+        ? `${descPrefix}: ${payableToPay.provider || payableToPay.name || 'Proveedor'} - ${payablePayForm.description}`
+        : `${descPrefix}: ${payableToPay.provider || payableToPay.name || 'Proveedor'} - ${payableToPay.description}`;
+
+      let costCategory = payableToPay.category || 'materials';
+      if (payableToPay.type === 'obrero' || payableToPay.category === 'labor') costCategory = 'labor';
+      else if (payableToPay.type === 'alquiler' || payableToPay.category === 'equipment') costCategory = 'equipment';
+      else if (payableToPay.type === 'subcontratista' || payableToPay.category === 'subcontract') costCategory = 'subcontract';
 
       const { error: costError } = await supabase.from('project_costs').insert([{
         project_id: projectId,
         description: costDescription,
-        provider: commitmentToPay.provider || 'N/A',
-        category: commitmentToPay.category, // using original category
+        provider: payableToPay.provider || payableToPay.name || 'N/A',
+        category: costCategory,
         quantity: 1,
         unit_price_usd: monto,
         total_usd: monto,
-        date: commitmentPayForm.date
+        date: payablePayForm.date
       }]);
       if (costError) throw new Error(`Error al registrar como gasto: ${costError.message}`);
 
-      // 3. Update status if fully paid
-      // Usamos una tolerancia de 0.01 por problemas de precision en decimales
+      // 3. Actualizar estado a 'paid' si quedó saldada
       if (remainingBalance <= 0.01) {
-        // Update payable account to 'paid' status
         await supabase.from('payable_accounts')
           .update({ status: 'paid' })
           .eq('id', payableAccountId);
       }
 
-      setShowCommitmentPayModal(false);
-      setCommitmentToPay(null);
-      setCommitmentPayForm({ amount_usd: '', description: '', reference: '', date: new Date().toISOString().split('T')[0] });
+      setShowPayablePayModal(false);
+      setPayableToPay(null);
+      setPayablePayForm({ amount_usd: '', description: '', reference: '', date: new Date().toISOString().split('T')[0] });
       fetchProjectData();
     } catch (err: any) {
       alert(err.message);
@@ -705,13 +806,13 @@ export default function ProjectDashboard() {
     }, 500);
   }
 
-  function handlePrintCommitment(c: any) {
-    setPrintCommitmentData(c);
-    setActivePrintJob('commitment-voucher');
+  function handlePrintPayable(p: any) {
+    setPrintPayableData(p);
+    setActivePrintJob('payable-voucher');
     setTimeout(() => {
       window.print();
       setActivePrintJob('none');
-      setPrintCommitmentData(null);
+      setPrintPayableData(null);
     }, 300);
   }
 
@@ -921,7 +1022,7 @@ export default function ProjectDashboard() {
               <button className="btn-secondary" onClick={() => setShowExtraModal(true)} style={{ height: '38px', padding: '0 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', borderColor: 'var(--accent-blue)', color: 'var(--accent-blue)' }}>
                 <Plus size={15} /> Servicio Adicional
               </button>
-              <button className="btn-secondary" onClick={() => setShowCommitmentModal(true)} style={{ height: '38px', padding: '0 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', borderColor: 'rgba(245,158,11,0.5)', color: 'var(--primary-color)' }}>
+              <button className="btn-secondary" onClick={() => { setEditingPayable(null); setPayableForm({ description: '', provider: '', category: 'materials', type: 'proveedor', quantity: 1, unit_price_usd: '', total_amount_usd: '', date: new Date().toISOString().split('T')[0] }); setShowPayableModal(true); }} style={{ height: '38px', padding: '0 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', borderColor: 'rgba(245,158,11,0.5)', color: 'var(--primary-color)' }}>
                 <ClipboardList size={15} /> Cuenta por Pagar
               </button>
               <button className="btn-secondary" onClick={() => setShowAdvanceModal(true)} style={{ height: '38px', padding: '0 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', borderColor: 'rgba(168,85,247,0.5)', color: '#c084fc' }}>
@@ -989,15 +1090,15 @@ export default function ProjectDashboard() {
           <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Gastos registrados</div>
         </div>
 
-        {/* 5. COMPROMISOS */}
+        {/* 5. CUENTAS POR PAGAR */}
         <div className="card" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.4rem', background: 'linear-gradient(145deg, rgba(245,158,11,0.08) 0%, rgba(0,0,0,0) 100%)', borderColor: 'rgba(245,158,11,0.45)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--primary-color)', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            <AlertCircle size={14} /> <span>Compromisos</span>
+            <AlertCircle size={14} /> <span>Cuentas por Pagar</span>
           </div>
           <div style={{ fontSize: '1.8rem', fontWeight: 800, color: 'white' }}>
-            ${totalCommitments.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            ${totalPayablesPending.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </div>
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Gastos futuros</div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Deudas pendientes</div>
         </div>
 
         {/* 6. GANANCIA FINAL */}
@@ -1008,7 +1109,7 @@ export default function ProjectDashboard() {
           <div style={{ fontSize: '1.8rem', fontWeight: 800, color: 'white' }}>
             ${estimatedProfit.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </div>
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Monto − Gastos − Compromisos</div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Monto − Gastos − Cuentas por Pagar</div>
         </div>
 
         {/* 7. RETIRO DE SOCIOS */}
@@ -1052,10 +1153,10 @@ export default function ProjectDashboard() {
             onClick={() => setActiveTab('adicionales')}
           >Adicionales</button>
           <button
-            className={`btn-secondary ${activeTab === 'compromisos' ? 'btn-primary' : ''}`}
-            style={{ padding: '0.5rem 1rem', background: activeTab === 'compromisos' ? 'var(--primary-color)' : 'transparent', border: 'none', whiteSpace: 'nowrap' }}
-            onClick={() => setActiveTab('compromisos')}
-          >Compromisos</button>
+            className={`btn-secondary ${activeTab === 'cuentas_pagar' ? 'btn-primary' : ''}`}
+            style={{ padding: '0.5rem 1rem', background: activeTab === 'cuentas_pagar' ? 'var(--primary-color)' : 'transparent', border: 'none', whiteSpace: 'nowrap' }}
+            onClick={() => setActiveTab('cuentas_pagar')}
+          >Cuentas por Pagar</button>
           <button
             className={`btn-secondary ${activeTab === 'retiros' ? 'btn-primary' : ''}`}
             style={{ padding: '0.5rem 1rem', background: activeTab === 'retiros' ? '#8b5cf6' : 'transparent', border: 'none', whiteSpace: 'nowrap' }}
@@ -1173,62 +1274,76 @@ export default function ProjectDashboard() {
           </div>
         )}
 
-        {/* TAB: COMPROMISOS */}
-        {activeTab === 'compromisos' && (
+        {/* TAB: CUENTAS POR PAGAR */}
+        {activeTab === 'cuentas_pagar' && (
           <div className="animate-fade">
             {(() => {
-              const activeCommitments = commitments.filter(c => {
-                const paid = c.payable_accounts?.[0]?.payable_payments?.reduce((s: any, p: any) => s + Number(p.amount_usd), 0) || 0;
-                const cTotal = Number(c.amount_usd || (c.quantity * c.unit_price_usd));
-                const balance = Math.max(0, cTotal - paid);
+              const activePayablesList = payables.filter(p => {
+                if (p.status === 'cancelled') return false;
+                const paid = (p.payable_payments || []).reduce((s: any, pay: any) => s + Number(pay.amount_usd || 0), 0);
+                const totalAmt = Number(p.total_amount_usd || p.amount_usd || ((p.quantity || 1) * (p.unit_price_usd || 0)) || 0);
+                const isPaid = p.status === 'paid' || paid >= totalAmt - 0.01;
+                const balance = isPaid ? 0 : Math.max(0, totalAmt - paid);
                 return balance > 0.01;
               });
 
-              return activeCommitments.length === 0 ? (
-                <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>No hay compromisos (gastos por ejecutar) registrados.</div>
+              return activePayablesList.length === 0 ? (
+                <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>No hay cuentas por pagar pendientes registradas para este proyecto.</div>
               ) : (
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
                       <th style={{ textAlign: 'left', padding: '1rem' }}>FECHA</th>
                       <th style={{ textAlign: 'left', padding: '1rem' }}>CONCEPTO</th>
-                      <th style={{ textAlign: 'left', padding: '1rem' }}>PROVEEDOR</th>
+                      <th style={{ textAlign: 'left', padding: '1rem' }}>PROVEEDOR / BENEFICIARIO</th>
                       <th style={{ textAlign: 'right', padding: '1rem' }}>ESTADO</th>
                       <th style={{ textAlign: 'right', padding: '1rem' }}>SALDO (USD)</th>
                       <th style={{ textAlign: 'right', padding: '1rem' }}></th>
                     </tr>
                   </thead>
                   <tbody>
-                    {activeCommitments.map(c => {
-                    const paid = c.payable_accounts?.[0]?.payable_payments?.reduce((s: any, p: any) => s + Number(p.amount_usd), 0) || 0;
-                    const cTotal = Number(c.amount_usd || (c.quantity * c.unit_price_usd));
-                    const balance = Math.max(0, cTotal - paid);
-                    const isPaid = paid >= cTotal - 0.01;
-                    
+                    {activePayablesList.map(p => {
+                      const paid = (p.payable_payments || []).reduce((s: any, pay: any) => s + Number(pay.amount_usd || 0), 0);
+                      const totalAmt = Number(p.total_amount_usd || p.amount_usd || ((p.quantity || 1) * (p.unit_price_usd || 0)) || 0);
+                      const isPaid = p.status === 'paid' || paid >= totalAmt - 0.01;
+                      const isCancelled = p.status === 'cancelled';
+                      const balance = (isPaid || isCancelled) ? 0 : Math.max(0, totalAmt - paid);
+                      
                       return (
-                        <tr key={c.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                          <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>{c.date}</td>
+                        <tr key={p.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                          <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>{p.date}</td>
                           <td style={{ padding: '1rem' }}>
-                            {c.description}<br/>
-                            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{c.quantity} x ${Number(c.unit_price_usd).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                            {p.description}<br/>
+                            {p.quantity && p.quantity > 1 && p.unit_price_usd ? (
+                              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{p.quantity} x ${Number(p.unit_price_usd).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                            ) : null}
                           </td>
-                          <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>{c.provider || 'N/A'}</td>
+                          <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>{p.provider || p.name || 'N/A'}</td>
                           <td style={{ padding: '1rem', textAlign: 'right' }}>
-                            {paid > 0 ? (
+                            {isCancelled ? (
+                              <span style={{ fontSize: '0.8rem', color: 'var(--danger)', fontWeight: 'bold', padding: '0.2rem 0.5rem', background: 'rgba(239,68,68,0.1)', borderRadius: '4px' }}>Cancelada</span>
+                            ) : isPaid ? (
                               <div style={{ fontSize: '0.8rem' }}>
-                                <div style={{ color: isPaid ? 'var(--success)' : 'var(--warning)', fontWeight: 'bold' }}>{isPaid ? 'Pagado' : 'Abonado'}</div>
-                                <div style={{ color: 'var(--text-muted)' }}>${paid.toLocaleString('es-VE', { minimumFractionDigits: 2 })} / ${cTotal.toLocaleString('es-VE', { minimumFractionDigits: 2 })}</div>
+                                <div style={{ color: 'var(--success)', fontWeight: 'bold' }}>Saldada</div>
+                                <div style={{ color: 'var(--text-muted)' }}>${paid.toLocaleString('es-VE', { minimumFractionDigits: 2 })} / ${totalAmt.toLocaleString('es-VE', { minimumFractionDigits: 2 })}</div>
+                              </div>
+                            ) : paid > 0 ? (
+                              <div style={{ fontSize: '0.8rem' }}>
+                                <div style={{ color: 'var(--warning)', fontWeight: 'bold' }}>Abonado</div>
+                                <div style={{ color: 'var(--text-muted)' }}>${paid.toLocaleString('es-VE', { minimumFractionDigits: 2 })} / ${totalAmt.toLocaleString('es-VE', { minimumFractionDigits: 2 })}</div>
                               </div>
                             ) : (
                               <span style={{ fontSize: '0.8rem', color: 'var(--danger)', fontWeight: 'bold', padding: '0.2rem 0.5rem', background: 'rgba(239,68,68,0.1)', borderRadius: '4px' }}>Pendiente</span>
                             )}
                           </td>
-                          <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold', color: 'var(--primary-color)' }}>- ${Number(balance).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                          <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold', color: balance > 0 ? 'var(--primary-color)' : 'var(--success)' }}>
+                            {balance > 0 ? `- $${Number(balance).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '$0,00'}
+                          </td>
                           <td style={{ padding: '1rem', textAlign: 'right', display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
                             <button 
                               className="btn-secondary" 
                               style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--primary-color)', borderColor: 'rgba(59,130,246,0.2)' }}
-                              onClick={() => setSelectedCommitmentForDetails(c)}
+                              onClick={() => setSelectedPayableForDetails(p)}
                               title="Ver detalles e imprimir"
                             >
                               <Eye size={14} /> Detalles
@@ -1236,23 +1351,23 @@ export default function ProjectDashboard() {
                             <button 
                               className="btn-secondary" 
                               style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'white', borderColor: 'rgba(255,255,255,0.2)' }}
-                              onClick={() => handlePrintCommitment(c)}
+                              onClick={() => handlePrintPayable(p)}
                               title="Imprimir"
                             >
                               <Printer size={14} />
                             </button>
-                            {!isViewer && balance > 0 && (
+                            {!isViewer && balance > 0 && !isCancelled && !isPaid && (
                               <>
                                 <button 
                                   className="btn-secondary" 
                                   style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--primary-color)', borderColor: 'rgba(59,130,246,0.3)' }} 
                                   onClick={() => {
-                                    setCommitmentToPay(c);
-                                    setCommitmentPayMode('abono');
-                                    setCommitmentPayForm({ amount_usd: '', description: '', reference: '', date: new Date().toISOString().split('T')[0] });
-                                    setShowCommitmentPayModal(true);
+                                    setPayableToPay(p);
+                                    setPayablePayMode('abono');
+                                    setPayablePayForm({ amount_usd: '', description: '', reference: '', date: new Date().toISOString().split('T')[0] });
+                                    setShowPayablePayModal(true);
                                   }} 
-                                  title="Abonar monto parcial al compromiso"
+                                  title="Abonar monto parcial a la cuenta por pagar"
                                 >
                                   <DollarSign size={13} style={{ marginRight: '2px', display: 'inline' }} /> Abonar
                                 </button>
@@ -1260,24 +1375,24 @@ export default function ProjectDashboard() {
                                   className="btn-primary" 
                                   style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', background: 'var(--success)', borderColor: 'var(--success)' }} 
                                   onClick={() => {
-                                    setCommitmentToPay(c);
-                                    setCommitmentPayMode('total');
-                                    setCommitmentPayForm({
+                                    setPayableToPay(p);
+                                    setPayablePayMode('total');
+                                    setPayablePayForm({
                                       amount_usd: formatCurrency(balance),
-                                      description: `Pago total: ${c.description}`,
+                                      description: `Pago total: ${p.description}`,
                                       reference: '',
                                       date: new Date().toISOString().split('T')[0]
                                     });
-                                    setShowCommitmentPayModal(true);
+                                    setShowPayablePayModal(true);
                                   }} 
-                                  title="Pagar saldo total del compromiso"
+                                  title="Pagar saldo total de la cuenta por pagar"
                                 >
                                   <CheckCircle size={13} style={{ marginRight: '2px', display: 'inline' }} /> Pagar
                                 </button>
                               </>
                             )}
-                            {!isViewer && (<button className="btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--primary-color)', borderColor: 'rgba(59,130,246,0.2)' }} onClick={() => initiateEditItem(c, 'commitment')} title="Editar compromiso"><Edit3 size={14} /></button>)}
-                            {!isViewer && (<button className="btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--danger)', borderColor: 'rgba(239,68,68,0.2)' }} onClick={() => initiateDelete(c.id, 'commitment')}><Trash2 size={14} /></button>)}
+                            {!isViewer && (<button className="btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--primary-color)', borderColor: 'rgba(59,130,246,0.2)' }} onClick={() => initiateEditItem(p, 'payable')} title="Editar cuenta por pagar"><Edit3 size={14} /></button>)}
+                            {!isViewer && (<button className="btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--danger)', borderColor: 'rgba(239,68,68,0.2)' }} onClick={() => initiateDelete(p.id, 'payable')}><Trash2 size={14} /></button>)}
                           </td>
                         </tr>
                       );
@@ -1457,33 +1572,33 @@ export default function ProjectDashboard() {
             />
           </div>
         )}
+        </div>
       </div>
-    </div>
 
-        {/* Modales de Formulario */}
+      {/* Modales de Formulario */}
         
-        {/* Modal de Abono o Pago a Compromiso */}
-        {showCommitmentPayModal && commitmentToPay && (() => {
-          const previouslyPaid = commitmentToPay.payable_accounts?.[0]?.payable_payments?.reduce((s: any, p: any) => s + Number(p.amount_usd), 0) || 0;
-          const totalCommitmentAmount = Number(commitmentToPay.amount_usd || (commitmentToPay.quantity * commitmentToPay.unit_price_usd));
-          const currentBalance = Math.max(0, totalCommitmentAmount - previouslyPaid);
+      {/* Modal de Abono o Pago a Cuenta por Pagar */}
+      {showPayablePayModal && payableToPay && (() => {
+          const previouslyPaid = (payableToPay.payable_payments || payableToPay.payable_accounts?.[0]?.payable_payments || []).reduce((s: any, p: any) => s + Number(p.amount_usd), 0);
+          const totalPayableAmount = Number(payableToPay.total_amount_usd || payableToPay.amount_usd || (payableToPay.quantity * payableToPay.unit_price_usd) || 0);
+          const currentBalance = Math.max(0, totalPayableAmount - previouslyPaid);
 
           return (
             <div className="modal-overlay">
               <div className="card modal-content animate-fade" style={{ maxWidth: '500px', width: '90%' }}>
                 <h2 style={{ fontSize: '1.4rem', fontWeight: 800, marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'white' }}>
                   <CheckCircle size={22} color="var(--success)" />
-                  {commitmentPayMode === 'total' ? 'Pagar Compromiso Total' : 'Abonar a Compromiso'}
+                  {payablePayMode === 'total' ? 'Pagar Cuenta por Pagar Total' : 'Abonar a Cuenta por Pagar'}
                 </h2>
                 
                 <div style={{ background: 'rgba(0,0,0,0.2)', padding: '1rem', borderRadius: '8px', marginBottom: '1.5rem' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem' }}>
-                    <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Proveedor:</span>
-                    <span style={{ fontWeight: 'bold' }}>{commitmentToPay.provider || 'N/A'}</span>
+                    <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Proveedor / Beneficiario:</span>
+                    <span style={{ fontWeight: 'bold' }}>{payableToPay.provider || payableToPay.name || 'N/A'}</span>
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem' }}>
-                    <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Total Compromiso:</span>
-                    <span style={{ fontWeight: 'bold' }}>${formatCurrency(totalCommitmentAmount)}</span>
+                    <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Total Cuenta por Pagar:</span>
+                    <span style={{ fontWeight: 'bold' }}>${formatCurrency(totalPayableAmount)}</span>
                   </div>
                   {previouslyPaid > 0 && (
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem' }}>
@@ -1499,21 +1614,21 @@ export default function ProjectDashboard() {
                   </div>
                 </div>
 
-                <form onSubmit={handleCommitmentPayment}>
+                <form onSubmit={handlePayablePayment}>
                   <div style={{ display: 'grid', gap: '1rem' }}>
                     <div className="form-group">
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
                         <label style={{ margin: 0 }}>Monto (USD)</label>
-                        {commitmentPayMode === 'abono' && (
+                        {payablePayMode === 'abono' && (
                           <button
                             type="button"
                             style={{ background: 'none', border: 'none', color: 'var(--primary-color)', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600, padding: 0 }}
                             onClick={() => {
-                              setCommitmentPayMode('total');
-                              setCommitmentPayForm({
-                                ...commitmentPayForm,
+                              setPayablePayMode('total');
+                              setPayablePayForm({
+                                ...payablePayForm,
                                 amount_usd: formatCurrency(currentBalance),
-                                description: commitmentPayForm.description || `Pago total: ${commitmentToPay.description}`
+                                description: payablePayForm.description || `Pago total: ${payableToPay.description}`
                               });
                             }}
                           >
@@ -1525,9 +1640,9 @@ export default function ProjectDashboard() {
                         type="text"
                         required
                         className="input-field"
-                        value={commitmentPayForm.amount_usd}
-                        onChange={e => setCommitmentPayForm({...commitmentPayForm, amount_usd: handleMoneyInput(e.target.value)})}
-                        onBlur={e => setCommitmentPayForm({...commitmentPayForm, amount_usd: formatOnBlur(e.target.value)})}
+                        value={payablePayForm.amount_usd}
+                        onChange={e => setPayablePayForm({...payablePayForm, amount_usd: handleMoneyInput(e.target.value)})}
+                        onBlur={e => setPayablePayForm({...payablePayForm, amount_usd: formatOnBlur(e.target.value)})}
                         placeholder="Ej. 1500.00"
                       />
                     </div>
@@ -1537,24 +1652,24 @@ export default function ProjectDashboard() {
                         type="text"
                         required
                         className="input-field"
-                        value={commitmentPayForm.description}
-                        onChange={e => setCommitmentPayForm({...commitmentPayForm, description: e.target.value})}
-                        placeholder={commitmentPayMode === 'total' ? `Pago total: ${commitmentToPay.description}` : 'Ej. Pago primera parte'}
+                        value={payablePayForm.description}
+                        onChange={e => setPayablePayForm({...payablePayForm, description: e.target.value})}
+                        placeholder={payablePayMode === 'total' ? `Pago total: ${payableToPay.description}` : 'Ej. Pago primera parte'}
                       />
                     </div>
                     <div className="form-group">
                       <label>Referencia / Recibo (Opcional)</label>
-                      <input type="text" className="input-field" value={commitmentPayForm.reference} onChange={e => setCommitmentPayForm({...commitmentPayForm, reference: e.target.value})} placeholder="Ej. Zelle 1234, Recibo 42" />
+                      <input type="text" className="input-field" value={payablePayForm.reference} onChange={e => setPayablePayForm({...payablePayForm, reference: e.target.value})} placeholder="Ej. Zelle 1234, Recibo 42" />
                     </div>
                     <div className="form-group">
                       <label>Fecha de Pago</label>
-                      <input type="date" required className="input-field" value={commitmentPayForm.date} onChange={e => setCommitmentPayForm({...commitmentPayForm, date: e.target.value})} />
+                      <input type="date" required className="input-field" value={payablePayForm.date} onChange={e => setPayablePayForm({...payablePayForm, date: e.target.value})} />
                     </div>
                   </div>
                   <div style={{ display: 'flex', gap: '1rem', marginTop: '1.5rem', justifyContent: 'flex-end' }}>
-                    <button type="button" className="btn-secondary" onClick={() => setShowCommitmentPayModal(false)}>Cancelar</button>
+                    <button type="button" className="btn-secondary" onClick={() => setShowPayablePayModal(false)}>Cancelar</button>
                     <button type="submit" className="btn-primary">
-                      {commitmentPayMode === 'total' ? 'Confirmar Pago Total' : 'Confirmar Abono'}
+                      {payablePayMode === 'total' ? 'Confirmar Pago Total' : 'Confirmar Abono'}
                     </button>
                   </div>
                 </form>
@@ -1719,56 +1834,56 @@ export default function ProjectDashboard() {
         </div>
       )}
 
-      {showCommitmentModal && (
+      {showPayableModal && (
         <div className="modal-overlay">
           <div className="card modal-content animate-fade" style={{ maxWidth: '500px', width: '90%' }}>
-            <h2 style={{ marginBottom: '1.5rem', color: 'white' }}>{editingCommitment ? 'Editar Compromiso' : 'Registrar Compromiso'}</h2>
-            <form onSubmit={handleAddCommitment} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <h2 style={{ marginBottom: '1.5rem', color: 'white' }}>{editingPayable ? 'Editar Cuenta por Pagar' : 'Registrar Cuenta por Pagar'}</h2>
+            <form onSubmit={handleAddPayable} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               <div>
-                <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Fecha del Compromiso</label>
-                <input type="date" required className="input-field" value={commitmentForm.date} onChange={e => setCommitmentForm({...commitmentForm, date: e.target.value})} />
+                <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Fecha</label>
+                <input type="date" required className="input-field" value={payableForm.date} onChange={e => setPayableForm({...payableForm, date: e.target.value})} />
               </div>
               <div>
-                <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Proveedor / Trabajador</label>
-                <input type="text" required placeholder="Ej. Ferretería EPA / Juan Pérez" className="input-field" value={commitmentForm.provider} onChange={e => setCommitmentForm({...commitmentForm, provider: e.target.value})} />
+                <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Proveedor / Beneficiario</label>
+                <input type="text" required placeholder="Ej. Ferretería EPA / Juan Pérez" className="input-field" value={payableForm.provider} onChange={e => setPayableForm({...payableForm, provider: e.target.value})} />
               </div>
               <div>
-                <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Descripción</label>
-                <input type="text" required placeholder="Ej. Cemento Portland" className="input-field" value={commitmentForm.description} onChange={e => setCommitmentForm({...commitmentForm, description: e.target.value})} />
+                <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Descripción / Concepto</label>
+                <input type="text" required placeholder="Ej. Materiales de construcción" className="input-field" value={payableForm.description} onChange={e => setPayableForm({...payableForm, description: e.target.value})} />
               </div>
               <div>
-                <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Categoría</label>
-                <select className="input-field" value={commitmentForm.category} onChange={e => setCommitmentForm({...commitmentForm, category: e.target.value})}>
-                  <option value="materials">Materiales</option>
-                  <option value="labor">Mano de Obra</option>
-                  <option value="equipment">Equipos</option>
-                  <option value="permits">Permisos</option>
+                <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Tipo / Categoría</label>
+                <select className="input-field" value={payableForm.category} onChange={e => setPayableForm({...payableForm, category: e.target.value})}>
+                  <option value="materials">Materiales (Proveedor)</option>
+                  <option value="labor">Mano de Obra (Obrero)</option>
+                  <option value="equipment">Equipos (Alquiler)</option>
+                  <option value="subcontract">Subcontrato</option>
                   <option value="other">Otros</option>
                 </select>
               </div>
               <div style={{ display: 'flex', gap: '1rem' }}>
                  <div style={{ flex: 1 }}>
                    <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Cantidad</label>
-                   <input type="number" step="0.01" required className="input-field" value={commitmentForm.quantity} onChange={e => setCommitmentForm({...commitmentForm, quantity: parseFloat(e.target.value) || 0})} />
+                   <input type="number" step="0.01" required className="input-field" value={payableForm.quantity} onChange={e => setPayableForm({...payableForm, quantity: parseFloat(e.target.value) || 0})} />
                  </div>
                  <div style={{ flex: 1 }}>
-                   <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Precio Unitario (USD)</label>
+                   <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Precio Unitario / Total (USD)</label>
                    <input 
                      type="text" 
                      required 
                      className="input-field" 
-                     value={commitmentForm.unit_price_usd} 
-                     onChange={e => setCommitmentForm({...commitmentForm, unit_price_usd: handleMoneyInput(e.target.value)})} 
-                     onBlur={e => setCommitmentForm({...commitmentForm, unit_price_usd: formatOnBlur(e.target.value)})}
+                     value={payableForm.unit_price_usd} 
+                     onChange={e => setPayableForm({...payableForm, unit_price_usd: handleMoneyInput(e.target.value), total_amount_usd: handleMoneyInput(e.target.value)})} 
+                     onBlur={e => setPayableForm({...payableForm, unit_price_usd: formatOnBlur(e.target.value), total_amount_usd: formatOnBlur(e.target.value)})}
                    />
                  </div>
               </div>
               <div style={{ marginTop: '0.5rem', textAlign: 'right', fontWeight: 'bold' }}>
-                 Total: ${(commitmentForm.quantity * parseCurrency(String(commitmentForm.unit_price_usd))).toLocaleString('es-VE', {minimumFractionDigits: 2})}
+                 Total: ${(Number(payableForm.quantity || 1) * parseCurrency(String(payableForm.unit_price_usd))).toLocaleString('es-VE', {minimumFractionDigits: 2})}
               </div>
               <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
-                <button type="button" className="btn-secondary" style={{ flex: 1 }} onClick={() => { setShowCommitmentModal(false); setEditingCommitment(null); setCommitmentForm({ description: '', provider: '', category: 'materials', quantity: 1, unit_price_usd: '', date: new Date().toISOString().split('T')[0] }); }}>Cancelar</button>
-                <button type="submit" className="btn-primary" style={{ flex: 1, justifyContent: 'center' }}>{editingCommitment ? 'Guardar Cambios' : 'Guardar Compromiso'}</button>
+                <button type="button" className="btn-secondary" style={{ flex: 1 }} onClick={() => { setShowPayableModal(false); setEditingPayable(null); setPayableForm({ description: '', provider: '', category: 'materials', type: 'proveedor', quantity: 1, unit_price_usd: '', total_amount_usd: '', date: new Date().toISOString().split('T')[0] }); }}>Cancelar</button>
+                <button type="submit" className="btn-primary" style={{ flex: 1, justifyContent: 'center' }}>{editingPayable ? 'Guardar Cambios' : 'Guardar Cuenta por Pagar'}</button>
               </div>
             </form>
           </div>
@@ -1812,7 +1927,7 @@ export default function ProjectDashboard() {
             </div>
             <h2 style={{ marginBottom: '0.5rem', color: 'white' }}>Cerrar Proyecto</h2>
             <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginBottom: '1.5rem' }}>
-              ¿Está seguro que desea cerrar este proyecto? Una vez cerrado, no podrá agregar más registros de pagos, gastos o compromisos.
+              ¿Está seguro que desea cerrar este proyecto? Una vez cerrado, no podrá agregar más registros de pagos, gastos o cuentas por pagar.
             </p>
 
             <div style={{ display: 'flex', gap: '1rem' }}>
@@ -1836,28 +1951,31 @@ export default function ProjectDashboard() {
         </div>
       )}
 
-      {/* MODAL DETALLES DE COMPROMISO */}
-      {selectedCommitmentForDetails && (
+      {/* MODAL DETALLES DE CUENTA POR PAGAR */}
+      {selectedPayableForDetails && (
         <div className="modal-overlay hide-on-print" style={{ zIndex: 1000 }}>
           <div className="card modal-content animate-fade" style={{ maxWidth: '650px', width: '95%', padding: '2rem' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.5rem', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '1rem' }}>
               <div>
                 <h2 style={{ fontSize: '1.4rem', color: 'white', margin: '0 0 0.5rem 0', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <FileText size={24} color="var(--primary-color)" /> Detalles del Compromiso
+                  <FileText size={24} color="var(--primary-color)" /> Detalles de la Cuenta por Pagar
                 </h2>
                 <div style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>
-                  <strong>Concepto:</strong> {selectedCommitmentForDetails.description} <br/>
-                  <strong>Proveedor:</strong> {selectedCommitmentForDetails.provider || 'N/A'} | <strong>Fecha:</strong> {selectedCommitmentForDetails.date}
+                  <strong>Concepto:</strong> {selectedPayableForDetails.description} <br/>
+                  <strong>Proveedor / Beneficiario:</strong> {selectedPayableForDetails.provider || selectedPayableForDetails.name || 'N/A'} | <strong>Fecha:</strong> {selectedPayableForDetails.date}
                 </div>
               </div>
-              <button onClick={() => setSelectedCommitmentForDetails(null)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}><X size={24} /></button>
+              <button onClick={() => setSelectedPayableForDetails(null)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}><X size={24} /></button>
             </div>
 
             {(() => {
-              const c = selectedCommitmentForDetails;
-              const paid = c.payable_accounts?.[0]?.payable_payments?.reduce((s: any, p: any) => s + Number(p.amount_usd), 0) || 0;
-              const total = Number(c.amount_usd || (c.quantity * c.unit_price_usd));
-              const balance = total - paid;
+              const p = selectedPayableForDetails;
+              const paid = (p.payable_payments || p.payable_accounts?.[0]?.payable_payments || []).reduce((s: any, pay: any) => s + Number(pay.amount_usd), 0);
+              const total = Number(p.total_amount_usd || p.amount_usd || ((p.quantity || 1) * (p.unit_price_usd || 0)) || 0);
+              const isPaid = p.status === 'paid' || paid >= total - 0.01;
+              const isCancelled = p.status === 'cancelled';
+              const balance = (isPaid || isCancelled) ? 0 : Math.max(0, total - paid);
+              const paymentsList = p.payable_payments || p.payable_accounts?.[0]?.payable_payments || [];
 
               return (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
@@ -1880,9 +1998,9 @@ export default function ProjectDashboard() {
                     <h4 style={{ margin: '0 0 1rem 0', color: 'white', display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1rem' }}>
                       <Wallet size={18} /> Historial de Abonos
                     </h4>
-                    {!c.payable_accounts?.[0]?.payable_payments || c.payable_accounts[0].payable_payments.length === 0 ? (
+                    {paymentsList.length === 0 ? (
                       <div style={{ padding: '1.5rem', textAlign: 'center', background: 'rgba(0,0,0,0.2)', borderRadius: '8px', color: 'var(--text-muted)' }}>
-                        No hay abonos registrados para este compromiso.
+                        No hay abonos registrados para esta cuenta por pagar.
                       </div>
                     ) : (
                       <div style={{ overflowX: 'auto', background: 'rgba(0,0,0,0.2)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.05)' }}>
@@ -1896,12 +2014,12 @@ export default function ProjectDashboard() {
                             </tr>
                           </thead>
                           <tbody>
-                            {c.payable_accounts[0].payable_payments.sort((a:any, b:any) => new Date(b.date).getTime() - new Date(a.date).getTime()).map((p: any) => (
-                              <tr key={p.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                                <td style={{ padding: '0.75rem 1rem', color: 'var(--text-muted)' }}>{p.date}</td>
-                                <td style={{ padding: '0.75rem 1rem' }}>{p.description}</td>
-                                <td style={{ padding: '0.75rem 1rem', color: 'var(--text-muted)' }}>{p.reference || '-'}</td>
-                                <td style={{ padding: '0.75rem 1rem', textAlign: 'right', fontWeight: 'bold', color: 'var(--success)' }}>+ ${formatCurrency(p.amount_usd)}</td>
+                            {paymentsList.sort((a:any, b:any) => new Date(b.date).getTime() - new Date(a.date).getTime()).map((pay: any) => (
+                              <tr key={pay.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                                <td style={{ padding: '0.75rem 1rem', color: 'var(--text-muted)' }}>{pay.date}</td>
+                                <td style={{ padding: '0.75rem 1rem' }}>{pay.description}</td>
+                                <td style={{ padding: '0.75rem 1rem', color: 'var(--text-muted)' }}>{pay.reference || '-'}</td>
+                                <td style={{ padding: '0.75rem 1rem', textAlign: 'right', fontWeight: 'bold', color: 'var(--success)' }}>+ ${formatCurrency(pay.amount_usd)}</td>
                               </tr>
                             ))}
                           </tbody>
@@ -1911,19 +2029,19 @@ export default function ProjectDashboard() {
                   </div>
 
                   <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
-                    <button className="btn-secondary" style={{ flex: 1, justifyContent: 'center' }} onClick={() => setSelectedCommitmentForDetails(null)}>Cerrar</button>
-                    <button className="btn-secondary" style={{ flex: 1, justifyContent: 'center', borderColor: 'rgba(255,255,255,0.2)' }} onClick={() => handlePrintCommitment(c)}>
+                    <button className="btn-secondary" style={{ flex: 1, justifyContent: 'center' }} onClick={() => setSelectedPayableForDetails(null)}>Cerrar</button>
+                    <button className="btn-secondary" style={{ flex: 1, justifyContent: 'center', borderColor: 'rgba(255,255,255,0.2)' }} onClick={() => handlePrintPayable(p)}>
                       <Printer size={16} /> Imprimir Vale
                     </button>
-                    {!isViewer && balance > 0 && (
+                    {!isViewer && balance > 0 && !isCancelled && !isPaid && (
                       <button 
                         className="btn-primary" 
                         style={{ flex: 1, justifyContent: 'center' }} 
                         onClick={() => {
-                          setSelectedCommitmentForDetails(null);
-                          setCommitmentToPay(c);
-                          setCommitmentPayForm({ amount_usd: '', description: '', reference: '', date: new Date().toISOString().split('T')[0] });
-                          setShowCommitmentPayModal(true);
+                          setSelectedPayableForDetails(null);
+                          setPayableToPay(p);
+                          setPayablePayForm({ amount_usd: '', description: '', reference: '', date: new Date().toISOString().split('T')[0] });
+                          setShowPayablePayModal(true);
                         }}
                       >
                         <DollarSign size={16} /> Abonar
@@ -2131,8 +2249,8 @@ export default function ProjectDashboard() {
               <td style={{ padding: '0.5rem', border: '1px solid #ccc', textAlign: 'right', color: '#d32f2f' }}>${formatCurrency(totalCosts)}</td>
             </tr>
             <tr>
-              <td style={{ padding: '0.5rem', border: '1px solid #ccc', background: '#f8f9fa' }}><strong>Compromisos Pendientes:</strong></td>
-              <td style={{ padding: '0.5rem', border: '1px solid #ccc', textAlign: 'right', color: '#d32f2f' }}>${formatCurrency(totalCommitments)}</td>
+              <td style={{ padding: '0.5rem', border: '1px solid #ccc', background: '#f8f9fa' }}><strong>Cuentas por Pagar Pendientes:</strong></td>
+              <td style={{ padding: '0.5rem', border: '1px solid #ccc', textAlign: 'right', color: '#d32f2f' }}>${formatCurrency(totalPayablesPending)}</td>
             </tr>
             <tr>
               <td style={{ padding: '0.5rem', border: '1px solid #ccc', background: '#f8f9fa' }}><strong>Ganancia Estimada:</strong></td>
@@ -2211,25 +2329,27 @@ export default function ProjectDashboard() {
           </table>
         )}
 
-        {/* Detalle de Compromisos */}
-        <h3 style={{ fontSize: '16px', borderBottom: '1px solid #ccc', paddingBottom: '0.5rem', marginBottom: '1rem' }}>3. COMPROMISOS (GASTOS POR EJECUTAR)</h3>
+        {/* Detalle de Cuentas por Pagar */}
+        <h3 style={{ fontSize: '16px', borderBottom: '1px solid #ccc', paddingBottom: '0.5rem', marginBottom: '1rem' }}>3. CUENTAS POR PAGAR (PENDIENTES)</h3>
         {(() => {
-          const pendingCommitments = commitments.map(c => {
-            const paid = c.payable_accounts?.[0]?.payable_payments?.reduce((s: any, p: any) => s + Number(p.amount_usd), 0) || 0;
-            const total = Number(c.amount_usd || (c.quantity * c.unit_price_usd) || 0);
-            const balance = Math.max(0, total - paid);
-            return { ...c, total_amount: total, paid_amount: paid, balance };
-          }).filter(c => c.balance > 0.01);
-          const printCommitmentsTotal = pendingCommitments.reduce((sum, c) => sum + c.balance, 0);
+          const pendingPayablesList = payables.map(p => {
+            const paid = (p.payable_payments || p.payable_accounts?.[0]?.payable_payments || []).reduce((s: any, pay: any) => s + Number(pay.amount_usd), 0);
+            const total = Number(p.total_amount_usd || p.amount_usd || ((p.quantity || 1) * (p.unit_price_usd || 0)) || 0);
+            const isPaid = p.status === 'paid' || paid >= total - 0.01;
+            const isCancelled = p.status === 'cancelled';
+            const balance = (isPaid || isCancelled) ? 0 : Math.max(0, total - paid);
+            return { ...p, total_amount: total, paid_amount: paid, balance };
+          }).filter(p => p.balance > 0.01);
+          const printPayablesTotal = pendingPayablesList.reduce((sum, p) => sum + p.balance, 0);
 
-          return pendingCommitments.length === 0 ? (
-            <p style={{ fontSize: '12px', color: '#555', marginBottom: '1.5rem' }}>No hay compromisos pendientes por ejecutar.</p>
+          return pendingPayablesList.length === 0 ? (
+            <p style={{ fontSize: '12px', color: '#555', marginBottom: '1.5rem' }}>No hay cuentas por pagar pendientes por ejecutar.</p>
           ) : (
             <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '1.5rem', fontSize: '12px' }}>
               <thead>
                 <tr style={{ background: '#f1f1f1' }}>
                   <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'left' }}>FECHA</th>
-                  <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'left' }}>PROVEEDOR</th>
+                  <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'left' }}>PROVEEDOR / BENEFICIARIO</th>
                   <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'left' }}>CONCEPTO</th>
                   <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>TOTAL PACTADO</th>
                   <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>ABONADO</th>
@@ -2237,19 +2357,19 @@ export default function ProjectDashboard() {
                 </tr>
               </thead>
               <tbody>
-                {pendingCommitments.map(c => (
-                  <tr key={c.id}>
-                    <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{c.date}</td>
-                    <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{c.provider || 'N/A'}</td>
-                    <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{c.description}</td>
-                    <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>${formatCurrency(c.total_amount)}</td>
-                    <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right', color: '#28a745' }}>${formatCurrency(c.paid_amount)}</td>
-                    <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right', fontWeight: 'bold', color: '#d32f2f' }}>${formatCurrency(c.balance)}</td>
+                {pendingPayablesList.map(p => (
+                  <tr key={p.id}>
+                    <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{p.date}</td>
+                    <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{p.provider || p.name || 'N/A'}</td>
+                    <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{p.description}</td>
+                    <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>${formatCurrency(p.total_amount)}</td>
+                    <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right', color: '#28a745' }}>${formatCurrency(p.paid_amount)}</td>
+                    <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right', fontWeight: 'bold', color: '#d32f2f' }}>${formatCurrency(p.balance)}</td>
                   </tr>
                 ))}
                 <tr style={{ background: '#f8f9fa', fontWeight: 'bold' }}>
-                  <td colSpan={5} style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>Total Compromisos Pendientes:</td>
-                  <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right', color: '#d32f2f' }}>${formatCurrency(printCommitmentsTotal)}</td>
+                  <td colSpan={5} style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>Total Cuentas por Pagar Pendientes:</td>
+                  <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right', color: '#d32f2f' }}>${formatCurrency(printPayablesTotal)}</td>
                 </tr>
               </tbody>
             </table>
@@ -2291,12 +2411,15 @@ export default function ProjectDashboard() {
       </div>
       )}
 
-      {/* VALE DE COMPROMISO DE IMPRESIÓN */}
-      {activePrintJob === 'commitment-voucher' && printCommitmentData && (() => {
-        const c = printCommitmentData;
-        const paid = c.payable_accounts?.[0]?.payable_payments?.reduce((s: any, p: any) => s + Number(p.amount_usd), 0) || 0;
-        const total = Number(c.amount_usd || (c.quantity * c.unit_price_usd));
-        const balance = total - paid;
+      {/* VALE DE CUENTA POR PAGAR DE IMPRESIÓN */}
+      {activePrintJob === 'payable-voucher' && printPayableData && (() => {
+        const p = printPayableData;
+        const paid = (p.payable_payments || p.payable_accounts?.[0]?.payable_payments || []).reduce((s: any, pay: any) => s + Number(pay.amount_usd), 0);
+        const total = Number(p.total_amount_usd || p.amount_usd || ((p.quantity || 1) * (p.unit_price_usd || 0)) || 0);
+        const isPaid = p.status === 'paid' || paid >= total - 0.01;
+        const isCancelled = p.status === 'cancelled';
+        const balance = (isPaid || isCancelled) ? 0 : Math.max(0, total - paid);
+        const paymentsList = p.payable_payments || p.payable_accounts?.[0]?.payable_payments || [];
 
         return (
           <div className="show-only-on-print" style={{ display: 'none', color: 'black', background: 'white', padding: '2rem', width: '100%', maxWidth: '800px', margin: '0 auto', fontFamily: 'Arial, sans-serif' }}>
@@ -2306,28 +2429,28 @@ export default function ProjectDashboard() {
                 <div style={{ fontSize: '11px', color: '#555', marginTop: '0.5rem' }}>P&P Construye</div>
               </div>
               <div style={{ textAlign: 'right' }}>
-                <h2 style={{ margin: 0, fontSize: '18px', color: '#000', textTransform: 'uppercase' }}>COMPROBANTE DE COMPROMISO</h2>
+                <h2 style={{ margin: 0, fontSize: '18px', color: '#000', textTransform: 'uppercase' }}>VALE DE CUENTA POR PAGAR</h2>
                 <p style={{ margin: '0.2rem 0 0 0', fontSize: '12px', color: '#555' }}>Fecha Emisión: {new Date().toLocaleDateString('es-VE')}</p>
-                <p style={{ margin: '0', fontSize: '12px', color: '#555' }}>ID: {c.id.split('-')[0].toUpperCase()}</p>
+                <p style={{ margin: '0', fontSize: '12px', color: '#555' }}>ID: {p.id.split('-')[0].toUpperCase()}</p>
               </div>
             </div>
 
             <div style={{ marginBottom: '2rem', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', fontSize: '13px' }}>
               <div style={{ padding: '1rem', border: '1px solid #ccc', borderRadius: '4px', background: '#f8f9fa' }}>
                 <div style={{ marginBottom: '0.5rem' }}><strong>Proyecto:</strong> {project?.title}</div>
-                <div style={{ marginBottom: '0.5rem' }}><strong>Concepto:</strong> {c.description}</div>
-                <div><strong>Proveedor / Beneficiario:</strong> {c.provider || 'N/A'}</div>
+                <div style={{ marginBottom: '0.5rem' }}><strong>Concepto:</strong> {p.description}</div>
+                <div><strong>Proveedor / Beneficiario:</strong> {p.provider || p.name || 'N/A'}</div>
               </div>
               <div style={{ padding: '1rem', border: '1px solid #ccc', borderRadius: '4px', background: '#f8f9fa' }}>
-                <div style={{ marginBottom: '0.5rem' }}><strong>Fecha de Compromiso:</strong> {c.date}</div>
-                <div style={{ marginBottom: '0.5rem' }}><strong>Cantidad:</strong> {c.quantity}</div>
-                <div><strong>Precio Unitario:</strong> ${Number(c.unit_price_usd).toLocaleString('es-VE', { minimumFractionDigits: 2 })}</div>
+                <div style={{ marginBottom: '0.5rem' }}><strong>Fecha:</strong> {p.date}</div>
+                <div style={{ marginBottom: '0.5rem' }}><strong>Cantidad:</strong> {p.quantity || 1}</div>
+                <div><strong>Precio Unitario / Total:</strong> ${Number(p.unit_price_usd || total).toLocaleString('es-VE', { minimumFractionDigits: 2 })}</div>
               </div>
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem', marginBottom: '2rem', textAlign: 'center' }}>
               <div style={{ padding: '1rem', border: '1px solid #ccc', borderRadius: '4px' }}>
-                <div style={{ fontSize: '10px', textTransform: 'uppercase', color: '#555' }}>Total Contratado</div>
+                <div style={{ fontSize: '10px', textTransform: 'uppercase', color: '#555' }}>Total Pactado</div>
                 <div style={{ fontSize: '18px', fontWeight: 'bold' }}>${formatCurrency(total)}</div>
               </div>
               <div style={{ padding: '1rem', border: '1px solid #ccc', borderRadius: '4px' }}>
@@ -2341,7 +2464,7 @@ export default function ProjectDashboard() {
             </div>
 
             <h3 style={{ fontSize: '14px', borderBottom: '1px solid #ccc', paddingBottom: '0.5rem', marginBottom: '1rem' }}>HISTORIAL DE ABONOS</h3>
-            {(!c.payable_accounts?.[0]?.payable_payments || c.payable_accounts[0].payable_payments.length === 0) ? (
+            {paymentsList.length === 0 ? (
               <p style={{ fontSize: '12px', color: '#555', textAlign: 'center', padding: '1rem', border: '1px dashed #ccc' }}>No hay abonos registrados.</p>
             ) : (
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', marginBottom: '2rem' }}>
@@ -2354,12 +2477,12 @@ export default function ProjectDashboard() {
                   </tr>
                 </thead>
                 <tbody>
-                  {c.payable_accounts[0].payable_payments.sort((a:any, b:any) => new Date(a.date).getTime() - new Date(b.date).getTime()).map((p: any) => (
-                    <tr key={p.id}>
-                      <td style={{ padding: '0.5rem', border: '1px solid #ccc' }}>{p.date}</td>
-                      <td style={{ padding: '0.5rem', border: '1px solid #ccc' }}>{p.description}</td>
-                      <td style={{ padding: '0.5rem', border: '1px solid #ccc' }}>{p.reference || '-'}</td>
-                      <td style={{ padding: '0.5rem', border: '1px solid #ccc', textAlign: 'right' }}>${formatCurrency(p.amount_usd)}</td>
+                  {paymentsList.sort((a:any, b:any) => new Date(b.date).getTime() - new Date(a.date).getTime()).map((pay: any) => (
+                    <tr key={pay.id}>
+                      <td style={{ padding: '0.5rem', border: '1px solid #ccc' }}>{pay.date}</td>
+                      <td style={{ padding: '0.5rem', border: '1px solid #ccc' }}>{pay.description}</td>
+                      <td style={{ padding: '0.5rem', border: '1px solid #ccc' }}>{pay.reference || '-'}</td>
+                      <td style={{ padding: '0.5rem', border: '1px solid #ccc', textAlign: 'right' }}>${formatCurrency(pay.amount_usd)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -2461,7 +2584,7 @@ export default function ProjectDashboard() {
         <div className="modal-overlay">
           <div className="card modal-content animate-fade" style={{ maxWidth: '520px', width: '90%' }}>
             <h3 style={{ marginBottom: '1.5rem' }}>
-              {editItemType === 'payment' ? '✏️ Editar Pago' : editItemType === 'cost' ? '✏️ Editar Gasto' : editItemType === 'advance' ? '✏️ Editar Retiro' : '✏️ Editar Compromiso'}
+              {editItemType === 'payment' ? '✏️ Editar Pago' : editItemType === 'cost' ? '✏️ Editar Gasto' : editItemType === 'advance' ? '✏️ Editar Retiro' : '✏️ Editar Cuenta por Pagar'}
             </h3>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               {editItemType === 'payment' && (
@@ -2507,24 +2630,24 @@ export default function ProjectDashboard() {
                   </div>
                 </>
               )}
-              {(editItemType === 'cost' || editItemType === 'commitment') && (
+              {(editItemType === 'cost' || editItemType === 'payable' || editItemType === 'commitment') && (
                 <>
                   <div>
                     <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Descripción</label>
                     <input type="text" className="input-field" value={editItemForm.description} onChange={e => setEditItemForm({...editItemForm, description: e.target.value})} />
                   </div>
                   <div>
-                    <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Proveedor</label>
-                    <input type="text" className="input-field" value={editItemForm.provider || ''} onChange={e => setEditItemForm({...editItemForm, provider: e.target.value})} />
+                    <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Proveedor / Beneficiario</label>
+                    <input type="text" className="input-field" value={editItemForm.provider || editItemForm.name || ''} onChange={e => setEditItemForm({...editItemForm, provider: e.target.value, name: e.target.value})} />
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                     <div>
                       <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Cantidad</label>
-                      <input type="number" className="input-field" value={editItemForm.quantity} onChange={e => setEditItemForm({...editItemForm, quantity: Number(e.target.value)})} />
+                      <input type="number" className="input-field" value={editItemForm.quantity || 1} onChange={e => setEditItemForm({...editItemForm, quantity: Number(e.target.value)})} />
                     </div>
                     <div>
-                      <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>P. Unitario (USD)</label>
-                      <input type="text" className="input-field" value={editItemForm.unit_price_usd} onChange={e => setEditItemForm({...editItemForm, unit_price_usd: handleMoneyInput(e.target.value)})} onBlur={e => setEditItemForm({...editItemForm, unit_price_usd: formatOnBlur(e.target.value)})} />
+                      <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>P. Unitario / Total (USD)</label>
+                      <input type="text" className="input-field" value={editItemForm.unit_price_usd || editItemForm.total_amount_usd} onChange={e => setEditItemForm({...editItemForm, unit_price_usd: handleMoneyInput(e.target.value), total_amount_usd: handleMoneyInput(e.target.value)})} onBlur={e => setEditItemForm({...editItemForm, unit_price_usd: formatOnBlur(e.target.value), total_amount_usd: formatOnBlur(e.target.value)})} />
                     </div>
                   </div>
                   <div>

@@ -8,6 +8,15 @@
    - **WhatsApp (Baileys)**: Activo localmente en `src/lib/whatsapp/whatsappService.js` con sesión vinculada en `baileys_auth_info/`. Capaz de enviar mensajes directos y PDFs a números como `04125007089` instantáneamente.
    - **Impresión / Reportes**: Disparo directo con `window.print()` sin modales bloqueantes, utilizando `#printable-tracking-report-root` y `@media print`.
    - **Seguimiento & Anteproyectos**: Módulos completos con tabla `project_tasks`, barra segmentada de 3 estados y auto-importación de partidas.
+6. **PREFIJOS DE CONTEXTO**: El usuario usará palabras clave al inicio para definir el entorno de trabajo:
+   - **"En el Sistema:"** o **"En la App:"** -> Modificar código en `src/`, Base de Datos y pruebas locales.
+   - **"En Drive:"** o **"Archivos locales:"** -> Operar sobre archivos en el disco duro o carpetas de Drive locales.
+   - **"En WhatsApp / Telegram:"** -> Accionar los servicios de mensajería locales.
+   - **"Solo consulta / Investiga:"** -> Proveer respuestas o buscar info sin tocar código.
+7. **DELEGACIÓN POR DEFECTO (CERO ESPERA)**: Tú (el agente principal) actúas como el Director/Coordinador. Para **CUALQUIER** tarea operativa que te pida el usuario (ej. "registra un gasto", "crea un archivo", "modifica la base de datos"), **NO DEBES ejecutarla tú mismo paso a paso en el chat principal**. 
+   - En tu **primer turno**, invoca de inmediato a un subagente (con `invoke_subagent`) pasándole las instrucciones.
+   - Responde instantáneamente al usuario confirmando que la tarea fue asignada.
+   - El objetivo es que NUNCA pongas al usuario en cola de espera; tu chat principal debe quedar libre en cuestión de segundos para atender otra solicitud, mientras el subagente hace el trabajo pesado en segundo plano.
 
 <!-- BEGIN:nextjs-agent-rules -->
 # This is NOT the Next.js you know

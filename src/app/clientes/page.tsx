@@ -648,7 +648,7 @@ export default function ClientesPage() {
                     )}
                     {pendingSummary.commitmentsCount > 0 && (
                       <li style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#fde047' }}>
-                        • <strong>{pendingSummary.commitmentsCount}</strong> Compromisos / Cuentas por pagar vinculadas
+                        • <strong>{pendingSummary.commitmentsCount}</strong> Cuentas por pagar vinculadas
                       </li>
                     )}
                     {pendingSummary.pendingTelegramCount > 0 && (

@@ -64,7 +64,7 @@ export default function RecentActivityFeed({ maxItems = 15 }: RecentActivityFeed
       case 'projects_DELETE': return 'eliminó un proyecto';
       case 'clients_INSERT': return 'registró un cliente';
       case 'clients_UPDATE': return 'modificó un cliente';
-      case 'project_commitments_INSERT': return 'registró un compromiso';
+      case 'project_commitments_INSERT': return 'registró una cuenta por pagar';
       case 'partner_advances_INSERT': return 'registró un retiro de socio';
       case 'project_extras_INSERT': return 'registró un adicional';
       default: return `${action} en ${entity}`;
