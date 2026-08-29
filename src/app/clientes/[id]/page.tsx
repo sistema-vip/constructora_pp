@@ -304,7 +304,7 @@ export default function ClienteDashboard() {
   // Estados para edición de items
   const [showEditItemModal, setShowEditItemModal] = useState(false);
   const [editingItem, setEditingItem] = useState<any>(null);
-  const [editItemType, setEditItemType] = useState<'payment' | 'cost' | 'commitment' | null>(null);
+  const [editItemType, setEditItemType] = useState<'payment' | 'cost' | 'extra' | 'commitment' | null>(null);
   const [editItemForm, setEditItemForm] = useState<any>({});
 
   // Estados para Unificar Proyectos
@@ -845,7 +845,7 @@ export default function ClienteDashboard() {
     } else alert(`Error: ${error?.message || 'Error desconocido'}`);
   }
 
-  const initiateEditItem = (item: any, type: 'payment' | 'cost' | 'commitment') => {
+  const initiateEditItem = (item: any, type: 'payment' | 'cost' | 'extra' | 'commitment') => {
     if (isViewer) return;
     if (isActionDisabledForSales(item.project_id)) return alert('Ventas no puede modificar proyectos aprobados.');
     setEditingItem(item);
@@ -882,6 +882,13 @@ export default function ClienteDashboard() {
           unit_price_usd: unitPrice,
           total_usd: editItemForm.quantity * unitPrice,
           date: editItemForm.date
+        };
+      } else if (editItemType === 'extra') {
+        table = 'project_extras';
+        updateData = {
+          project_id: editItemForm.project_id,
+          description: editItemForm.description,
+          amount_usd: parseCurrency(editItemForm.amount_usd)
         };
       } else if (editItemType === 'commitment') {
         table = 'project_commitments';
@@ -921,8 +928,8 @@ export default function ClienteDashboard() {
       setEditingItem(null);
       setEditItemType(null);
       fetchClientData();
-    } catch (error: any) {
-      alert('Error al guardar: ' + error.message);
+    } catch (err: any) {
+      alert('Error al guardar: ' + err.message);
     } finally {
       setLoading(false);
     }
@@ -1828,15 +1835,26 @@ export default function ClienteDashboard() {
                         <td style={{ padding: '1rem' }}>{e.description}</td>
                         <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>{e.proposal_number ? `#${e.proposal_number} - ` : ''}{e.project_title}</td>
                         <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold', color: 'var(--primary-color)' }}>+ ${formatCurrency(e.amount_usd)}</td>
-                        <td style={{ padding: '1rem', textAlign: 'right' }}>
+                        <td style={{ padding: '1rem', textAlign: 'right', display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
                           {!isViewer && !isActionDisabledForSales(e.project_id) && (
-                            <button 
-                              className="btn-secondary" 
-                              style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--danger)', borderColor: 'rgba(239, 68, 68, 0.2)' }} 
-                              onClick={() => initiateDelete(e.id, 'extra')}
-                            >
-                              <Trash2 size={14} />
-                            </button>
+                            <>
+                              <button 
+                                className="btn-secondary" 
+                                style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--primary-color)', borderColor: 'rgba(59, 130, 246, 0.2)' }} 
+                                onClick={() => initiateEditItem({ ...e, amount_usd: formatCurrency(e.amount_usd) }, 'extra')}
+                                title="Editar adicional"
+                              >
+                                <Edit3 size={14} />
+                              </button>
+                              <button 
+                                className="btn-secondary" 
+                                style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--danger)', borderColor: 'rgba(239, 68, 68, 0.2)' }} 
+                                onClick={() => initiateDelete(e.id, 'extra')}
+                                title="Eliminar adicional"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </>
                           )}
                         </td>
                       </tr>
@@ -3108,13 +3126,13 @@ export default function ClienteDashboard() {
       />
 
 
-      {/* Modal de Edición de Items (Pagos, Gastos, Cuentas por Pagar) */}
+      {/* Modal de Edición de Items (Pagos, Gastos, Adicionales, Cuentas por Pagar) */}
       {showEditItemModal && editingItem && editItemType && (
         <div className="modal-overlay">
           <div className="card modal-content animate-fade" style={{ maxWidth: '700px', width: '95%', maxHeight: '90vh', overflowY: 'auto' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
               <h2 style={{ margin: 0, color: 'white', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <Edit3 size={20} /> Editar {editItemType === 'payment' ? 'Pago' : editItemType === 'cost' ? 'Gasto' : 'Cuenta por Pagar'}
+                <Edit3 size={20} /> Editar {editItemType === 'payment' ? 'Pago' : editItemType === 'cost' ? 'Gasto' : editItemType === 'extra' ? 'Trabajo Adicional' : 'Cuenta por Pagar'}
               </h2>
               <button onClick={() => { setShowEditItemModal(false); setEditingItem(null); }} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>
                 <X size={24} />
@@ -3169,6 +3187,45 @@ export default function ClienteDashboard() {
                 </div>
                 <div style={{ gridColumn: 'span 2' }}>
                   <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.85rem' }}>Descripción</label>
+                  <input
+                    type="text"
+                    className="input-field"
+                    value={editItemForm.description || ''}
+                    onChange={e => setEditItemForm({ ...editItemForm, description: e.target.value })}
+                  />
+                </div>
+              </div>
+            )}
+
+            {editItemType === 'extra' && (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.5rem' }}>
+                <div>
+                  <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.85rem' }}>Proyecto</label>
+                  <select
+                    className="input-field"
+                    value={editItemForm.project_id || ''}
+                    onChange={e => setEditItemForm({ ...editItemForm, project_id: e.target.value })}
+                  >
+                    <option value="">Seleccione proyecto</option>
+                    {activeProjects.map(p => (
+                      <option key={p.id} value={p.id}>
+                        {p.proposal_number ? `#${p.proposal_number} - ` : ''}{p.title}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.85rem' }}>Monto Extra a Cobrar (USD)</label>
+                  <input
+                    type="text"
+                    className="input-field"
+                    value={editItemForm.amount_usd || ''}
+                    onChange={e => setEditItemForm({ ...editItemForm, amount_usd: handleMoneyInput(e.target.value) })}
+                    onBlur={e => setEditItemForm({ ...editItemForm, amount_usd: formatOnBlur(e.target.value) })}
+                  />
+                </div>
+                <div style={{ gridColumn: 'span 2' }}>
+                  <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.85rem' }}>Descripción del Trabajo Adicional</label>
                   <input
                     type="text"
                     className="input-field"

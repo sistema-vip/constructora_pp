@@ -134,7 +134,7 @@ export default function ProjectDashboard() {
   const [advances, setAdvances] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [isPrintingReport, setIsPrintingReport] = useState(false);
-  const [activeTab, setActiveTab] = useState<'pagos' | 'gastos' | 'adicionales' | 'cuentas_pagar' | 'retiros' | 'detalles' | 'seguimiento'>('pagos');
+  const [activeTab, setActiveTab] = useState<'pagos' | 'gastos' | 'cuentas_pagar' | 'retiros' | 'propuesta_adicionales' | 'seguimiento'>('pagos');
 
   // Estado para impresión y detalles de cuentas por pagar
   const [activePrintJob, setActivePrintJob] = useState<'none' | 'project-report' | 'client-statement' | 'payable-voucher'>('none');
@@ -179,7 +179,7 @@ export default function ProjectDashboard() {
   // Estados para edición inline (estilo clientes)
   const [showEditItemModal, setShowEditItemModal] = useState(false);
   const [editingItem, setEditingItem] = useState<any>(null);
-  const [editItemType, setEditItemType] = useState<'payment' | 'cost' | 'payable' | 'commitment' | 'advance' | null>(null);
+  const [editItemType, setEditItemType] = useState<'payment' | 'cost' | 'extra' | 'payable' | 'commitment' | 'advance' | null>(null);
   const [editItemForm, setEditItemForm] = useState<any>({});
 
   // Estados para eliminación protegida (estilo clientes)
@@ -189,7 +189,7 @@ export default function ProjectDashboard() {
   const [deleting, setDeleting] = useState(false);
   const [adminActionType, setAdminActionType] = useState<'delete' | 'edit' | 'revert' | 'approve_proposal' | 'reject_proposal'>('delete');
   const [itemToDelete, setItemToDelete] = useState<{ id: string, type: 'payment' | 'cost' | 'extra' | 'payable' | 'commitment' | 'advance' } | null>(null);
-  const [pendingEditItem, setPendingEditItem] = useState<{ item: any, type: 'payment' | 'cost' | 'payable' | 'commitment' | 'advance' } | null>(null);
+  const [pendingEditItem, setPendingEditItem] = useState<{ item: any, type: 'payment' | 'cost' | 'extra' | 'payable' | 'commitment' | 'advance' } | null>(null);
 
   useEffect(() => {
     if (projectId) {
@@ -202,7 +202,9 @@ export default function ProjectDashboard() {
       const tabParam = urlParams.get('tab');
       if (tabParam === 'compromisos' || tabParam === 'cuentas_pagar') {
         setActiveTab('cuentas_pagar');
-      } else if (tabParam === 'gastos' || tabParam === 'pagos' || tabParam === 'adicionales' || tabParam === 'retiros' || tabParam === 'detalles' || tabParam === 'seguimiento') {
+      } else if (tabParam === 'adicionales' || tabParam === 'detalles' || tabParam === 'propuesta_adicionales') {
+        setActiveTab('propuesta_adicionales');
+      } else if (tabParam === 'gastos' || tabParam === 'pagos' || tabParam === 'retiros' || tabParam === 'seguimiento') {
         setActiveTab(tabParam as any);
       }
     }
@@ -504,7 +506,7 @@ export default function ProjectDashboard() {
     }
   };
 
-  const initiateEditItem = (item: any, type: 'payment' | 'cost' | 'payable' | 'commitment' | 'advance') => {
+  const initiateEditItem = (item: any, type: 'payment' | 'cost' | 'extra' | 'payable' | 'commitment' | 'advance') => {
     if (isViewer) return;
     setPendingEditItem({ item, type });
     setAdminActionType('edit');
@@ -526,6 +528,12 @@ export default function ProjectDashboard() {
         table = 'project_costs';
         const up = parseCurrency(editItemForm.unit_price_usd);
         updateData = { description: editItemForm.description, provider: editItemForm.provider, category: editItemForm.category, quantity: editItemForm.quantity, unit_price_usd: up, total_usd: editItemForm.quantity * up, date: editItemForm.date };
+      } else if (editItemType === 'extra') {
+        table = 'project_extras';
+        updateData = {
+          description: editItemForm.description,
+          amount_usd: parseCurrency(editItemForm.amount_usd)
+        };
       } else if (editItemType === 'advance') {
         table = 'partner_advances';
         updateData = {
@@ -1148,11 +1156,6 @@ export default function ProjectDashboard() {
             onClick={() => setActiveTab('gastos')}
           >Gastos</button>
           <button
-            className={`btn-secondary ${activeTab === 'adicionales' ? 'btn-primary' : ''}`}
-            style={{ padding: '0.5rem 1rem', background: activeTab === 'adicionales' ? 'var(--primary-color)' : 'transparent', border: 'none', whiteSpace: 'nowrap' }}
-            onClick={() => setActiveTab('adicionales')}
-          >Adicionales</button>
-          <button
             className={`btn-secondary ${activeTab === 'cuentas_pagar' ? 'btn-primary' : ''}`}
             style={{ padding: '0.5rem 1rem', background: activeTab === 'cuentas_pagar' ? 'var(--primary-color)' : 'transparent', border: 'none', whiteSpace: 'nowrap' }}
             onClick={() => setActiveTab('cuentas_pagar')}
@@ -1163,10 +1166,10 @@ export default function ProjectDashboard() {
             onClick={() => setActiveTab('retiros')}
           >Retiro de Socios</button>
           <button
-            className={`btn-secondary ${activeTab === 'detalles' ? 'btn-primary' : ''}`}
-            style={{ padding: '0.5rem 1rem', background: activeTab === 'detalles' ? 'var(--accent-blue)' : 'transparent', border: 'none', whiteSpace: 'nowrap' }}
-            onClick={() => setActiveTab('detalles')}
-          >Detalles</button>
+            className={`btn-secondary ${activeTab === 'propuesta_adicionales' ? 'btn-primary' : ''}`}
+            style={{ padding: '0.5rem 1rem', background: activeTab === 'propuesta_adicionales' ? 'var(--accent-blue)' : 'transparent', border: 'none', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '0.4rem' }}
+            onClick={() => setActiveTab('propuesta_adicionales')}
+          ><FileText size={15} /> Propuesta y Adicionales</button>
           {(project?.status === 'in_progress' || project?.status === 'completed') && (
             <button
               className={`btn-secondary ${activeTab === 'seguimiento' ? 'btn-primary' : ''}`}
@@ -1244,35 +1247,6 @@ export default function ProjectDashboard() {
           </div>
         )}
 
-        {/* TAB: ADICIONALES */}
-        {activeTab === 'adicionales' && (
-          <div className="animate-fade">
-            {extras.length === 0 ? (
-              <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>No hay trabajos adicionales registrados.</div>
-            ) : (
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                    <th style={{ textAlign: 'left', padding: '1rem' }}>DESCRIPCIÓN</th>
-                    <th style={{ textAlign: 'right', padding: '1rem' }}>MONTO EXTRA (USD)</th>
-                    <th style={{ textAlign: 'right', padding: '1rem' }}></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {extras.map(e => (
-                    <tr key={e.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                      <td style={{ padding: '1rem' }}>{e.description}</td>
-                      <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold', color: 'var(--primary-color)' }}>+ ${Number(e.amount_usd).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                      <td style={{ padding: '1rem', textAlign: 'right' }}>
-                        {!isViewer && (<button className="btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--danger)', borderColor: 'rgba(239,68,68,0.2)' }} onClick={() => initiateDelete(e.id, 'extra')}><Trash2 size={14} /></button>)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-        )}
 
         {/* TAB: CUENTAS POR PAGAR */}
         {activeTab === 'cuentas_pagar' && (
@@ -1477,82 +1451,164 @@ export default function ProjectDashboard() {
           </div>
         )}
 
-        {/* TAB: DETALLES */}
-        {activeTab === 'detalles' && (
-          <div className="animate-fade">
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem' }}>
-              <div>
-                <h3 style={{ marginBottom: '1rem' }}>Propuesta Original</h3>
-                <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.6, color: 'var(--text-muted)', background: 'rgba(0,0,0,0.2)', padding: '1.5rem', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
-                  {project.description ? parseBoldText(project.description) : 'Sin descripción detallada.'}
+        {/* TAB: PROPUESTA Y ADICIONALES */}
+        {activeTab === 'propuesta_adicionales' && (
+          <div className="animate-fade" style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(380px, 1fr))', gap: '1.5rem' }}>
+              {/* COLUMNA IZQUIERDA: PROPUESTA ORIGINAL */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1.1rem' }}>
+                    <FileText size={18} color="var(--primary-color)" /> Propuesta Original
+                  </h3>
+                  {project?.proposal_number && (
+                    <span style={{ background: 'rgba(59,130,246,0.1)', color: 'var(--primary-color)', padding: '0.2rem 0.6rem', borderRadius: '6px', fontSize: '0.8rem', border: '1px solid rgba(59,130,246,0.25)', fontWeight: 600 }}>
+                      Propuesta #{project.proposal_number}
+                    </span>
+                  )}
                 </div>
-                <div style={{ marginTop: '1rem', fontWeight: 'bold', fontSize: '1.1rem', padding: '1rem', background: 'rgba(255,255,255,0.02)', borderRadius: '8px' }}>
-                  Presupuesto Base: ${baseBudget.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+
+                <div style={{
+                  whiteSpace: 'pre-wrap',
+                  lineHeight: 1.6,
+                  color: 'var(--text-muted)',
+                  background: 'rgba(0,0,0,0.25)',
+                  padding: '1.5rem',
+                  borderRadius: '10px',
+                  border: '1px solid var(--border-color)',
+                  minHeight: '220px'
+                }}>
+                  {project?.description ? parseBoldText(project.description) : 'Sin descripción detallada del alcance original.'}
+                </div>
+
+                <div style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  padding: '1rem 1.25rem',
+                  background: 'linear-gradient(145deg, rgba(59,130,246,0.08) 0%, rgba(0,0,0,0) 100%)',
+                  borderRadius: '8px',
+                  border: '1px solid rgba(59,130,246,0.2)'
+                }}>
+                  <span style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>Presupuesto Base Original:</span>
+                  <span style={{ fontSize: '1.25rem', fontWeight: 800, color: 'white' }}>
+                    ${baseBudget.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
                 </div>
               </div>
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginBottom: '1rem' }}>
-                  <button className="btn-secondary" onClick={() => setShowExtraModal(true)} style={{ padding: '0.6rem 1rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                    <Plus size={16} /> Trabajo Adicional
-                  </button>
+
+              {/* COLUMNA DERECHA: TRABAJOS ADICIONALES */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                    <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1.1rem' }}>
+                      <PlusCircle size={18} color="var(--accent-blue)" /> Trabajos Adicionales
+                    </h3>
+                    <span style={{ background: 'rgba(59,130,246,0.15)', color: 'var(--accent-blue)', padding: '0.15rem 0.5rem', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 700 }}>
+                      {extras.length}
+                    </span>
+                  </div>
+                  {!isViewer && (
+                    <button
+                      className="btn-secondary"
+                      onClick={() => setShowExtraModal(true)}
+                      style={{
+                        padding: '0.45rem 0.9rem',
+                        fontSize: '0.85rem',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.4rem',
+                        borderColor: 'var(--accent-blue)',
+                        color: 'var(--accent-blue)'
+                      }}
+                    >
+                      <Plus size={15} /> Trabajo Adicional
+                    </button>
+                  )}
                 </div>
-                <div style={{ background: 'rgba(0,0,0,0.2)', borderRadius: '8px', border: '1px solid var(--border-color)', overflow: 'hidden' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <thead>
-                      <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
-                        <th style={{ textAlign: 'left', padding: '0.75rem 1rem' }}>DESCRIPCIÓN</th>
-                        <th style={{ textAlign: 'right', padding: '0.75rem 1rem' }}>MONTO</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {extras.length === 0 ? (
-                        <tr><td colSpan={2} style={{ textAlign: 'center', padding: '1.5rem', color: 'var(--text-muted)', fontSize: '0.9rem' }}>No hay adicionales registrados.</td></tr>
-                      ) : extras.map(e => (
-                        <tr key={e.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
-                          <td style={{ padding: '1rem' }}>{e.description}</td>
-                          <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold', color: 'var(--accent-blue)' }}>+ ${Number(e.amount_usd).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+
+                <div style={{ background: 'rgba(0,0,0,0.25)', borderRadius: '10px', border: '1px solid var(--border-color)', overflow: 'hidden', minHeight: '220px', display: 'flex', flexDirection: 'column', justifyContent: extras.length === 0 ? 'center' : 'flex-start' }}>
+                  {extras.length === 0 ? (
+                    <div style={{ padding: '2.5rem 1.5rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+                      <p style={{ margin: '0 0 1rem 0', fontSize: '0.95rem' }}>No hay trabajos adicionales registrados para este proyecto.</p>
+                      {!isViewer && (
+                        <button
+                          className="btn-secondary"
+                          onClick={() => setShowExtraModal(true)}
+                          style={{ padding: '0.5rem 1rem', fontSize: '0.85rem', display: 'inline-flex', alignItems: 'center', gap: '0.4rem', borderColor: 'var(--accent-blue)', color: 'var(--accent-blue)' }}
+                        >
+                          <Plus size={15} /> Registrar Primer Adicional
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                      <thead>
+                        <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '0.8rem', background: 'rgba(255,255,255,0.02)' }}>
+                          <th style={{ textAlign: 'left', padding: '0.75rem 1rem' }}>DESCRIPCIÓN</th>
+                          <th style={{ textAlign: 'right', padding: '0.75rem 1rem' }}>MONTO (USD)</th>
+                          {!isViewer && <th style={{ textAlign: 'right', padding: '0.75rem 1rem', width: '90px' }}></th>}
                         </tr>
-                      ))}
-                    </tbody>
-                    <tfoot>
-                      <tr style={{ background: 'rgba(255,255,255,0.02)' }}>
-                        <td style={{ padding: '1rem', fontWeight: 'bold', textAlign: 'right' }}>Total Adicionales:</td>
-                        <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold', color: 'var(--accent-blue)' }}>${totalExtra.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                      </tr>
-                    </tfoot>
-                  </table>
-                </div>
-              </div>
-            </div>
-            <div style={{ marginTop: '3rem', paddingTop: '2rem', borderTop: '2px solid var(--border-color)' }}>
-              <h3 style={{ marginBottom: '1.5rem', fontSize: '1.1rem' }}>Distribución de Ganancias por Socio</h3>
-              <div style={{ background: 'rgba(0,0,0,0.2)', borderRadius: '8px', border: '1px solid var(--border-color)', overflow: 'hidden' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                  <thead>
-                    <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '0.8rem', background: 'rgba(0,0,0,0.3)' }}>
-                      <th style={{ textAlign: 'left', padding: '0.75rem 1rem' }}>SOCIO</th>
-                      <th style={{ textAlign: 'right', padding: '0.75rem 1rem' }}>GANANCIA CORRESPONDIENTE</th>
-                      <th style={{ textAlign: 'right', padding: '0.75rem 1rem' }}>RETIROS REALIZADOS</th>
-                      <th style={{ textAlign: 'right', padding: '0.75rem 1rem' }}>SALDO DISPONIBLE</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {partners.map((partner, idx) => {
-                      const totalRetired = partnerAdvances[partner] || 0;
-                      const availableBalance = profitPerPartner - totalRetired;
-                      return (
-                        <tr key={idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
-                          <td style={{ padding: '1rem', fontWeight: '600' }}>{partner}</td>
-                          <td style={{ padding: '1rem', textAlign: 'right', color: 'var(--success)' }}>${profitPerPartner.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                          <td style={{ padding: '1rem', textAlign: 'right', color: '#a78bfa' }}>${totalRetired.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                          <td style={{ padding: '1rem', textAlign: 'right', fontWeight: '600', color: availableBalance < 0 ? 'var(--danger)' : 'var(--success)' }}>
-                            {availableBalance < 0 ? '-' : ''}${Math.abs(availableBalance).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </thead>
+                      <tbody>
+                        {extras.map(e => (
+                          <tr key={e.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+                            <td style={{ padding: '0.85rem 1rem', fontSize: '0.9rem' }}>{e.description}</td>
+                            <td style={{ padding: '0.85rem 1rem', textAlign: 'right', fontWeight: 'bold', color: 'var(--accent-blue)', fontSize: '0.9rem' }}>
+                              + ${Number(e.amount_usd).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </td>
+                            {!isViewer && (
+                              <td style={{ padding: '0.85rem 1rem', textAlign: 'right' }}>
+                                <div style={{ display: 'flex', gap: '0.4rem', justifyContent: 'flex-end' }}>
+                                  <button
+                                    className="btn-secondary"
+                                    style={{ padding: '0.35rem 0.65rem', fontSize: '0.75rem', color: 'var(--primary-color)', borderColor: 'rgba(59,130,246,0.2)' }}
+                                    onClick={() => initiateEditItem({ ...e, amount_usd: formatCurrency(e.amount_usd) }, 'extra')}
+                                    title="Editar adicional"
+                                  >
+                                    <Edit3 size={13} />
+                                  </button>
+                                  <button
+                                    className="btn-secondary"
+                                    style={{ padding: '0.35rem 0.65rem', fontSize: '0.75rem', color: 'var(--danger)', borderColor: 'rgba(239,68,68,0.2)' }}
+                                    onClick={() => initiateDelete(e.id, 'extra')}
+                                    title="Eliminar adicional"
+                                  >
+                                    <Trash2 size={13} />
+                                  </button>
+                                </div>
+                              </td>
+                            )}
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr style={{ background: 'rgba(255,255,255,0.03)', borderTop: '1px solid var(--border-color)' }}>
+                          <td style={{ padding: '0.85rem 1rem', fontWeight: 'bold', textAlign: 'right' }}>Total Adicionales:</td>
+                          <td style={{ padding: '0.85rem 1rem', textAlign: 'right', fontWeight: 'bold', color: 'var(--accent-blue)', fontSize: '1rem' }}>
+                            ${totalExtra.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </td>
+                          {!isViewer && <td></td>}
                         </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+                      </tfoot>
+                    </table>
+                  )}
+                </div>
+
+                <div style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  padding: '1rem 1.25rem',
+                  background: 'linear-gradient(145deg, rgba(59,130,246,0.08) 0%, rgba(0,0,0,0) 100%)',
+                  borderRadius: '8px',
+                  border: '1px solid rgba(59,130,246,0.2)'
+                }}>
+                  <span style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>Monto Total Contratado (Base + Extras):</span>
+                  <span style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--accent-blue)' }}>
+                    ${totalBudget.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
+                </div>
               </div>
             </div>
           </div>
@@ -2584,7 +2640,7 @@ export default function ProjectDashboard() {
         <div className="modal-overlay">
           <div className="card modal-content animate-fade" style={{ maxWidth: '520px', width: '90%' }}>
             <h3 style={{ marginBottom: '1.5rem' }}>
-              {editItemType === 'payment' ? '✏️ Editar Pago' : editItemType === 'cost' ? '✏️ Editar Gasto' : editItemType === 'advance' ? '✏️ Editar Retiro' : '✏️ Editar Cuenta por Pagar'}
+              {editItemType === 'payment' ? '✏️ Editar Pago' : editItemType === 'cost' ? '✏️ Editar Gasto' : editItemType === 'extra' ? '✏️ Editar Trabajo Adicional' : editItemType === 'advance' ? '✏️ Editar Retiro' : '✏️ Editar Cuenta por Pagar'}
             </h3>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               {editItemType === 'payment' && (
@@ -2604,6 +2660,18 @@ export default function ProjectDashboard() {
                   <div>
                     <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Fecha</label>
                     <input type="date" className="input-field" value={editItemForm.date} onChange={e => setEditItemForm({...editItemForm, date: e.target.value})} />
+                  </div>
+                </>
+              )}
+              {editItemType === 'extra' && (
+                <>
+                  <div>
+                    <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Descripción del Trabajo Adicional</label>
+                    <input type="text" className="input-field" value={editItemForm.description || ''} onChange={e => setEditItemForm({...editItemForm, description: e.target.value})} />
+                  </div>
+                  <div>
+                    <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Monto Extra a Cobrar (USD)</label>
+                    <input type="text" className="input-field" value={editItemForm.amount_usd || ''} onChange={e => setEditItemForm({...editItemForm, amount_usd: handleMoneyInput(e.target.value)})} onBlur={e => setEditItemForm({...editItemForm, amount_usd: formatOnBlur(e.target.value)})} />
                   </div>
                 </>
               )}
