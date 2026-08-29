@@ -37,6 +37,10 @@ interface PayableAccount {
   status: string;
   created_at: string;
   payable_payments: PayablePayment[];
+  paid?: number;
+  balance?: number;
+  isPaid?: boolean;
+  isCancelled?: boolean;
 }
 
 export default function CuentasPorPagarPage() {
@@ -53,6 +57,8 @@ export default function CuentasPorPagarPage() {
   const [printPayableData, setPrintPayableData] = useState<any>(null);
 
   const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [paymentMode, setPaymentMode] = useState<'abono' | 'total'>('abono');
+  const [selectedAccountForPayment, setSelectedAccountForPayment] = useState<any>(null);
 
   function handlePrintPayable(account: any) {
     setPrintPayableData(account);
@@ -111,8 +117,20 @@ export default function CuentasPorPagarPage() {
       if (accountsRes.error) throw accountsRes.error;
       if (projectsRes.error) throw projectsRes.error;
 
-      setAccounts(accountsRes.data || []);
+      const loadedAccounts = accountsRes.data || [];
+      setAccounts(loadedAccounts);
       setProjects(projectsRes.data || []);
+
+      // Auto-heal en segundo plano: sincronizar cuentas que ya fueron 100% saldadas pero tienen status 'active'
+      const accountsToHeal = loadedAccounts.filter(a => {
+        if (a.status !== 'active') return false;
+        const paid = a.payable_payments?.reduce((s: number, p: any) => s + Number(p.amount_usd || 0), 0) || 0;
+        const total = Number(a.total_amount_usd || 0);
+        return paid >= total - 0.01 && paid > 0;
+      });
+      if (accountsToHeal.length > 0) {
+        Promise.all(accountsToHeal.map(a => supabase.from('payable_accounts').update({ status: 'paid' }).eq('id', a.id))).catch(console.error);
+      }
     } catch (error) {
       console.error('Error fetching data:', error);
     } finally {
@@ -166,16 +184,58 @@ export default function CuentasPorPagarPage() {
     }
   };
 
+  const openAbonoModal = (account: any) => {
+    setSelectedAccountForPayment(account);
+    setPaymentMode('abono');
+    setPaymentForm({
+      payable_account_id: account.id,
+      amount_usd: '',
+      description: `Abono: ${account.description || account.name}`,
+      reference: '',
+      date: new Date().toISOString().split('T')[0]
+    });
+    setShowPaymentModal(true);
+  };
+
+  const openTotalPaymentModal = (account: any) => {
+    const paid = account.payable_payments?.reduce((s: number, p: any) => s + Number(p.amount_usd || 0), 0) || 0;
+    const total = Number(account.total_amount_usd || 0);
+    const balance = Math.max(0, total - paid);
+    setSelectedAccountForPayment(account);
+    setPaymentMode('total');
+    setPaymentForm({
+      payable_account_id: account.id,
+      amount_usd: formatCurrency(balance),
+      description: `Liquidación total: ${account.description || account.name}`,
+      reference: '',
+      date: new Date().toISOString().split('T')[0]
+    });
+    setShowPaymentModal(true);
+  };
+
   const handleSavePayment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isViewer) return;
     const account = accounts.find(a => a.id === paymentForm.payable_account_id);
-    if (account && isActionDisabledForSales(account.project_id)) {
+    if (!account) return alert('Cuenta no encontrada.');
+    if (isActionDisabledForSales(account.project_id)) {
       return alert('Ventas no puede modificar proyectos aprobados.');
     }
 
+    const previouslyPaid = account.payable_payments?.reduce((sum: number, p: any) => sum + Number(p.amount_usd || 0), 0) || 0;
+    const totalAmount = Number(account.total_amount_usd || 0);
+    const currentBalance = Math.max(0, totalAmount - previouslyPaid);
+
+    const rawAmountStr = String(paymentForm.amount_usd).replace(/\./g, '').replace(',', '.');
+    const paymentAmount = parseFloat(rawAmountStr) || 0;
+    if (paymentAmount <= 0) {
+      return alert('El monto debe ser mayor a $0.');
+    }
+    if (paymentAmount > currentBalance + 0.05) {
+      return alert(`El monto a pagar ($${formatCurrency(paymentAmount)}) supera el saldo pendiente ($${formatCurrency(currentBalance)}).`);
+    }
+
     try {
-      const paymentAmount = parseFloat(paymentForm.amount_usd) || 0;
       const { error } = await supabase.from('payable_payments').insert([{
         payable_account_id: paymentForm.payable_account_id,
         amount_usd: paymentAmount,
@@ -186,15 +246,24 @@ export default function CuentasPorPagarPage() {
 
       if (error) throw error;
 
+      const remainingBalance = totalAmount - previouslyPaid - paymentAmount;
+      const isFullPay = remainingBalance <= 0.01 || paymentMode === 'total';
+
       if (account && account.project_id) {
         let costCategory = 'materials';
         if (account.type === 'obrero') costCategory = 'labor';
         else if (account.type === 'alquiler') costCategory = 'equipment';
         else if (account.type === 'subcontratista') costCategory = 'subcontract';
 
+        const conceptText = paymentForm.description || account.description || (isFullPay ? 'Liquidación total' : 'Abono');
+        const refPart = paymentForm.reference ? ` (Ref: ${paymentForm.reference})` : '';
+        const costDescription = isFullPay
+          ? `Liquidación total cuenta por pagar: ${account.name} - ${conceptText}${refPart}`
+          : `Abono a cuenta por pagar: ${account.name} - ${conceptText}${refPart}`;
+
         const { error: costError } = await supabase.from('project_costs').insert([{
           project_id: account.project_id,
-          description: `Abono a CxP: ${account.name} - ${paymentForm.description}`,
+          description: costDescription,
           provider: account.name,
           category: costCategory,
           quantity: 1,
@@ -206,23 +275,18 @@ export default function CuentasPorPagarPage() {
         if (costError) console.error("Error al registrar gasto:", costError);
       }
 
-      if (account) {
-        const previouslyPaid = account.payable_payments?.reduce((sum: number, p: any) => sum + Number(p.amount_usd), 0) || 0;
-        const totalAmount = Number(account.total_amount_usd);
-        const remainingBalance = totalAmount - previouslyPaid - paymentAmount;
-
-        if (remainingBalance <= 0.01 && previouslyPaid + paymentAmount >= totalAmount) {
-          const { error: statusError } = await supabase.from('payable_accounts')
-            .update({ status: 'paid' })
-            .eq('id', account.id);
-          if (statusError) console.error("Error al actualizar estado CxP:", statusError);
-        }
+      if (isFullPay || remainingBalance <= 0.01) {
+        const { error: statusError } = await supabase.from('payable_accounts')
+          .update({ status: 'paid' })
+          .eq('id', account.id);
+        if (statusError) console.error("Error al actualizar estado CxP:", statusError);
       }
 
       setShowPaymentModal(false);
+      setSelectedAccountForPayment(null);
       fetchData();
     } catch (err: any) {
-      alert("Error registrando abono: " + err.message);
+      alert("Error registrando abono / liquidación: " + err.message);
     }
   };
 
@@ -258,18 +322,29 @@ export default function CuentasPorPagarPage() {
     }
   };
 
-  // KPIs
-  const activeAccounts = accounts.filter(a => a.status === 'active');
-  const totalCommitted = activeAccounts.reduce((acc, a) => acc + Number(a.total_amount_usd), 0);
-  const totalPaidActive = activeAccounts.reduce((acc, a) => 
-    acc + (a.payable_payments?.reduce((s, p) => s + Number(p.amount_usd), 0) || 0)
-  , 0);
-  const pendingBalance = activeAccounts.reduce((sum, a) => {
-    const paid = a.payable_payments?.reduce((s, p) => s + Number(p.amount_usd), 0) || 0;
-    const total = Number(a.total_amount_usd);
-    if (paid >= total - 0.01) return sum;
-    return sum + Math.max(0, total - paid);
-  }, 0);
+  // Calculate accounts with balances
+  const accountsWithBalance = accounts.map(account => {
+    const paid = account.payable_payments?.reduce((s, p) => s + Number(p.amount_usd || 0), 0) || 0;
+    const total = Number(account.total_amount_usd || 0);
+    const isPaid = account.status === 'paid' || paid >= total - 0.01;
+    const isCancelled = account.status === 'cancelled';
+    const balance = (isPaid || isCancelled) ? 0 : Math.max(0, total - paid);
+    return {
+      ...account,
+      paid,
+      total,
+      isPaid,
+      isCancelled,
+      balance
+    };
+  });
+
+  const activePendingAccounts = accountsWithBalance.filter(a => a.status === 'active' && !a.isPaid && !a.isCancelled && a.balance > 0.01);
+
+  // KPIs based on active pending debts
+  const totalCommitted = activePendingAccounts.reduce((acc, a) => acc + a.total, 0);
+  const totalPaidActive = activePendingAccounts.reduce((acc, a) => acc + a.paid, 0);
+  const pendingBalance = activePendingAccounts.reduce((acc, a) => acc + a.balance, 0);
 
   return (
     <div className="animate-fade-in">
@@ -288,7 +363,7 @@ export default function CuentasPorPagarPage() {
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--accent-blue)', marginBottom: '0.75rem', fontSize: '0.85rem', textTransform: 'uppercase' }}>
             <Users size={16} /> <span style={{ fontWeight: 700 }}>Cuentas Activas</span>
           </div>
-          <div style={{ fontSize: '2.2rem', fontWeight: 800, color: 'white' }}>{activeAccounts.length}</div>
+          <div style={{ fontSize: '2.2rem', fontWeight: 800, color: 'white' }}>{activePendingAccounts.length}</div>
         </div>
 
         <div className="card" style={{ padding: '1.5rem', background: 'linear-gradient(145deg, rgba(245,158,11,0.08) 0%, rgba(0,0,0,0) 100%)', borderColor: 'rgba(245, 158, 11, 0.4)' }}>
@@ -314,28 +389,34 @@ export default function CuentasPorPagarPage() {
       </div>
 
       {/* Actions */}
-      <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.5rem' }}>
-        {!isViewer && (
-          <button 
-            className="btn-primary"
-            onClick={() => {
-              setEditingAccountId(null);
-              setAccountForm({ name: '', type: 'obrero', description: '', total_amount_usd: '', project_id: '', contact_info: '', status: 'active' });
-              setShowAccountModal(true);
-            }}
-            style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
-          >
-            <PlusCircle size={16} /> Nueva Cuenta
-          </button>
-        )}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', marginBottom: '1.5rem' }}>
+        <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+          {!isViewer && (
+            <button 
+              className="btn-primary"
+              onClick={() => {
+                setEditingAccountId(null);
+                setAccountForm({ name: '', type: 'obrero', description: '', total_amount_usd: '', project_id: '', contact_info: '', status: 'active' });
+                setShowAccountModal(true);
+              }}
+              style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+            >
+              <PlusCircle size={16} /> Nueva Cuenta
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Table */}
       <div className="card" style={{ overflow: 'hidden' }}>
         {loading ? (
           <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-muted)' }}>Cargando cuentas...</div>
-        ) : accounts.length === 0 ? (
-          <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-muted)' }}>No hay cuentas por pagar registradas.</div>
+        ) : activePendingAccounts.length === 0 ? (
+          <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+            <CheckCircle size={40} color="var(--success)" style={{ margin: '0 auto 1rem auto', display: 'block', opacity: 0.8 }} />
+            <p style={{ margin: 0, fontSize: '1.1rem', color: 'white', fontWeight: 600 }}>¡No hay cuentas por pagar pendientes!</p>
+            <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.9rem' }}>Todos los compromisos y deudas han sido saldados en su totalidad.</p>
+          </div>
         ) : (
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -352,11 +433,11 @@ export default function CuentasPorPagarPage() {
                 </tr>
               </thead>
               <tbody>
-                {accounts.map(account => {
-                  const paid = account.payable_payments?.reduce((s, p) => s + Number(p.amount_usd), 0) || 0;
-                  const isPaid = account.status === 'paid' || paid >= Number(account.total_amount_usd) - 0.01;
-                  const isCancelled = account.status === 'cancelled';
-                  const balance = (isPaid || isCancelled) ? 0 : Math.max(0, Number(account.total_amount_usd) - paid);
+                {activePendingAccounts.map(account => {
+                  const paid = account.paid;
+                  const balance = account.balance;
+                  const isPaid = account.isPaid;
+                  const isCancelled = account.isCancelled;
 
                   return (
                     <tr key={account.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
@@ -376,8 +457,8 @@ export default function CuentasPorPagarPage() {
                           ${formatCurrency(balance)}
                         </td>
                         <td style={{ padding: '1rem', textAlign: 'center' }}>
-                          <span className={`badge ${account.status === 'active' ? 'badge-primary' : account.status === 'paid' ? 'badge-success' : 'badge-danger'}`}>
-                            {account.status === 'active' ? 'Activa' : account.status === 'paid' ? 'Saldada' : 'Cancelada'}
+                          <span className={`badge ${(!isPaid && !isCancelled && account.status === 'active' && balance > 0.01) ? 'badge-primary' : (isPaid || account.status === 'paid') ? 'badge-success' : 'badge-danger'}`}>
+                            {(!isPaid && !isCancelled && account.status === 'active' && balance > 0.01) ? 'Activa' : (isPaid || account.status === 'paid') ? 'Saldada' : 'Cancelada'}
                           </span>
                         </td>
                         <td style={{ padding: '1rem', textAlign: 'right', display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
@@ -397,17 +478,25 @@ export default function CuentasPorPagarPage() {
                           >
                             <Printer size={14} />
                           </button>
-                          {!isViewer && account.status === 'active' && !isActionDisabledForSales(account.project_id) && (
-                            <button 
-                              className="btn-primary" 
-                              style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem' }}
-                              onClick={() => {
-                                setPaymentForm({ payable_account_id: account.id, amount_usd: '', description: '', reference: '', date: new Date().toISOString().split('T')[0] });
-                                setShowPaymentModal(true);
-                              }}
-                            >
-                              <DollarSign size={14} /> Abonar
-                            </button>
+                          {!isViewer && account.status === 'active' && balance > 0.01 && !isCancelled && !isPaid && !isActionDisabledForSales(account.project_id) && (
+                            <>
+                              <button 
+                                className="btn-secondary" 
+                                style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--primary-color)', borderColor: 'rgba(59,130,246,0.3)' }}
+                                onClick={() => openAbonoModal(account)}
+                                title="Abonar monto parcial"
+                              >
+                                <DollarSign size={13} style={{ display: 'inline', marginRight: '2px' }} /> Abonar
+                              </button>
+                              <button 
+                                className="btn-primary" 
+                                style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', background: 'var(--success)', borderColor: 'var(--success)' }}
+                                onClick={() => openTotalPaymentModal(account)}
+                                title="Liquidar saldo total de la deuda"
+                              >
+                                <CheckCircle size={13} style={{ display: 'inline', marginRight: '2px' }} /> Liquidar
+                              </button>
+                            </>
                           )}
                           {!isViewer && !isActionDisabledForSales(account.project_id) && (
                             <button 
@@ -548,23 +637,34 @@ export default function CuentasPorPagarPage() {
                     )}
                   </div>
 
-                  <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
+                  <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem', flexWrap: 'wrap' }}>
                     <button className="btn-secondary" style={{ flex: 1, justifyContent: 'center' }} onClick={() => setSelectedAccountForDetails(null)}>Cerrar</button>
                     <button className="btn-secondary" style={{ flex: 1, justifyContent: 'center', borderColor: 'rgba(255,255,255,0.2)' }} onClick={() => handlePrintPayable(account)}>
                       <Printer size={16} /> Imprimir Vale
                     </button>
-                    {!isViewer && account.status === 'active' && !isActionDisabledForSales(account.project_id) && (
-                      <button 
-                        className="btn-primary" 
-                        style={{ flex: 1, justifyContent: 'center' }} 
-                        onClick={() => {
-                          setSelectedAccountForDetails(null);
-                          setPaymentForm({ payable_account_id: account.id, amount_usd: '', description: '', reference: '', date: new Date().toISOString().split('T')[0] });
-                          setShowPaymentModal(true);
-                        }}
-                      >
-                        <DollarSign size={16} /> Abonar
-                      </button>
+                    {!isViewer && account.status === 'active' && balance > 0.01 && !isActionDisabledForSales(account.project_id) && (
+                      <>
+                        <button 
+                          className="btn-secondary" 
+                          style={{ flex: 1, justifyContent: 'center', color: 'var(--primary-color)', borderColor: 'rgba(59,130,246,0.3)' }} 
+                          onClick={() => {
+                            setSelectedAccountForDetails(null);
+                            openAbonoModal(account);
+                          }}
+                        >
+                          <DollarSign size={16} /> Abonar
+                        </button>
+                        <button 
+                          className="btn-primary" 
+                          style={{ flex: 1, justifyContent: 'center', background: 'var(--success)', borderColor: 'var(--success)' }} 
+                          onClick={() => {
+                            setSelectedAccountForDetails(null);
+                            openTotalPaymentModal(account);
+                          }}
+                        >
+                          <CheckCircle size={16} /> Liquidar
+                        </button>
+                      </>
                     )}
                   </div>
                 </div>
@@ -647,37 +747,182 @@ export default function CuentasPorPagarPage() {
         </div>
       )}
 
-      {showPaymentModal && (
-        <div className="modal-overlay">
-          <div className="card modal-content animate-fade" style={{ maxWidth: '500px', width: '90%' }}>
-            <h2 style={{ marginBottom: '1.5rem', color: 'white' }}>Registrar Abono</h2>
-            <form onSubmit={handleSavePayment} style={{ display: 'flex', flexDirection: 'column', gap: '1.2rem' }}>
-              <div>
-                <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Monto (USD)</label>
-                <input type="text" required className="input-field" value={paymentForm.amount_usd} onChange={e => setPaymentForm({...paymentForm, amount_usd: handleMoneyInput(e.target.value)})} onBlur={e => setPaymentForm({...paymentForm, amount_usd: formatOnBlur(e.target.value)})} />
+      {showPaymentModal && selectedAccountForPayment && (() => {
+        const account = selectedAccountForPayment;
+        const previouslyPaid = account.payable_payments?.reduce((s: number, p: any) => s + Number(p.amount_usd || 0), 0) || 0;
+        const totalAmount = Number(account.total_amount_usd || 0);
+        const currentBalance = Math.max(0, totalAmount - previouslyPaid);
+
+        return (
+          <div className="modal-overlay">
+            <div className="card modal-content animate-fade" style={{ maxWidth: '520px', width: '92%', padding: '2rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+                <h2 style={{ margin: 0, color: 'white', display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1.35rem' }}>
+                  {paymentMode === 'total' ? (
+                    <><CheckCircle size={22} color="var(--success)" /> Liquidar Cuenta por Pagar</>
+                  ) : (
+                    <><DollarSign size={22} color="var(--primary-color)" /> Registrar Abono</>
+                  )}
+                </h2>
+                <button onClick={() => { setShowPaymentModal(false); setSelectedAccountForPayment(null); }} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>
+                  <X size={22} />
+                </button>
               </div>
-              <div>
-                <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Concepto</label>
-                <input type="text" required className="input-field" value={paymentForm.description} onChange={e => setPaymentForm({...paymentForm, description: e.target.value})} placeholder="Ej. Abono semana 1" />
+
+              {/* Mode Toggle */}
+              <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem', background: 'rgba(255,255,255,0.05)', padding: '0.3rem', borderRadius: '8px' }}>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  style={{
+                    flex: 1,
+                    justifyContent: 'center',
+                    border: 'none',
+                    background: paymentMode === 'abono' ? 'var(--primary-color)' : 'transparent',
+                    color: 'white',
+                    fontWeight: 700,
+                    fontSize: '0.85rem',
+                    padding: '0.5rem'
+                  }}
+                  onClick={() => {
+                    setPaymentMode('abono');
+                    setPaymentForm({
+                      ...paymentForm,
+                      amount_usd: '',
+                      description: `Abono: ${account.description || account.name}`
+                    });
+                  }}
+                >
+                  <DollarSign size={15} /> Abonar (Parcial)
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  style={{
+                    flex: 1,
+                    justifyContent: 'center',
+                    border: 'none',
+                    background: paymentMode === 'total' ? 'var(--success)' : 'transparent',
+                    color: 'white',
+                    fontWeight: 700,
+                    fontSize: '0.85rem',
+                    padding: '0.5rem'
+                  }}
+                  onClick={() => {
+                    setPaymentMode('total');
+                    setPaymentForm({
+                      ...paymentForm,
+                      amount_usd: formatCurrency(currentBalance),
+                      description: `Liquidación total: ${account.description || account.name}`
+                    });
+                  }}
+                >
+                  <CheckCircle size={15} /> Liquidar (Pagar Todo)
+                </button>
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                <div>
-                  <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Fecha</label>
-                  <input type="date" required className="input-field" value={paymentForm.date} onChange={e => setPaymentForm({...paymentForm, date: e.target.value})} />
+
+              {/* Debt Summary Box */}
+              <div style={{ background: 'rgba(0,0,0,0.25)', padding: '1rem 1.2rem', borderRadius: '8px', marginBottom: '1.5rem', border: '1px solid rgba(255,255,255,0.08)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem' }}>
+                  <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Beneficiario:</span>
+                  <strong style={{ color: 'white' }}>{account.name}</strong>
                 </div>
-                <div>
-                  <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Referencia (Opcional)</label>
-                  <input type="text" className="input-field" value={paymentForm.reference} onChange={e => setPaymentForm({...paymentForm, reference: e.target.value})} placeholder="Nº Transacción" />
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem' }}>
+                  <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Proyecto:</span>
+                  <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>{account.project ? `${account.project.proposal_number ? `#${account.project.proposal_number} - ` : ''}${account.project.title}` : 'General'}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem' }}>
+                  <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Total Contrato:</span>
+                  <strong style={{ color: 'white' }}>${formatCurrency(totalAmount)}</strong>
+                </div>
+                {previouslyPaid > 0 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem' }}>
+                    <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Total Abonado Previamente:</span>
+                    <strong style={{ color: 'var(--success)' }}>${formatCurrency(previouslyPaid)}</strong>
+                  </div>
+                )}
+                <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: '0.4rem', borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+                  <span style={{ color: 'var(--danger)', fontWeight: 700, fontSize: '0.9rem' }}>Saldo Pendiente Restante:</span>
+                  <strong style={{ color: 'var(--danger)', fontSize: '1.05rem' }}>${formatCurrency(currentBalance)}</strong>
                 </div>
               </div>
-              <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end', marginTop: '1rem' }}>
-                <button type="button" className="btn-secondary" onClick={() => setShowPaymentModal(false)}>Cancelar</button>
-                <button type="submit" className="btn-primary" style={{ background: 'var(--success)', borderColor: 'var(--success)' }}>Registrar Pago</button>
-              </div>
-            </form>
+
+              <form onSubmit={handleSavePayment} style={{ display: 'flex', flexDirection: 'column', gap: '1.2rem' }}>
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
+                    <label className="text-muted" style={{ margin: 0, fontSize: '0.85rem' }}>Monto a Pagar (USD)</label>
+                    {paymentMode === 'abono' && (
+                      <button
+                        type="button"
+                        style={{ background: 'none', border: 'none', color: 'var(--primary-color)', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600, padding: 0 }}
+                        onClick={() => {
+                          setPaymentMode('total');
+                          setPaymentForm({
+                            ...paymentForm,
+                            amount_usd: formatCurrency(currentBalance),
+                            description: `Liquidación total: ${account.description || account.name}`
+                          });
+                        }}
+                      >
+                        ⚡ Liquidar saldo completo (${formatCurrency(currentBalance)})
+                      </button>
+                    )}
+                  </div>
+                  <input
+                    type="text"
+                    required
+                    readOnly={paymentMode === 'total'}
+                    className="input-field"
+                    style={paymentMode === 'total' ? { background: 'rgba(16,185,129,0.08)', borderColor: 'rgba(16,185,129,0.4)', fontWeight: 700, color: 'var(--success)' } : {}}
+                    value={paymentForm.amount_usd}
+                    onChange={e => setPaymentForm({...paymentForm, amount_usd: handleMoneyInput(e.target.value)})}
+                    onBlur={e => setPaymentForm({...paymentForm, amount_usd: formatOnBlur(e.target.value)})}
+                    placeholder="0.00"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.85rem' }}>Concepto / Descripción</label>
+                  <input
+                    type="text"
+                    required
+                    className="input-field"
+                    value={paymentForm.description}
+                    onChange={e => setPaymentForm({...paymentForm, description: e.target.value})}
+                    placeholder={paymentMode === 'total' ? `Liquidación total: ${account.name}` : "Ej. Abono semana 1"}
+                  />
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                  <div>
+                    <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.85rem' }}>Fecha de Pago</label>
+                    <input type="date" required className="input-field" value={paymentForm.date} onChange={e => setPaymentForm({...paymentForm, date: e.target.value})} />
+                  </div>
+                  <div>
+                    <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.85rem' }}>Referencia (Opcional)</label>
+                    <input type="text" className="input-field" value={paymentForm.reference} onChange={e => setPaymentForm({...paymentForm, reference: e.target.value})} placeholder="Nº Transacción / Zelle" />
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end', marginTop: '1rem' }}>
+                  <button type="button" className="btn-secondary" onClick={() => { setShowPaymentModal(false); setSelectedAccountForPayment(null); }}>Cancelar</button>
+                  <button
+                    type="submit"
+                    className="btn-primary"
+                    style={paymentMode === 'total' ? { background: 'var(--success)', borderColor: 'var(--success)' } : {}}
+                  >
+                    {paymentMode === 'total' ? (
+                      <><CheckCircle size={16} /> Confirmar Liquidación Total</>
+                    ) : (
+                      <><DollarSign size={16} /> Registrar Abono</>
+                    )}
+                  </button>
+                </div>
+              </form>
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Modal Delete Auth */}
       {showAdminAuth && (

@@ -2,7 +2,7 @@
 
 1. **NUNCA AUTO-EJECUTAR PLANES**: Al presentar un plan de implementación o propuesta, SIEMPRE detenerse y esperar la orden explícita del usuario por chat antes de escribir o modificar código.
 2. **NUNCA DESPLEGAR A VERCEL SIN PETICIÓN EXPRESA**: NUNCA ejecutar comandos de despliegue a Vercel (`vercel`, `npx vercel --prod`, etc.) de manera automática. Todos los cambios se prueban primero en el entorno local (`http://localhost:3000`), y ÚNICAMENTE se suben a Vercel cuando el usuario lo solicite explícitamente por el chat. Al desplegar a producción, usar siempre `npx vercel --prod --archive=tgz`.
-3. **PRIVACIDAD ESTRICTA**: NUNCA debes revelar, imprimir en pantalla o filtrar en repositorios públicos ningún dato personal del usuario, contraseñas, claves API (ej. `.env.local`, `TELEGRAM_BOT_TOKEN`, `SMTP_PASS`), ni datos financieros sensibles. 
+3. **PRIVACIDAD Y SEGURIDAD ESTRICTA (CERO FUGAS Y CERO ACCIONES EXTERNAS SIN PERMISO)**: NUNCA revelar, imprimir en pantalla ni subir a repositorios o logs datos personales, contraseñas, claves bancarias, credenciales de Vercel, correos o redes sociales. **PROHIBICIÓN ABSOLUTA**: Ningún agente o subagente puede realizar transferencias de dinero, modificar infraestructura en Vercel, publicar en redes sociales, ni enviar correos electrónicos/mensajes a personas no indicadas sin que el usuario lo haya autorizado explícitamente a través del Agente Principal. El Agente Principal es el único guardián de estas acciones de alto riesgo.
 4. **SEGURIDAD Y PREVENCIÓN DE MALWARE**: Cuando se te solicite entrar, descargar, o revisar páginas web, repositorios o archivos externos, debes revisar proactivamente el código y la estructura para detectar comportamiento malicioso, virus, phishing o scripts sospechosos ANTES de ejecutar o procesar cualquier archivo en el entorno local.
 5. **MEMORIA DE INTEGRACIONES Y SERVICIOS ACTIVOS**:
    - **WhatsApp (Baileys)**: Activo localmente en `src/lib/whatsapp/whatsappService.js` con sesión vinculada en `baileys_auth_info/`. Capaz de enviar mensajes directos y PDFs a números como `04125007089` instantáneamente.
@@ -17,6 +17,7 @@
    - En tu **primer turno**, invoca de inmediato a un subagente (con `invoke_subagent`) pasándole las instrucciones.
    - Responde instantáneamente al usuario confirmando que la tarea fue asignada.
    - El objetivo es que NUNCA pongas al usuario en cola de espera; tu chat principal debe quedar libre en cuestión de segundos para atender otra solicitud, mientras el subagente hace el trabajo pesado en segundo plano.
+8. **AUTONOMÍA DE SUBAGENTES (CERO MODALES)**: Los subagentes tienen PROHIBIDO pedir autorizaciones en pantalla (ej. usar `RequestFeedback: true` o modales interactivos) para tareas operativas normales (modificar código, BD, registros). Deben hacerlo todo de forma autónoma para no interrumpir el uso en móvil. Si es una tarea de **alto riesgo** (claves, correos, transferencias), el subagente NO debe preguntar al usuario directamente; debe pausar su ejecución y enviarme un mensaje a mí (Agente Principal) para que **yo** te pregunte la autorización de forma conversacional en este chat.
 
 <!-- BEGIN:nextjs-agent-rules -->
 # This is NOT the Next.js you know

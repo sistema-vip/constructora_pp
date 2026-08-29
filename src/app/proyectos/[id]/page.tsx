@@ -102,6 +102,10 @@ interface PayableAccount {
   commitment_id?: string;
   payable_accounts?: { id?: string; status?: string; payable_payments?: { id?: string; amount_usd: number; description?: string; reference?: string; date?: string }[] }[];
   payable_payments?: { id?: string; amount_usd: number; description?: string; reference?: string; date?: string }[];
+  paid?: number;
+  balance?: number;
+  isPaid?: boolean;
+  isCancelled?: boolean;
 }
 
 export default function ProjectDashboard() {
@@ -134,7 +138,7 @@ export default function ProjectDashboard() {
   const [advances, setAdvances] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [isPrintingReport, setIsPrintingReport] = useState(false);
-  const [activeTab, setActiveTab] = useState<'pagos' | 'gastos' | 'cuentas_pagar' | 'retiros' | 'propuesta_adicionales' | 'seguimiento'>('pagos');
+  const [activeTab, setActiveTab] = useState<'pagos' | 'gastos' | 'cuentas_pagar' | 'retiros' | 'adicionales' | 'seguimiento'>('pagos');
 
   // Estado para impresión y detalles de cuentas por pagar
   const [activePrintJob, setActivePrintJob] = useState<'none' | 'project-report' | 'client-statement' | 'payable-voucher'>('none');
@@ -191,11 +195,21 @@ export default function ProjectDashboard() {
   const [itemToDelete, setItemToDelete] = useState<{ id: string, type: 'payment' | 'cost' | 'extra' | 'payable' | 'commitment' | 'advance' } | null>(null);
   const [pendingEditItem, setPendingEditItem] = useState<{ item: any, type: 'payment' | 'cost' | 'extra' | 'payable' | 'commitment' | 'advance' } | null>(null);
 
+  // Formulario de edición universal
+  const [universalEditForm, setUniversalEditForm] = useState({
+    description: '',
+    amount_usd: '',
+    unit_price_usd: '',
+    quantity: 1,
+    date: new Date().toISOString().split('T')[0],
+    provider: '',
+    reference: '',
+    category: 'materials',
+    partner_name: 'Henry Peraza'
+  });
+
   useEffect(() => {
     if (projectId) {
-      console.log('Project ID:', projectId);
-      console.log('Current Role:', role);
-      console.log('Is Viewer:', isViewer);
       fetchProjectData();
       
       const urlParams = new URLSearchParams(window.location.search);
@@ -203,7 +217,7 @@ export default function ProjectDashboard() {
       if (tabParam === 'compromisos' || tabParam === 'cuentas_pagar') {
         setActiveTab('cuentas_pagar');
       } else if (tabParam === 'adicionales' || tabParam === 'detalles' || tabParam === 'propuesta_adicionales') {
-        setActiveTab('propuesta_adicionales');
+        setActiveTab('adicionales');
       } else if (tabParam === 'gastos' || tabParam === 'pagos' || tabParam === 'retiros' || tabParam === 'seguimiento') {
         setActiveTab(tabParam as any);
       }
@@ -237,20 +251,31 @@ export default function ProjectDashboard() {
       if (extrasRes.error) throw extrasRes.error;
       if (advancesRes.error) throw advancesRes.error;
 
-      // Unificar datos de Cuentas por Pagar (payable_accounts como fuente principal + compromisos heredados)
+      // Unificar datos de Cuentas por Pagar
       const unifiedPayables: PayableAccount[] = [];
       const seenCommitmentIds = new Set<string>();
 
       if (!payablesRes.error && payablesRes.data) {
         payablesRes.data.forEach((p: any) => {
           if (p.commitment_id) seenCommitmentIds.add(p.commitment_id);
+          const payments = p.payable_payments || [];
+          const paid = payments.reduce((s: any, pay: any) => s + Number(pay.amount_usd || 0), 0);
+          const totalAmt = Number(p.total_amount_usd || 0);
+          const isPaid = p.status === 'paid' || paid >= totalAmt - 0.01;
+          const isCancelled = p.status === 'cancelled';
+          const balance = (isPaid || isCancelled) ? 0 : Math.max(0, totalAmt - paid);
+
           unifiedPayables.push({
             ...p,
             provider: p.name,
-            total_amount_usd: Number(p.total_amount_usd || 0),
-            amount_usd: Number(p.total_amount_usd || 0),
+            total_amount_usd: totalAmt,
+            amount_usd: totalAmt,
             date: p.date || (p.created_at ? new Date(p.created_at).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]),
-            payable_payments: p.payable_payments || []
+            payable_payments: payments,
+            paid,
+            balance,
+            isPaid,
+            isCancelled
           });
         });
       }
@@ -268,6 +293,10 @@ export default function ProjectDashboard() {
             const payments = linkedPayable?.payable_payments || [];
             const status = linkedPayable?.status || 'active';
             const totalAmt = Number(c.amount_usd || (Number(c.quantity || 1) * Number(c.unit_price_usd || 0)));
+            const paid = payments.reduce((s: any, pay: any) => s + Number(pay.amount_usd || 0), 0);
+            const isPaid = status === 'paid' || paid >= totalAmt - 0.01;
+            const isCancelled = status === 'cancelled';
+            const balance = (isPaid || isCancelled) ? 0 : Math.max(0, totalAmt - paid);
 
             unifiedPayables.push({
               id: c.id,
@@ -285,10 +314,20 @@ export default function ProjectDashboard() {
               status: status,
               commitment_id: c.id,
               payable_payments: payments,
-              payable_accounts: c.payable_accounts
+              payable_accounts: c.payable_accounts,
+              paid,
+              balance,
+              isPaid,
+              isCancelled
             });
           }
         });
+      }
+
+      // Auto-heal en segundo plano: sincronizar cuentas que ya fueron 100% saldadas pero tienen status 'active'
+      const payablesToHeal = unifiedPayables.filter(p => p.status === 'active' && p.isPaid && (p.paid ?? 0) > 0);
+      if (payablesToHeal.length > 0) {
+        Promise.all(payablesToHeal.map(p => supabase.from('payable_accounts').update({ status: 'paid' }).eq('id', p.id))).catch(console.error);
       }
 
       setProject(projectRes.data);
@@ -754,12 +793,15 @@ export default function ProjectDashboard() {
       const previouslyPaid = (payableToPay.payable_payments || payableToPay.payable_accounts?.[0]?.payable_payments || []).reduce((s: any, p: any) => s + Number(p.amount_usd), 0);
       const totalAmount = Number(payableToPay.total_amount_usd || payableToPay.amount_usd || (payableToPay.quantity * payableToPay.unit_price_usd) || 0);
       const remainingBalance = totalAmount - previouslyPaid - monto;
-      const isFullPay = remainingBalance <= 0.01;
+      const isFullPay = remainingBalance <= 0.01 || payablePayMode === 'total';
 
-      const descPrefix = isFullPay && previouslyPaid === 0 ? 'Pago CxP' : isFullPay ? 'Liquidación CxP' : 'Abono CxP';
-      const costDescription = payablePayForm.description
-        ? `${descPrefix}: ${payableToPay.provider || payableToPay.name || 'Proveedor'} - ${payablePayForm.description}`
-        : `${descPrefix}: ${payableToPay.provider || payableToPay.name || 'Proveedor'} - ${payableToPay.description}`;
+      const providerName = payableToPay.provider || payableToPay.name || 'Proveedor';
+      const conceptText = payablePayForm.description || payableToPay.description || (isFullPay ? 'Liquidación total' : 'Abono');
+      const refPart = payablePayForm.reference ? ` (Ref: ${payablePayForm.reference})` : '';
+
+      const costDescription = isFullPay
+        ? `Liquidación total cuenta por pagar: ${providerName} - ${conceptText}${refPart}`
+        : `Abono a cuenta por pagar: ${providerName} - ${conceptText}${refPart}`;
 
       let costCategory = payableToPay.category || 'materials';
       if (payableToPay.type === 'obrero' || payableToPay.category === 'labor') costCategory = 'labor';
@@ -769,7 +811,7 @@ export default function ProjectDashboard() {
       const { error: costError } = await supabase.from('project_costs').insert([{
         project_id: projectId,
         description: costDescription,
-        provider: payableToPay.provider || payableToPay.name || 'N/A',
+        provider: providerName,
         category: costCategory,
         quantity: 1,
         unit_price_usd: monto,
@@ -779,7 +821,7 @@ export default function ProjectDashboard() {
       if (costError) throw new Error(`Error al registrar como gasto: ${costError.message}`);
 
       // 3. Actualizar estado a 'paid' si quedó saldada
-      if (remainingBalance <= 0.01) {
+      if (remainingBalance <= 0.01 || isFullPay) {
         await supabase.from('payable_accounts')
           .update({ status: 'paid' })
           .eq('id', payableAccountId);
@@ -1166,10 +1208,10 @@ export default function ProjectDashboard() {
             onClick={() => setActiveTab('retiros')}
           >Retiro de Socios</button>
           <button
-            className={`btn-secondary ${activeTab === 'propuesta_adicionales' ? 'btn-primary' : ''}`}
-            style={{ padding: '0.5rem 1rem', background: activeTab === 'propuesta_adicionales' ? 'var(--accent-blue)' : 'transparent', border: 'none', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '0.4rem' }}
-            onClick={() => setActiveTab('propuesta_adicionales')}
-          ><FileText size={15} /> Propuesta y Adicionales</button>
+            className={`btn-secondary ${activeTab === 'adicionales' ? 'btn-primary' : ''}`}
+            style={{ padding: '0.5rem 1rem', background: activeTab === 'adicionales' ? 'var(--accent-blue)' : 'transparent', border: 'none', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '0.4rem' }}
+            onClick={() => setActiveTab('adicionales')}
+          ><PlusCircle size={15} /> Adicionales</button>
           {(project?.status === 'in_progress' || project?.status === 'completed') && (
             <button
               className={`btn-secondary ${activeTab === 'seguimiento' ? 'btn-primary' : ''}`}
@@ -1253,126 +1295,134 @@ export default function ProjectDashboard() {
           <div className="animate-fade">
             {(() => {
               const activePayablesList = payables.filter(p => {
-                if (p.status === 'cancelled') return false;
+                if (p.status === 'cancelled' || p.status === 'paid' || p.isPaid || p.isCancelled) return false;
                 const paid = (p.payable_payments || []).reduce((s: any, pay: any) => s + Number(pay.amount_usd || 0), 0);
                 const totalAmt = Number(p.total_amount_usd || p.amount_usd || ((p.quantity || 1) * (p.unit_price_usd || 0)) || 0);
-                const isPaid = p.status === 'paid' || paid >= totalAmt - 0.01;
+                const isPaid = paid >= totalAmt - 0.01;
                 const balance = isPaid ? 0 : Math.max(0, totalAmt - paid);
-                return balance > 0.01;
+                return balance > 0.01 && p.status === 'active';
               });
 
-              return activePayablesList.length === 0 ? (
-                <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>No hay cuentas por pagar pendientes registradas para este proyecto.</div>
-              ) : (
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                  <thead>
-                    <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                      <th style={{ textAlign: 'left', padding: '1rem' }}>FECHA</th>
-                      <th style={{ textAlign: 'left', padding: '1rem' }}>CONCEPTO</th>
-                      <th style={{ textAlign: 'left', padding: '1rem' }}>PROVEEDOR / BENEFICIARIO</th>
-                      <th style={{ textAlign: 'right', padding: '1rem' }}>ESTADO</th>
-                      <th style={{ textAlign: 'right', padding: '1rem' }}>SALDO (USD)</th>
-                      <th style={{ textAlign: 'right', padding: '1rem' }}></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {activePayablesList.map(p => {
-                      const paid = (p.payable_payments || []).reduce((s: any, pay: any) => s + Number(pay.amount_usd || 0), 0);
-                      const totalAmt = Number(p.total_amount_usd || p.amount_usd || ((p.quantity || 1) * (p.unit_price_usd || 0)) || 0);
-                      const isPaid = p.status === 'paid' || paid >= totalAmt - 0.01;
-                      const isCancelled = p.status === 'cancelled';
-                      const balance = (isPaid || isCancelled) ? 0 : Math.max(0, totalAmt - paid);
-                      
-                      return (
-                        <tr key={p.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                          <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>{p.date}</td>
-                          <td style={{ padding: '1rem' }}>
-                            {p.description}<br/>
-                            {p.quantity && p.quantity > 1 && p.unit_price_usd ? (
-                              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{p.quantity} x ${Number(p.unit_price_usd).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                            ) : null}
-                          </td>
-                          <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>{p.provider || p.name || 'N/A'}</td>
-                          <td style={{ padding: '1rem', textAlign: 'right' }}>
-                            {isCancelled ? (
-                              <span style={{ fontSize: '0.8rem', color: 'var(--danger)', fontWeight: 'bold', padding: '0.2rem 0.5rem', background: 'rgba(239,68,68,0.1)', borderRadius: '4px' }}>Cancelada</span>
-                            ) : isPaid ? (
-                              <div style={{ fontSize: '0.8rem' }}>
-                                <div style={{ color: 'var(--success)', fontWeight: 'bold' }}>Saldada</div>
-                                <div style={{ color: 'var(--text-muted)' }}>${paid.toLocaleString('es-VE', { minimumFractionDigits: 2 })} / ${totalAmt.toLocaleString('es-VE', { minimumFractionDigits: 2 })}</div>
-                              </div>
-                            ) : paid > 0 ? (
-                              <div style={{ fontSize: '0.8rem' }}>
-                                <div style={{ color: 'var(--warning)', fontWeight: 'bold' }}>Abonado</div>
-                                <div style={{ color: 'var(--text-muted)' }}>${paid.toLocaleString('es-VE', { minimumFractionDigits: 2 })} / ${totalAmt.toLocaleString('es-VE', { minimumFractionDigits: 2 })}</div>
-                              </div>
-                            ) : (
-                              <span style={{ fontSize: '0.8rem', color: 'var(--danger)', fontWeight: 'bold', padding: '0.2rem 0.5rem', background: 'rgba(239,68,68,0.1)', borderRadius: '4px' }}>Pendiente</span>
-                            )}
-                          </td>
-                          <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold', color: balance > 0 ? 'var(--primary-color)' : 'var(--success)' }}>
-                            {balance > 0 ? `- $${Number(balance).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '$0,00'}
-                          </td>
-                          <td style={{ padding: '1rem', textAlign: 'right', display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
-                            <button 
-                              className="btn-secondary" 
-                              style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--primary-color)', borderColor: 'rgba(59,130,246,0.2)' }}
-                              onClick={() => setSelectedPayableForDetails(p)}
-                              title="Ver detalles e imprimir"
-                            >
-                              <Eye size={14} /> Detalles
-                            </button>
-                            <button 
-                              className="btn-secondary" 
-                              style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'white', borderColor: 'rgba(255,255,255,0.2)' }}
-                              onClick={() => handlePrintPayable(p)}
-                              title="Imprimir"
-                            >
-                              <Printer size={14} />
-                            </button>
-                            {!isViewer && balance > 0 && !isCancelled && !isPaid && (
-                              <>
+              return (
+                <div>
+                  {activePayablesList.length === 0 ? (
+                    <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+                      <CheckCircle size={36} color="var(--success)" style={{ margin: '0 auto 0.75rem auto', display: 'block', opacity: 0.85 }} />
+                      <p style={{ margin: 0, fontSize: '1rem', color: 'white', fontWeight: 600 }}>¡No hay cuentas por pagar pendientes!</p>
+                      <p style={{ margin: '0.4rem 0 0 0', fontSize: '0.85rem' }}>Todas las deudas y compromisos de este proyecto han sido saldados.</p>
+                    </div>
+                  ) : (
+                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                      <thead>
+                        <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                          <th style={{ textAlign: 'left', padding: '1rem' }}>FECHA</th>
+                          <th style={{ textAlign: 'left', padding: '1rem' }}>CONCEPTO</th>
+                          <th style={{ textAlign: 'left', padding: '1rem' }}>PROVEEDOR / BENEFICIARIO</th>
+                          <th style={{ textAlign: 'right', padding: '1rem' }}>ESTADO</th>
+                          <th style={{ textAlign: 'right', padding: '1rem' }}>SALDO (USD)</th>
+                          <th style={{ textAlign: 'right', padding: '1rem' }}></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {activePayablesList.map(p => {
+                          const paid = (p.payable_payments || []).reduce((s: any, pay: any) => s + Number(pay.amount_usd || 0), 0);
+                          const totalAmt = Number(p.total_amount_usd || p.amount_usd || ((p.quantity || 1) * (p.unit_price_usd || 0)) || 0);
+                          const isPaid = p.status === 'paid' || paid >= totalAmt - 0.01;
+                          const isCancelled = p.status === 'cancelled';
+                          const balance = (isPaid || isCancelled) ? 0 : Math.max(0, totalAmt - paid);
+                          
+                          return (
+                            <tr key={p.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                              <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>{p.date}</td>
+                              <td style={{ padding: '1rem' }}>
+                                {p.description}<br/>
+                                {p.quantity && p.quantity > 1 && p.unit_price_usd ? (
+                                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{p.quantity} x ${Number(p.unit_price_usd).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                ) : null}
+                              </td>
+                              <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>{p.provider || p.name || 'N/A'}</td>
+                              <td style={{ padding: '1rem', textAlign: 'right' }}>
+                                {isCancelled ? (
+                                  <span style={{ fontSize: '0.8rem', color: 'var(--danger)', fontWeight: 'bold', padding: '0.2rem 0.5rem', background: 'rgba(239,68,68,0.1)', borderRadius: '4px' }}>Cancelada</span>
+                                ) : isPaid ? (
+                                  <div style={{ fontSize: '0.8rem' }}>
+                                    <div style={{ color: 'var(--success)', fontWeight: 'bold' }}>Saldada</div>
+                                    <div style={{ color: 'var(--text-muted)' }}>${paid.toLocaleString('es-VE', { minimumFractionDigits: 2 })} / ${totalAmt.toLocaleString('es-VE', { minimumFractionDigits: 2 })}</div>
+                                  </div>
+                                ) : paid > 0 ? (
+                                  <div style={{ fontSize: '0.8rem' }}>
+                                    <div style={{ color: 'var(--warning)', fontWeight: 'bold' }}>Abonado</div>
+                                    <div style={{ color: 'var(--text-muted)' }}>${paid.toLocaleString('es-VE', { minimumFractionDigits: 2 })} / ${totalAmt.toLocaleString('es-VE', { minimumFractionDigits: 2 })}</div>
+                                  </div>
+                                ) : (
+                                  <span style={{ fontSize: '0.8rem', color: 'var(--danger)', fontWeight: 'bold', padding: '0.2rem 0.5rem', background: 'rgba(239,68,68,0.1)', borderRadius: '4px' }}>Pendiente</span>
+                                )}
+                              </td>
+                              <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold', color: balance > 0 ? 'var(--primary-color)' : 'var(--success)' }}>
+                                {balance > 0 ? `- $${Number(balance).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '$0,00'}
+                              </td>
+                              <td style={{ padding: '1rem', textAlign: 'right', display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
                                 <button 
                                   className="btn-secondary" 
-                                  style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--primary-color)', borderColor: 'rgba(59,130,246,0.3)' }} 
-                                  onClick={() => {
-                                    setPayableToPay(p);
-                                    setPayablePayMode('abono');
-                                    setPayablePayForm({ amount_usd: '', description: '', reference: '', date: new Date().toISOString().split('T')[0] });
-                                    setShowPayablePayModal(true);
-                                  }} 
-                                  title="Abonar monto parcial a la cuenta por pagar"
+                                  style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--primary-color)', borderColor: 'rgba(59,130,246,0.2)' }}
+                                  onClick={() => setSelectedPayableForDetails(p)}
+                                  title="Ver detalles e imprimir"
                                 >
-                                  <DollarSign size={13} style={{ marginRight: '2px', display: 'inline' }} /> Abonar
+                                  <Eye size={14} /> Detalles
                                 </button>
                                 <button 
-                                  className="btn-primary" 
-                                  style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', background: 'var(--success)', borderColor: 'var(--success)' }} 
-                                  onClick={() => {
-                                    setPayableToPay(p);
-                                    setPayablePayMode('total');
-                                    setPayablePayForm({
-                                      amount_usd: formatCurrency(balance),
-                                      description: `Pago total: ${p.description}`,
-                                      reference: '',
-                                      date: new Date().toISOString().split('T')[0]
-                                    });
-                                    setShowPayablePayModal(true);
-                                  }} 
-                                  title="Pagar saldo total de la cuenta por pagar"
+                                  className="btn-secondary" 
+                                  style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'white', borderColor: 'rgba(255,255,255,0.2)' }}
+                                  onClick={() => handlePrintPayable(p)}
+                                  title="Imprimir"
                                 >
-                                  <CheckCircle size={13} style={{ marginRight: '2px', display: 'inline' }} /> Pagar
+                                  <Printer size={14} />
                                 </button>
-                              </>
-                            )}
-                            {!isViewer && (<button className="btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--primary-color)', borderColor: 'rgba(59,130,246,0.2)' }} onClick={() => initiateEditItem(p, 'payable')} title="Editar cuenta por pagar"><Edit3 size={14} /></button>)}
-                            {!isViewer && (<button className="btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--danger)', borderColor: 'rgba(239,68,68,0.2)' }} onClick={() => initiateDelete(p.id, 'payable')}><Trash2 size={14} /></button>)}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+                                {!isViewer && balance > 0 && !isCancelled && !isPaid && (
+                                  <>
+                                    <button 
+                                      className="btn-secondary" 
+                                      style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--primary-color)', borderColor: 'rgba(59,130,246,0.3)' }} 
+                                      onClick={() => {
+                                        setPayableToPay(p);
+                                        setPayablePayMode('abono');
+                                        setPayablePayForm({ amount_usd: '', description: `Abono: ${p.description || p.name || 'CxP'}`, reference: '', date: new Date().toISOString().split('T')[0] });
+                                        setShowPayablePayModal(true);
+                                      }} 
+                                      title="Abonar monto parcial a la cuenta por pagar"
+                                    >
+                                      <DollarSign size={13} style={{ marginRight: '2px', display: 'inline' }} /> Abonar
+                                    </button>
+                                    <button 
+                                      className="btn-primary" 
+                                      style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', background: 'var(--success)', borderColor: 'var(--success)' }} 
+                                      onClick={() => {
+                                        setPayableToPay(p);
+                                        setPayablePayMode('total');
+                                        setPayablePayForm({
+                                          amount_usd: formatCurrency(balance),
+                                          description: `Liquidación total: ${p.description || p.name || 'CxP'}`,
+                                          reference: '',
+                                          date: new Date().toISOString().split('T')[0]
+                                        });
+                                        setShowPayablePayModal(true);
+                                      }} 
+                                      title="Pagar saldo total de la cuenta por pagar"
+                                    >
+                                      <CheckCircle size={13} style={{ marginRight: '2px', display: 'inline' }} /> Liquidar
+                                    </button>
+                                  </>
+                                )}
+                                {!isViewer && (<button className="btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--primary-color)', borderColor: 'rgba(59,130,246,0.2)' }} onClick={() => initiateEditItem(p, 'payable')} title="Editar cuenta por pagar"><Edit3 size={14} /></button>)}
+                                {!isViewer && (<button className="btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--danger)', borderColor: 'rgba(239,68,68,0.2)' }} onClick={() => initiateDelete(p.id, 'payable')}><Trash2 size={14} /></button>)}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
               );
             })()}
           </div>
@@ -1451,165 +1501,129 @@ export default function ProjectDashboard() {
           </div>
         )}
 
-        {/* TAB: PROPUESTA Y ADICIONALES */}
-        {activeTab === 'propuesta_adicionales' && (
-          <div className="animate-fade" style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(380px, 1fr))', gap: '1.5rem' }}>
-              {/* COLUMNA IZQUIERDA: PROPUESTA ORIGINAL */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1.1rem' }}>
-                    <FileText size={18} color="var(--primary-color)" /> Propuesta Original
-                  </h3>
-                  {project?.proposal_number && (
-                    <span style={{ background: 'rgba(59,130,246,0.1)', color: 'var(--primary-color)', padding: '0.2rem 0.6rem', borderRadius: '6px', fontSize: '0.8rem', border: '1px solid rgba(59,130,246,0.25)', fontWeight: 600 }}>
-                      Propuesta #{project.proposal_number}
-                    </span>
-                  )}
-                </div>
-
-                <div style={{
-                  whiteSpace: 'pre-wrap',
-                  lineHeight: 1.6,
-                  color: 'var(--text-muted)',
-                  background: 'rgba(0,0,0,0.25)',
-                  padding: '1.5rem',
-                  borderRadius: '10px',
-                  border: '1px solid var(--border-color)',
-                  minHeight: '220px'
-                }}>
-                  {project?.description ? parseBoldText(project.description) : 'Sin descripción detallada del alcance original.'}
-                </div>
-
-                <div style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  padding: '1rem 1.25rem',
-                  background: 'linear-gradient(145deg, rgba(59,130,246,0.08) 0%, rgba(0,0,0,0) 100%)',
-                  borderRadius: '8px',
-                  border: '1px solid rgba(59,130,246,0.2)'
-                }}>
-                  <span style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>Presupuesto Base Original:</span>
-                  <span style={{ fontSize: '1.25rem', fontWeight: 800, color: 'white' }}>
-                    ${baseBudget.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </span>
-                </div>
+        {/* TAB: ADICIONALES */}
+        {activeTab === 'adicionales' && (
+          <div className="animate-fade" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1.15rem' }}>
+                  <PlusCircle size={20} color="var(--accent-blue)" /> Trabajos Adicionales
+                </h3>
+                <span style={{ background: 'rgba(59,130,246,0.15)', color: 'var(--accent-blue)', padding: '0.15rem 0.55rem', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 700 }}>
+                  {extras.length}
+                </span>
               </div>
+              {!isViewer && (
+                <button
+                  className="btn-secondary"
+                  onClick={() => setShowExtraModal(true)}
+                  style={{
+                    padding: '0.5rem 1rem',
+                    fontSize: '0.85rem',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.4rem',
+                    borderColor: 'var(--accent-blue)',
+                    color: 'var(--accent-blue)'
+                  }}
+                >
+                  <Plus size={15} /> + Trabajo Adicional
+                </button>
+              )}
+            </div>
 
-              {/* COLUMNA DERECHA: TRABAJOS ADICIONALES */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-                    <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1.1rem' }}>
-                      <PlusCircle size={18} color="var(--accent-blue)" /> Trabajos Adicionales
-                    </h3>
-                    <span style={{ background: 'rgba(59,130,246,0.15)', color: 'var(--accent-blue)', padding: '0.15rem 0.5rem', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 700 }}>
-                      {extras.length}
-                    </span>
-                  </div>
-                  {!isViewer && (
-                    <button
-                      className="btn-secondary"
-                      onClick={() => setShowExtraModal(true)}
-                      style={{
-                        padding: '0.45rem 0.9rem',
-                        fontSize: '0.85rem',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '0.4rem',
-                        borderColor: 'var(--accent-blue)',
-                        color: 'var(--accent-blue)'
-                      }}
-                    >
-                      <Plus size={15} /> Trabajo Adicional
-                    </button>
-                  )}
-                </div>
-
-                <div style={{ background: 'rgba(0,0,0,0.25)', borderRadius: '10px', border: '1px solid var(--border-color)', overflow: 'hidden', minHeight: '220px', display: 'flex', flexDirection: 'column', justifyContent: extras.length === 0 ? 'center' : 'flex-start' }}>
-                  {extras.length === 0 ? (
-                    <div style={{ padding: '2.5rem 1.5rem', textAlign: 'center', color: 'var(--text-muted)' }}>
-                      <p style={{ margin: '0 0 1rem 0', fontSize: '0.95rem' }}>No hay trabajos adicionales registrados para este proyecto.</p>
-                      {!isViewer && (
-                        <button
-                          className="btn-secondary"
-                          onClick={() => setShowExtraModal(true)}
-                          style={{ padding: '0.5rem 1rem', fontSize: '0.85rem', display: 'inline-flex', alignItems: 'center', gap: '0.4rem', borderColor: 'var(--accent-blue)', color: 'var(--accent-blue)' }}
-                        >
-                          <Plus size={15} /> Registrar Primer Adicional
-                        </button>
-                      )}
-                    </div>
-                  ) : (
-                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                      <thead>
-                        <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '0.8rem', background: 'rgba(255,255,255,0.02)' }}>
-                          <th style={{ textAlign: 'left', padding: '0.75rem 1rem' }}>DESCRIPCIÓN</th>
-                          <th style={{ textAlign: 'right', padding: '0.75rem 1rem' }}>MONTO (USD)</th>
-                          {!isViewer && <th style={{ textAlign: 'right', padding: '0.75rem 1rem', width: '90px' }}></th>}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {extras.map(e => (
-                          <tr key={e.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
-                            <td style={{ padding: '0.85rem 1rem', fontSize: '0.9rem' }}>{e.description}</td>
-                            <td style={{ padding: '0.85rem 1rem', textAlign: 'right', fontWeight: 'bold', color: 'var(--accent-blue)', fontSize: '0.9rem' }}>
-                              + ${Number(e.amount_usd).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                            </td>
-                            {!isViewer && (
-                              <td style={{ padding: '0.85rem 1rem', textAlign: 'right' }}>
-                                <div style={{ display: 'flex', gap: '0.4rem', justifyContent: 'flex-end' }}>
-                                  <button
-                                    className="btn-secondary"
-                                    style={{ padding: '0.35rem 0.65rem', fontSize: '0.75rem', color: 'var(--primary-color)', borderColor: 'rgba(59,130,246,0.2)' }}
-                                    onClick={() => initiateEditItem({ ...e, amount_usd: formatCurrency(e.amount_usd) }, 'extra')}
-                                    title="Editar adicional"
-                                  >
-                                    <Edit3 size={13} />
-                                  </button>
-                                  <button
-                                    className="btn-secondary"
-                                    style={{ padding: '0.35rem 0.65rem', fontSize: '0.75rem', color: 'var(--danger)', borderColor: 'rgba(239,68,68,0.2)' }}
-                                    onClick={() => initiateDelete(e.id, 'extra')}
-                                    title="Eliminar adicional"
-                                  >
-                                    <Trash2 size={13} />
-                                  </button>
-                                </div>
-                              </td>
-                            )}
-                          </tr>
-                        ))}
-                      </tbody>
-                      <tfoot>
-                        <tr style={{ background: 'rgba(255,255,255,0.03)', borderTop: '1px solid var(--border-color)' }}>
-                          <td style={{ padding: '0.85rem 1rem', fontWeight: 'bold', textAlign: 'right' }}>Total Adicionales:</td>
-                          <td style={{ padding: '0.85rem 1rem', textAlign: 'right', fontWeight: 'bold', color: 'var(--accent-blue)', fontSize: '1rem' }}>
-                            ${totalExtra.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            {extras.length === 0 ? (
+              <div style={{ padding: '3.5rem 1.5rem', textAlign: 'center', color: 'var(--text-muted)', background: 'rgba(0,0,0,0.2)', borderRadius: '10px', border: '1px solid var(--border-color)' }}>
+                <PlusCircle size={44} style={{ margin: '0 auto 1rem auto', display: 'block', opacity: 0.35, color: 'var(--accent-blue)' }} />
+                <p style={{ margin: '0 0 0.5rem 0', fontSize: '1rem', color: 'white', fontWeight: 600 }}>No hay trabajos adicionales registrados</p>
+                <p style={{ margin: '0 0 1.5rem 0', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                  Los trabajos adicionales se suman al presupuesto total del proyecto sin modificar la propuesta original.
+                </p>
+                {!isViewer && (
+                  <button
+                    className="btn-secondary"
+                    onClick={() => setShowExtraModal(true)}
+                    style={{ padding: '0.55rem 1.2rem', fontSize: '0.85rem', display: 'inline-flex', alignItems: 'center', gap: '0.4rem', borderColor: 'var(--accent-blue)', color: 'var(--accent-blue)' }}
+                  >
+                    <Plus size={15} /> Registrar Primer Adicional
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div style={{ background: 'rgba(0,0,0,0.25)', borderRadius: '10px', border: '1px solid var(--border-color)', overflow: 'hidden' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '0.85rem', background: 'rgba(255,255,255,0.02)' }}>
+                      <th style={{ textAlign: 'left', padding: '1rem' }}>DESCRIPCIÓN</th>
+                      <th style={{ textAlign: 'right', padding: '1rem' }}>MONTO EXTRA (USD)</th>
+                      {!isViewer && <th style={{ textAlign: 'right', padding: '1rem', width: '100px' }}></th>}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {extras.map(e => (
+                      <tr key={e.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                        <td style={{ padding: '1rem', fontSize: '0.95rem' }}>{e.description}</td>
+                        <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold', color: 'var(--accent-blue)', fontSize: '0.95rem' }}>
+                          + ${Number(e.amount_usd).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </td>
+                        {!isViewer && (
+                          <td style={{ padding: '1rem', textAlign: 'right' }}>
+                            <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                              <button
+                                className="btn-secondary"
+                                style={{ padding: '0.4rem 0.75rem', fontSize: '0.8rem', color: 'var(--primary-color)', borderColor: 'rgba(59,130,246,0.2)' }}
+                                onClick={() => initiateEditItem({ ...e, amount_usd: formatCurrency(e.amount_usd) }, 'extra')}
+                                title="Editar adicional"
+                              >
+                                <Edit3 size={14} />
+                              </button>
+                              <button
+                                className="btn-secondary"
+                                style={{ padding: '0.4rem 0.75rem', fontSize: '0.8rem', color: 'var(--danger)', borderColor: 'rgba(239,68,68,0.2)' }}
+                                onClick={() => initiateDelete(e.id, 'extra')}
+                                title="Eliminar adicional"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
                           </td>
-                          {!isViewer && <td></td>}
-                        </tr>
-                      </tfoot>
-                    </table>
-                  )}
-                </div>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr style={{ background: 'rgba(255,255,255,0.03)', borderTop: '1px solid var(--border-color)' }}>
+                      <td style={{ padding: '1rem', fontWeight: 'bold', textAlign: 'right' }}>Total Trabajos Adicionales:</td>
+                      <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold', color: 'var(--accent-blue)', fontSize: '1.05rem' }}>
+                        + ${totalExtra.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </td>
+                      {!isViewer && <td></td>}
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
 
-                <div style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  padding: '1rem 1.25rem',
-                  background: 'linear-gradient(145deg, rgba(59,130,246,0.08) 0%, rgba(0,0,0,0) 100%)',
-                  borderRadius: '8px',
-                  border: '1px solid rgba(59,130,246,0.2)'
-                }}>
-                  <span style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>Monto Total Contratado (Base + Extras):</span>
-                  <span style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--accent-blue)' }}>
-                    ${totalBudget.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </span>
+            <div style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              padding: '1.2rem 1.5rem',
+              background: 'linear-gradient(145deg, rgba(59,130,246,0.08) 0%, rgba(0,0,0,0) 100%)',
+              borderRadius: '10px',
+              border: '1px solid rgba(59,130,246,0.2)',
+              flexWrap: 'wrap',
+              gap: '1rem'
+            }}>
+              <div>
+                <span style={{ fontSize: '0.95rem', fontWeight: 600, color: 'white' }}>Monto Total Contratado (Base + Extras):</span>
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
+                  Base: ${baseBudget.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} | Extras: ${totalExtra.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </div>
               </div>
+              <span style={{ fontSize: '1.35rem', fontWeight: 800, color: 'var(--accent-blue)' }}>
+                ${totalBudget.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
             </div>
           </div>
         )}
@@ -1641,91 +1655,162 @@ export default function ProjectDashboard() {
 
           return (
             <div className="modal-overlay">
-              <div className="card modal-content animate-fade" style={{ maxWidth: '500px', width: '90%' }}>
-                <h2 style={{ fontSize: '1.4rem', fontWeight: 800, marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'white' }}>
-                  <CheckCircle size={22} color="var(--success)" />
-                  {payablePayMode === 'total' ? 'Pagar Cuenta por Pagar Total' : 'Abonar a Cuenta por Pagar'}
-                </h2>
+              <div className="card modal-content animate-fade" style={{ maxWidth: '520px', width: '92%', padding: '2rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+                  <h2 style={{ margin: 0, color: 'white', display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1.35rem' }}>
+                    {payablePayMode === 'total' ? (
+                      <><CheckCircle size={22} color="var(--success)" /> Liquidar Cuenta por Pagar</>
+                    ) : (
+                      <><DollarSign size={22} color="var(--primary-color)" /> Registrar Abono</>
+                    )}
+                  </h2>
+                  <button onClick={() => { setShowPayablePayModal(false); setPayableToPay(null); }} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>
+                    <X size={22} />
+                  </button>
+                </div>
+
+                {/* Mode Toggle */}
+                <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem', background: 'rgba(255,255,255,0.05)', padding: '0.3rem', borderRadius: '8px' }}>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    style={{
+                      flex: 1,
+                      justifyContent: 'center',
+                      border: 'none',
+                      background: payablePayMode === 'abono' ? 'var(--primary-color)' : 'transparent',
+                      color: 'white',
+                      fontWeight: 700,
+                      fontSize: '0.85rem',
+                      padding: '0.5rem'
+                    }}
+                    onClick={() => {
+                      setPayablePayMode('abono');
+                      setPayablePayForm({
+                        ...payablePayForm,
+                        amount_usd: '',
+                        description: `Abono: ${payableToPay.description || payableToPay.name || 'CxP'}`
+                      });
+                    }}
+                  >
+                    <DollarSign size={15} /> Abonar (Parcial)
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    style={{
+                      flex: 1,
+                      justifyContent: 'center',
+                      border: 'none',
+                      background: payablePayMode === 'total' ? 'var(--success)' : 'transparent',
+                      color: 'white',
+                      fontWeight: 700,
+                      fontSize: '0.85rem',
+                      padding: '0.5rem'
+                    }}
+                    onClick={() => {
+                      setPayablePayMode('total');
+                      setPayablePayForm({
+                        ...payablePayForm,
+                        amount_usd: formatCurrency(currentBalance),
+                        description: `Liquidación total: ${payableToPay.description || payableToPay.name || 'CxP'}`
+                      });
+                    }}
+                  >
+                    <CheckCircle size={15} /> Liquidar (Pagar Todo)
+                  </button>
+                </div>
                 
-                <div style={{ background: 'rgba(0,0,0,0.2)', padding: '1rem', borderRadius: '8px', marginBottom: '1.5rem' }}>
+                {/* Summary Box */}
+                <div style={{ background: 'rgba(0,0,0,0.25)', padding: '1rem 1.2rem', borderRadius: '8px', marginBottom: '1.5rem', border: '1px solid rgba(255,255,255,0.08)' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem' }}>
                     <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Proveedor / Beneficiario:</span>
-                    <span style={{ fontWeight: 'bold' }}>{payableToPay.provider || payableToPay.name || 'N/A'}</span>
+                    <strong style={{ color: 'white' }}>{payableToPay.provider || payableToPay.name || 'N/A'}</strong>
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem' }}>
                     <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Total Cuenta por Pagar:</span>
-                    <span style={{ fontWeight: 'bold' }}>${formatCurrency(totalPayableAmount)}</span>
+                    <strong style={{ color: 'white' }}>${formatCurrency(totalPayableAmount)}</strong>
                   </div>
                   {previouslyPaid > 0 && (
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem' }}>
                       <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Abonado Previamente:</span>
-                      <span style={{ fontWeight: 'bold', color: 'var(--success)' }}>${formatCurrency(previouslyPaid)}</span>
+                      <strong style={{ color: 'var(--success)' }}>${formatCurrency(previouslyPaid)}</strong>
                     </div>
                   )}
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Saldo Pendiente:</span>
-                    <span style={{ fontWeight: 'bold', color: 'var(--danger)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: '0.4rem', borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+                    <span style={{ color: 'var(--danger)', fontWeight: 700, fontSize: '0.9rem' }}>Saldo Pendiente Restante:</span>
+                    <strong style={{ color: 'var(--danger)', fontSize: '1.05rem' }}>
                       ${formatCurrency(currentBalance)}
-                    </span>
+                    </strong>
                   </div>
                 </div>
 
-                <form onSubmit={handlePayablePayment}>
-                  <div style={{ display: 'grid', gap: '1rem' }}>
-                    <div className="form-group">
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
-                        <label style={{ margin: 0 }}>Monto (USD)</label>
-                        {payablePayMode === 'abono' && (
-                          <button
-                            type="button"
-                            style={{ background: 'none', border: 'none', color: 'var(--primary-color)', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600, padding: 0 }}
-                            onClick={() => {
-                              setPayablePayMode('total');
-                              setPayablePayForm({
-                                ...payablePayForm,
-                                amount_usd: formatCurrency(currentBalance),
-                                description: payablePayForm.description || `Pago total: ${payableToPay.description}`
-                              });
-                            }}
-                          >
-                            ⚡ Pagar saldo completo (${formatCurrency(currentBalance)})
-                          </button>
-                        )}
-                      </div>
-                      <input
-                        type="text"
-                        required
-                        className="input-field"
-                        value={payablePayForm.amount_usd}
-                        onChange={e => setPayablePayForm({...payablePayForm, amount_usd: handleMoneyInput(e.target.value)})}
-                        onBlur={e => setPayablePayForm({...payablePayForm, amount_usd: formatOnBlur(e.target.value)})}
-                        placeholder="Ej. 1500.00"
-                      />
+                <form onSubmit={handlePayablePayment} style={{ display: 'flex', flexDirection: 'column', gap: '1.2rem' }}>
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
+                      <label className="text-muted" style={{ margin: 0, fontSize: '0.85rem' }}>Monto (USD)</label>
+                      {payablePayMode === 'abono' && (
+                        <button
+                          type="button"
+                          style={{ background: 'none', border: 'none', color: 'var(--primary-color)', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600, padding: 0 }}
+                          onClick={() => {
+                            setPayablePayMode('total');
+                            setPayablePayForm({
+                              ...payablePayForm,
+                              amount_usd: formatCurrency(currentBalance),
+                              description: `Liquidación total: ${payableToPay.description || payableToPay.name || 'CxP'}`
+                            });
+                          }}
+                        >
+                          ⚡ Liquidar saldo completo (${formatCurrency(currentBalance)})
+                        </button>
+                      )}
                     </div>
-                    <div className="form-group">
-                      <label>Concepto / Descripción</label>
-                      <input
-                        type="text"
-                        required
-                        className="input-field"
-                        value={payablePayForm.description}
-                        onChange={e => setPayablePayForm({...payablePayForm, description: e.target.value})}
-                        placeholder={payablePayMode === 'total' ? `Pago total: ${payableToPay.description}` : 'Ej. Pago primera parte'}
-                      />
-                    </div>
-                    <div className="form-group">
-                      <label>Referencia / Recibo (Opcional)</label>
-                      <input type="text" className="input-field" value={payablePayForm.reference} onChange={e => setPayablePayForm({...payablePayForm, reference: e.target.value})} placeholder="Ej. Zelle 1234, Recibo 42" />
-                    </div>
-                    <div className="form-group">
-                      <label>Fecha de Pago</label>
+                    <input
+                      type="text"
+                      required
+                      readOnly={payablePayMode === 'total'}
+                      className="input-field"
+                      style={payablePayMode === 'total' ? { background: 'rgba(16,185,129,0.08)', borderColor: 'rgba(16,185,129,0.4)', fontWeight: 700, color: 'var(--success)' } : {}}
+                      value={payablePayForm.amount_usd}
+                      onChange={e => setPayablePayForm({...payablePayForm, amount_usd: handleMoneyInput(e.target.value)})}
+                      onBlur={e => setPayablePayForm({...payablePayForm, amount_usd: formatOnBlur(e.target.value)})}
+                      placeholder="Ej. 1500.00"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.85rem' }}>Concepto / Descripción</label>
+                    <input
+                      type="text"
+                      required
+                      className="input-field"
+                      value={payablePayForm.description}
+                      onChange={e => setPayablePayForm({...payablePayForm, description: e.target.value})}
+                      placeholder={payablePayMode === 'total' ? `Liquidación total: ${payableToPay.description || payableToPay.name || 'CxP'}` : 'Ej. Abono primera parte'}
+                    />
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                    <div>
+                      <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.85rem' }}>Fecha de Pago</label>
                       <input type="date" required className="input-field" value={payablePayForm.date} onChange={e => setPayablePayForm({...payablePayForm, date: e.target.value})} />
                     </div>
+                    <div>
+                      <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.85rem' }}>Referencia / Recibo (Opcional)</label>
+                      <input type="text" className="input-field" value={payablePayForm.reference} onChange={e => setPayablePayForm({...payablePayForm, reference: e.target.value})} placeholder="Ej. Zelle 1234, Recibo 42" />
+                    </div>
                   </div>
-                  <div style={{ display: 'flex', gap: '1rem', marginTop: '1.5rem', justifyContent: 'flex-end' }}>
-                    <button type="button" className="btn-secondary" onClick={() => setShowPayablePayModal(false)}>Cancelar</button>
-                    <button type="submit" className="btn-primary">
-                      {payablePayMode === 'total' ? 'Confirmar Pago Total' : 'Confirmar Abono'}
+                  <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem', justifyContent: 'flex-end' }}>
+                    <button type="button" className="btn-secondary" onClick={() => { setShowPayablePayModal(false); setPayableToPay(null); }}>Cancelar</button>
+                    <button
+                      type="submit"
+                      className="btn-primary"
+                      style={payablePayMode === 'total' ? { background: 'var(--success)', borderColor: 'var(--success)' } : {}}
+                    >
+                      {payablePayMode === 'total' ? (
+                        <><CheckCircle size={16} /> Confirmar Liquidación Total</>
+                      ) : (
+                        <><DollarSign size={16} /> Confirmar Abono</>
+                      )}
                     </button>
                   </div>
                 </form>

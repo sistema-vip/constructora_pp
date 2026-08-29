@@ -292,11 +292,13 @@ export default function ClienteDashboard() {
   const [commitmentPayMode, setCommitmentPayMode] = useState<'abono' | 'total'>('abono');
   const [selectedCommitmentForDetails, setSelectedCommitmentForDetails] = useState<any>(null);
   const [commitmentPayForm, setCommitmentPayForm] = useState({ amount_usd: '', description: '', reference: '', date: new Date().toISOString().split('T')[0] });
-
+  
   // Cuentas por Pagar state
   const [clientPayableAccounts, setClientPayableAccounts] = useState<any[]>([]);
   const [payableExpandedRows, setPayableExpandedRows] = useState<Set<string>>(new Set());
   const [showPayablePaymentModal, setShowPayablePaymentModal] = useState(false);
+  const [payablePaymentMode, setPayablePaymentMode] = useState<'abono' | 'total'>('abono');
+  const [selectedAccountForPayablePayment, setSelectedAccountForPayablePayment] = useState<any>(null);
   const [payablePaymentForm, setPayablePaymentForm] = useState({
     payable_account_id: '', amount_usd: '', description: '', reference: '', date: new Date().toISOString().split('T')[0]
   });
@@ -358,7 +360,6 @@ export default function ClienteDashboard() {
       setClientNotes(clientData.notes || '');
 
       // 2. Obtener proyectos y sus detalles relacionados
-      // Intentar con join de payable_accounts; si falla (migración no aplicada), usar query simple
       let projectsData: any[] | null = null;
       const { data: richData, error: richError } = await supabase
         .from('projects')
@@ -391,7 +392,19 @@ export default function ClienteDashboard() {
           .in('project_id', projectIds)
           .order('created_at', { ascending: false });
         
-        setClientPayableAccounts(accountsData || []);
+        const loadedPayables = accountsData || [];
+        setClientPayableAccounts(loadedPayables);
+
+        // Auto-heal en segundo plano
+        const accountsToHeal = loadedPayables.filter(a => {
+          if (a.status !== 'active') return false;
+          const paid = a.payable_payments?.reduce((s: number, p: any) => s + Number(p.amount_usd || 0), 0) || 0;
+          const total = Number(a.total_amount_usd || 0);
+          return paid >= total - 0.01 && paid > 0;
+        });
+        if (accountsToHeal.length > 0) {
+          Promise.all(accountsToHeal.map(a => supabase.from('payable_accounts').update({ status: 'paid' }).eq('id', a.id))).catch(console.error);
+        }
 
         const firstActive = projectsData.find(p => p.status === 'in_progress' || p.status === 'completed');
         if (firstActive) {
@@ -516,17 +529,59 @@ export default function ClienteDashboard() {
     setPayableExpandedRows(newSet);
   };
 
+  const openPayableAbonoModal = (account: any) => {
+    setSelectedAccountForPayablePayment(account);
+    setPayablePaymentMode('abono');
+    setPayablePaymentForm({
+      payable_account_id: account.id,
+      amount_usd: '',
+      description: `Abono: ${account.description || account.name}`,
+      reference: '',
+      date: new Date().toISOString().split('T')[0]
+    });
+    setShowPayablePaymentModal(true);
+  };
+
+  const openPayableTotalModal = (account: any) => {
+    const paid = account.payable_payments?.reduce((s: number, p: any) => s + Number(p.amount_usd || 0), 0) || 0;
+    const total = Number(account.total_amount_usd || 0);
+    const balance = Math.max(0, total - paid);
+    setSelectedAccountForPayablePayment(account);
+    setPayablePaymentMode('total');
+    setPayablePaymentForm({
+      payable_account_id: account.id,
+      amount_usd: formatCurrency(balance),
+      description: `Liquidación total: ${account.description || account.name}`,
+      reference: '',
+      date: new Date().toISOString().split('T')[0]
+    });
+    setShowPayablePaymentModal(true);
+  };
+
   const handleSavePayablePayment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isViewer) return;
 
     const account = clientPayableAccounts.find(a => a.id === payablePaymentForm.payable_account_id);
-    if (account && isActionDisabledForSales(account.project_id)) {
+    if (!account) return alert('Cuenta no encontrada.');
+    if (isActionDisabledForSales(account.project_id)) {
       return alert('Ventas no puede modificar proyectos aprobados.');
     }
 
+    const previouslyPaid = account.payable_payments?.reduce((sum: number, p: any) => sum + Number(p.amount_usd || 0), 0) || 0;
+    const totalAmount = Number(account.total_amount_usd || 0);
+    const currentBalance = Math.max(0, totalAmount - previouslyPaid);
+
+    const rawAmountStr = String(payablePaymentForm.amount_usd).replace(/\./g, '').replace(',', '.');
+    const paymentAmount = parseFloat(rawAmountStr) || 0;
+    if (paymentAmount <= 0) {
+      return alert('El monto debe ser mayor a $0.');
+    }
+    if (paymentAmount > currentBalance + 0.05) {
+      return alert(`El monto a pagar ($${formatCurrency(paymentAmount)}) supera el saldo pendiente ($${formatCurrency(currentBalance)}).`);
+    }
+
     try {
-      const paymentAmount = parseFloat(payablePaymentForm.amount_usd) || 0;
       const { error } = await supabase.from('payable_payments').insert([{
         payable_account_id: payablePaymentForm.payable_account_id,
         amount_usd: paymentAmount,
@@ -537,6 +592,9 @@ export default function ClienteDashboard() {
 
       if (error) throw error;
 
+      const remainingBalance = totalAmount - previouslyPaid - paymentAmount;
+      const isFullPay = remainingBalance <= 0.01 || payablePaymentMode === 'total';
+
       if (account && account.project_id) {
         // Registrar el gasto en project_costs
         let costCategory = 'materials';
@@ -544,9 +602,15 @@ export default function ClienteDashboard() {
         else if (account.type === 'alquiler') costCategory = 'equipment';
         else if (account.type === 'subcontratista') costCategory = 'subcontract';
 
+        const conceptText = payablePaymentForm.description || account.description || (isFullPay ? 'Liquidación total' : 'Abono');
+        const refPart = payablePaymentForm.reference ? ` (Ref: ${payablePaymentForm.reference})` : '';
+        const costDescription = isFullPay
+          ? `Liquidación total cuenta por pagar: ${account.name} - ${conceptText}${refPart}`
+          : `Abono a cuenta por pagar: ${account.name} - ${conceptText}${refPart}`;
+
         const { error: costError } = await supabase.from('project_costs').insert([{
           project_id: account.project_id,
-          description: `Abono a CxP: ${account.name} - ${payablePaymentForm.description}`,
+          description: costDescription,
           provider: account.name,
           category: costCategory,
           quantity: 1,
@@ -558,11 +622,7 @@ export default function ClienteDashboard() {
         if (costError) console.error("Error al registrar gasto:", costError);
 
         // Verificar si la deuda está saldada y actualizar estado
-        const previouslyPaid = account.payable_payments?.reduce((sum: number, p: any) => sum + Number(p.amount_usd), 0) || 0;
-        const totalAmount = Number(account.total_amount_usd);
-        const remainingBalance = totalAmount - previouslyPaid - paymentAmount;
-
-        if (remainingBalance <= 0.01) {
+        if (isFullPay || remainingBalance <= 0.01) {
           const { error: statusError } = await supabase.from('payable_accounts')
             .update({ status: 'paid' })
             .eq('id', account.id);
@@ -571,6 +631,7 @@ export default function ClienteDashboard() {
       }
 
       setShowPayablePaymentModal(false);
+      setSelectedAccountForPayablePayment(null);
       setPayablePaymentForm({ payable_account_id: '', amount_usd: '', description: '', reference: '', date: new Date().toISOString().split('T')[0] });
       fetchClientData();
     } catch (err: any) {
@@ -980,17 +1041,20 @@ export default function ClienteDashboard() {
       const previouslyPaid = commitmentToPay.payable_accounts?.[0]?.payable_payments?.reduce((s: any, p: any) => s + Number(p.amount_usd), 0) || 0;
       const totalAmount = Number(commitmentToPay.amount_usd || (commitmentToPay.quantity * commitmentToPay.unit_price_usd));
       const remainingBalance = totalAmount - previouslyPaid - monto;
-      const isFullPay = remainingBalance <= 0.01;
+      const isFullPay = remainingBalance <= 0.01 || commitmentPayMode === 'total';
 
-      const descPrefix = isFullPay && previouslyPaid === 0 ? 'Pago CxP' : isFullPay ? 'Liquidación CxP' : 'Abono CxP';
-      const costDescription = commitmentPayForm.description
-        ? `${descPrefix}: ${commitmentToPay.provider || 'Proveedor'} - ${commitmentPayForm.description}`
-        : `${descPrefix}: ${commitmentToPay.provider || 'Proveedor'} - ${commitmentToPay.description}`;
+      const providerName = commitmentToPay.provider || 'Proveedor';
+      const conceptText = commitmentPayForm.description || commitmentToPay.description || (isFullPay ? 'Liquidación total' : 'Abono');
+      const refPart = commitmentPayForm.reference ? ` (Ref: ${commitmentPayForm.reference})` : '';
+
+      const costDescription = isFullPay
+        ? `Liquidación total cuenta por pagar: ${providerName} - ${conceptText}${refPart}`
+        : `Abono a cuenta por pagar: ${providerName} - ${conceptText}${refPart}`;
 
       const { error: costError } = await supabase.from('project_costs').insert([{
         project_id: commitmentToPay.project_id,
         description: costDescription,
-        provider: commitmentToPay.provider || 'N/A',
+        provider: providerName,
         category: commitmentToPay.category, // using original category
         quantity: 1,
         unit_price_usd: monto,
@@ -1000,7 +1064,7 @@ export default function ClienteDashboard() {
       if (costError) throw new Error(`Error al registrar como gasto: ${costError.message}`);
 
       // 3. Update status if fully paid
-      if (remainingBalance <= 0.01) {
+      if (remainingBalance <= 0.01 || isFullPay) {
         await supabase.from('payable_accounts')
           .update({ status: 'paid' })
           .eq('id', payableAccountId);
@@ -1558,158 +1622,181 @@ export default function ClienteDashboard() {
             </div>
           )}
 
-          {activeTab === 'cuentas_pagar' && (
-            <div>
-              {clientPayableAccounts.length === 0 ? (
-                <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>No hay cuentas por pagar registradas para los proyectos de este cliente.</div>
-              ) : (
-                <div style={{ overflowX: 'auto' }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', marginBottom: '1.5rem' }}>
-                    <div className="card" style={{ padding: '1rem', background: 'rgba(245,158,11,0.05)', borderColor: 'rgba(245, 158, 11, 0.2)' }}>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--primary-color)', textTransform: 'uppercase', marginBottom: '0.25rem' }}>Total Contratado</div>
-                      <div style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>${formatCurrency(clientPayableAccounts.reduce((acc, a) => acc + Number(a.total_amount_usd), 0))}</div>
-                    </div>
-                    <div className="card" style={{ padding: '1rem', background: 'rgba(16,185,129,0.05)', borderColor: 'rgba(16, 185, 129, 0.2)' }}>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--success)', textTransform: 'uppercase', marginBottom: '0.25rem' }}>Total Abonado</div>
-                      <div style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>${formatCurrency(clientPayableAccounts.reduce((acc, a) => acc + (a.payable_payments?.reduce((s: any, p: any) => s + Number(p.amount_usd), 0) || 0), 0))}</div>
-                    </div>
-                    <div className="card" style={{ padding: '1rem', background: 'rgba(239,68,68,0.05)', borderColor: 'rgba(239, 68, 68, 0.2)' }}>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--danger)', textTransform: 'uppercase', marginBottom: '0.25rem' }}>Saldo Pendiente</div>
-                      <div style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>
-                        ${formatCurrency(clientPayableAccounts.reduce((acc, a) => {
-                          if (a.status === 'paid' || a.status === 'cancelled') return acc;
-                          const paid = (a.payable_payments || []).reduce((s: any, p: any) => s + Number(p.amount_usd || 0), 0);
-                          const total = Number(a.total_amount_usd || 0);
-                          if (paid >= total - 0.01) return acc;
-                          return acc + Math.max(0, total - paid);
-                        }, 0))}
-                      </div>
-                    </div>
+          {activeTab === 'cuentas_pagar' && (() => {
+            const accountsWithBalance = clientPayableAccounts.map(account => {
+              const paid = account.payable_payments?.reduce((s: any, p: any) => s + Number(p.amount_usd || 0), 0) || 0;
+              const total = Number(account.total_amount_usd || 0);
+              const isPaid = account.status === 'paid' || paid >= total - 0.01;
+              const isCancelled = account.status === 'cancelled';
+              const balance = (isPaid || isCancelled) ? 0 : Math.max(0, total - paid);
+              return { ...account, paid, total, isPaid, isCancelled, balance };
+            });
+
+            const activePendingAccounts = accountsWithBalance.filter(a => a.status === 'active' && !a.isPaid && !a.isCancelled && a.balance > 0.01);
+
+            const totalContract = activePendingAccounts.reduce((acc, a) => acc + a.total, 0);
+            const totalPaid = activePendingAccounts.reduce((acc, a) => acc + a.paid, 0);
+            const totalPendingBalance = activePendingAccounts.reduce((acc, a) => acc + a.balance, 0);
+
+            return (
+              <div>
+                {/* KPIs */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', marginBottom: '1.5rem' }}>
+                  <div className="card" style={{ padding: '1rem', background: 'rgba(245,158,11,0.05)', borderColor: 'rgba(245, 158, 11, 0.2)' }}>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--primary-color)', textTransform: 'uppercase', marginBottom: '0.25rem' }}>Total Comprometido</div>
+                    <div style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>${formatCurrency(totalContract)}</div>
                   </div>
+                  <div className="card" style={{ padding: '1rem', background: 'rgba(16,185,129,0.05)', borderColor: 'rgba(16, 185, 129, 0.2)' }}>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--success)', textTransform: 'uppercase', marginBottom: '0.25rem' }}>Total Abonado</div>
+                    <div style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>${formatCurrency(totalPaid)}</div>
+                  </div>
+                  <div className="card" style={{ padding: '1rem', background: 'rgba(239,68,68,0.05)', borderColor: 'rgba(239, 68, 68, 0.2)' }}>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--danger)', textTransform: 'uppercase', marginBottom: '0.25rem' }}>Saldo Pendiente Activo</div>
+                    <div style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>${formatCurrency(totalPendingBalance)}</div>
+                  </div>
+                </div>
 
-                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <thead>
-                      <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                        <th style={{ width: '40px', padding: '1rem' }}></th>
-                        <th style={{ textAlign: 'left', padding: '1rem' }}>NOMBRE</th>
-                        <th style={{ textAlign: 'left', padding: '1rem' }}>PROYECTO</th>
-                        <th style={{ textAlign: 'right', padding: '1rem' }}>CONTRATO</th>
-                        <th style={{ textAlign: 'right', padding: '1rem' }}>ABONADO</th>
-                        <th style={{ textAlign: 'right', padding: '1rem' }}>SALDO</th>
-                        <th style={{ textAlign: 'right', padding: '1rem' }}>ACCIONES</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {clientPayableAccounts.map(account => {
-                        const paid = account.payable_payments?.reduce((s: any, p: any) => s + Number(p.amount_usd), 0) || 0;
-                        const isPaid = account.status === 'paid' || paid >= Number(account.total_amount_usd) - 0.01;
-                        const isCancelled = account.status === 'cancelled';
-                        const balance = (isPaid || isCancelled) ? 0 : Math.max(0, Number(account.total_amount_usd) - paid);
-                        const isExpanded = payableExpandedRows.has(account.id);
-                        const progress = account.total_amount_usd > 0 ? Math.min(100, Math.round((paid / account.total_amount_usd) * 100)) : 0;
+                {activePendingAccounts.length === 0 ? (
+                  <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+                    <CheckCircle size={36} color="var(--success)" style={{ margin: '0 auto 0.75rem auto', display: 'block', opacity: 0.85 }} />
+                    <p style={{ margin: 0, fontSize: '1rem', color: 'white', fontWeight: 600 }}>¡No hay cuentas por pagar pendientes!</p>
+                    <p style={{ margin: '0.4rem 0 0 0', fontSize: '0.85rem' }}>Todas las cuentas y compromisos de los proyectos de este cliente están saldadas.</p>
+                  </div>
+                ) : (
+                  <div style={{ overflowX: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                      <thead>
+                        <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                          <th style={{ width: '40px', padding: '1rem' }}></th>
+                          <th style={{ textAlign: 'left', padding: '1rem' }}>NOMBRE</th>
+                          <th style={{ textAlign: 'left', padding: '1rem' }}>PROYECTO</th>
+                          <th style={{ textAlign: 'right', padding: '1rem' }}>CONTRATO</th>
+                          <th style={{ textAlign: 'right', padding: '1rem' }}>ABONADO</th>
+                          <th style={{ textAlign: 'right', padding: '1rem' }}>SALDO</th>
+                          <th style={{ textAlign: 'right', padding: '1rem' }}>ACCIONES</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {activePendingAccounts.map(account => {
+                          const isExpanded = payableExpandedRows.has(account.id);
+                          const progress = account.total > 0 ? Math.min(100, Math.round((account.paid / account.total) * 100)) : 0;
 
-                        return (
-                          <React.Fragment key={account.id}>
-                            <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.05)', background: isExpanded ? 'rgba(255,255,255,0.02)' : 'transparent' }}>
-                              <td style={{ padding: '1rem', cursor: 'pointer' }} onClick={() => togglePayableRow(account.id)}>
-                                {isExpanded ? <ChevronDown size={18} className="text-muted" /> : <ChevronRight size={18} className="text-muted" />}
-                              </td>
-                              <td style={{ padding: '1rem' }}>
-                                <div style={{ fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                  {account.name}
-                                </div>
-                                <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'capitalize' }}>{account.type}</div>
-                              </td>
-                              <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>
-                                {account.project?.proposal_number ? `#${account.project?.proposal_number} - ` : ''}{account.project?.title || 'General'}
-                              </td>
-                              <td style={{ padding: '1rem', textAlign: 'right' }}>${formatCurrency(account.total_amount_usd)}</td>
-                              <td style={{ padding: '1rem', textAlign: 'right', color: 'var(--success)' }}>${formatCurrency(paid)}</td>
-                              <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold', color: balance > 0 ? 'var(--danger)' : 'var(--success)' }}>${formatCurrency(balance)}</td>
-                              <td style={{ padding: '1rem', textAlign: 'right' }}>
-                                {!isViewer && !isActionDisabledForSales(account.project_id) && balance > 0 && !isPaid && !isCancelled && (
-                                  <button 
-                                    className="btn-primary" 
-                                    style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem' }}
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setPayablePaymentForm(prev => ({ ...prev, payable_account_id: account.id }));
-                                      setShowPayablePaymentModal(true);
-                                    }}
-                                  >
-                                    Abonar
-                                  </button>
-                                )}
-                              </td>
-                            </tr>
-                            
-                            {/* Panel Expandido con Historial de Abonos */}
-                            {isExpanded && (
-                              <tr>
-                                <td colSpan={7} style={{ padding: 0 }}>
-                                  <div style={{ background: 'rgba(0,0,0,0.2)', padding: '1.5rem', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                                    
-                                    {/* Barra de progreso */}
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.5rem' }}>
-                                      <div style={{ flex: 1, height: '8px', background: 'rgba(255,255,255,0.1)', borderRadius: '4px', overflow: 'hidden' }}>
-                                        <div style={{ width: `${progress}%`, height: '100%', background: progress >= 100 ? 'var(--success)' : 'var(--primary-color)', transition: 'width 0.3s ease' }}></div>
-                                      </div>
-                                      <div style={{ fontSize: '0.85rem', fontWeight: 'bold', color: progress >= 100 ? 'var(--success)' : 'var(--text-muted)' }}>
-                                        {progress}% Pagado
-                                      </div>
-                                    </div>
-
-                                    <h4 style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginBottom: '1rem', textTransform: 'uppercase', letterSpacing: '1px' }}>Historial de Abonos</h4>
-                                    
-                                    {(!account.payable_payments || account.payable_payments.length === 0) ? (
-                                      <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>No se han registrado abonos a esta cuenta.</div>
-                                    ) : (
-                                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
-                                        <thead>
-                                          <tr style={{ color: 'var(--text-muted)', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                                            <th style={{ textAlign: 'left', padding: '0.5rem' }}>Fecha</th>
-                                            <th style={{ textAlign: 'left', padding: '0.5rem' }}>Concepto</th>
-                                            <th style={{ textAlign: 'left', padding: '0.5rem' }}>Referencia</th>
-                                            <th style={{ textAlign: 'right', padding: '0.5rem' }}>Monto</th>
-                                            <th style={{ textAlign: 'right', padding: '0.5rem' }}></th>
-                                          </tr>
-                                        </thead>
-                                        <tbody>
-                                          {account.payable_payments.map((p: any) => (
-                                            <tr key={p.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
-                                              <td style={{ padding: '0.5rem' }}>{p.date || new Date(p.created_at).toISOString().split('T')[0]}</td>
-                                              <td style={{ padding: '0.5rem' }}>{p.description || '-'}</td>
-                                              <td style={{ padding: '0.5rem', color: 'var(--primary-color)' }}>{p.reference || '-'}</td>
-                                              <td style={{ padding: '0.5rem', textAlign: 'right', fontWeight: 'bold' }}>${formatCurrency(p.amount_usd)}</td>
-                                              <td style={{ padding: '0.5rem', textAlign: 'right' }}>
-                                                {!isViewer && !isActionDisabledForSales(account.project_id) && (
-                                                  <button 
-                                                    className="btn-secondary"
-                                                    style={{ padding: '0.2rem 0.5rem', color: 'var(--danger)', borderColor: 'transparent' }}
-                                                    onClick={() => initiateDelete(p.id, 'payable_payment')}
-                                                  >
-                                                    <Trash2 size={14} />
-                                                  </button>
-                                                )}
-                                              </td>
-                                            </tr>
-                                          ))}
-                                        </tbody>
-                                      </table>
-                                    )}
+                          return (
+                            <React.Fragment key={account.id}>
+                              <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.05)', background: isExpanded ? 'rgba(255,255,255,0.02)' : 'transparent' }}>
+                                <td style={{ padding: '1rem', cursor: 'pointer' }} onClick={() => togglePayableRow(account.id)}>
+                                  {isExpanded ? <ChevronDown size={18} className="text-muted" /> : <ChevronRight size={18} className="text-muted" />}
+                                </td>
+                                <td style={{ padding: '1rem' }}>
+                                  <div style={{ fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                    {account.name}
                                   </div>
+                                  <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'capitalize' }}>{account.type}</div>
+                                </td>
+                                <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>
+                                  {account.project?.proposal_number ? `#${account.project?.proposal_number} - ` : ''}{account.project?.title || 'General'}
+                                </td>
+                                <td style={{ padding: '1rem', textAlign: 'right' }}>${formatCurrency(account.total)}</td>
+                                <td style={{ padding: '1rem', textAlign: 'right', color: 'var(--success)' }}>${formatCurrency(account.paid)}</td>
+                                <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold', color: account.balance > 0 ? 'var(--danger)' : 'var(--success)' }}>${formatCurrency(account.balance)}</td>
+                                <td style={{ padding: '1rem', textAlign: 'right' }}>
+                                  {!isViewer && !isActionDisabledForSales(account.project_id) && account.balance > 0 && !account.isPaid && !account.isCancelled && (
+                                    <div style={{ display: 'flex', gap: '0.4rem', justifyContent: 'flex-end' }}>
+                                      <button 
+                                        className="btn-secondary" 
+                                        style={{ padding: '0.35rem 0.65rem', fontSize: '0.75rem', color: 'var(--primary-color)', borderColor: 'rgba(59,130,246,0.3)' }}
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          openPayableAbonoModal(account);
+                                        }}
+                                        title="Registrar abono parcial"
+                                      >
+                                        <DollarSign size={13} style={{ marginRight: '2px', display: 'inline' }} /> Abonar
+                                      </button>
+                                      <button 
+                                        className="btn-primary" 
+                                        style={{ padding: '0.35rem 0.65rem', fontSize: '0.75rem', background: 'var(--success)', borderColor: 'var(--success)' }}
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          openPayableTotalModal(account);
+                                        }}
+                                        title="Pagar totalidad de la deuda"
+                                      >
+                                        <CheckCircle size={13} style={{ marginRight: '2px', display: 'inline' }} /> Liquidar
+                                      </button>
+                                    </div>
+                                  )}
                                 </td>
                               </tr>
-                            )}
-                          </React.Fragment>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          )}
+                              
+                              {/* Panel Expandido con Historial de Abonos */}
+                              {isExpanded && (
+                                <tr>
+                                  <td colSpan={7} style={{ padding: 0 }}>
+                                    <div style={{ background: 'rgba(0,0,0,0.2)', padding: '1.5rem', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                                      
+                                      {/* Barra de progreso */}
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.5rem' }}>
+                                        <div style={{ flex: 1, height: '8px', background: 'rgba(255,255,255,0.1)', borderRadius: '4px', overflow: 'hidden' }}>
+                                          <div style={{ width: `${progress}%`, height: '100%', background: progress >= 100 ? 'var(--success)' : 'var(--primary-color)', transition: 'width 0.3s ease' }}></div>
+                                        </div>
+                                        <div style={{ fontSize: '0.85rem', fontWeight: 'bold', color: progress >= 100 ? 'var(--success)' : 'var(--text-muted)' }}>
+                                          {progress}% Pagado
+                                        </div>
+                                      </div>
+
+                                      <h4 style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginBottom: '1rem', textTransform: 'uppercase', letterSpacing: '1px' }}>Historial de Abonos</h4>
+                                      
+                                      {(!account.payable_payments || account.payable_payments.length === 0) ? (
+                                        <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>No se han registrado abonos a esta cuenta.</div>
+                                      ) : (
+                                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
+                                          <thead>
+                                            <tr style={{ color: 'var(--text-muted)', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                                              <th style={{ textAlign: 'left', padding: '0.5rem' }}>Fecha</th>
+                                              <th style={{ textAlign: 'left', padding: '0.5rem' }}>Concepto</th>
+                                              <th style={{ textAlign: 'left', padding: '0.5rem' }}>Referencia</th>
+                                              <th style={{ textAlign: 'right', padding: '0.5rem' }}>Monto</th>
+                                              <th style={{ textAlign: 'right', padding: '0.5rem' }}></th>
+                                            </tr>
+                                          </thead>
+                                          <tbody>
+                                            {account.payable_payments.map((p: any) => (
+                                              <tr key={p.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
+                                                <td style={{ padding: '0.5rem' }}>{p.date || new Date(p.created_at).toISOString().split('T')[0]}</td>
+                                                <td style={{ padding: '0.5rem' }}>{p.description || '-'}</td>
+                                                <td style={{ padding: '0.5rem', color: 'var(--primary-color)' }}>{p.reference || '-'}</td>
+                                                <td style={{ padding: '0.5rem', textAlign: 'right', fontWeight: 'bold' }}>${formatCurrency(p.amount_usd)}</td>
+                                                <td style={{ padding: '0.5rem', textAlign: 'right' }}>
+                                                  {!isViewer && !isActionDisabledForSales(account.project_id) && (
+                                                    <button 
+                                                      className="btn-secondary"
+                                                      style={{ padding: '0.2rem 0.5rem', color: 'var(--danger)', borderColor: 'transparent' }}
+                                                      onClick={() => initiateDelete(p.id, 'payable_payment')}
+                                                    >
+                                                      <Trash2 size={14} />
+                                                    </button>
+                                                  )}
+                                                </td>
+                                              </tr>
+                                            ))}
+                                          </tbody>
+                                        </table>
+                                      )}
+                                    </div>
+                                  </td>
+                                </tr>
+                              )}
+                            </React.Fragment>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           {activeTab === 'pagos' && (
             <div>
@@ -2878,61 +2965,196 @@ export default function ClienteDashboard() {
         )}
       </div>
 
-      {/* Modal Abono Cuenta Pagar */}
-      {showPayablePaymentModal && (
-        <div className="modal-backdrop">
-          <div className="modal-content animate-scale">
-            <h2 style={{ fontSize: '1.5rem', fontWeight: 800, marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <CheckCircle size={24} color="var(--success)" /> Registrar Abono (Cuentas por Pagar)
-            </h2>
-            <form onSubmit={handleSavePayablePayment}>
-              <div style={{ display: 'grid', gap: '1rem' }}>
-                <div className="form-group">
-                  <label>Monto (USD)</label>
-                  <input
-                    type="text"
-                    required
-                    value={payablePaymentForm.amount_usd}
-                    onChange={(e) => setPayablePaymentForm({...payablePaymentForm, amount_usd: handleMoneyInput(e.target.value)})}
-                    onBlur={(e) => setPayablePaymentForm({...payablePaymentForm, amount_usd: formatOnBlur(e.target.value)})}
-                    placeholder="Ej. 1500.00"
-                  />
-                </div>
-                <div className="form-group">
-                  <label>Concepto / Descripción</label>
-                  <input
-                    type="text"
-                    required
-                    value={payablePaymentForm.description}
-                    onChange={e => setPayablePaymentForm({...payablePaymentForm, description: e.target.value})}
-                  />
-                </div>
-                <div className="form-group">
-                  <label>Referencia / Banco</label>
-                  <input
-                    type="text"
-                    value={payablePaymentForm.reference}
-                    onChange={e => setPayablePaymentForm({...payablePaymentForm, reference: e.target.value})}
-                  />
-                </div>
-                <div className="form-group">
-                  <label>Fecha del Pago</label>
-                  <input
-                    type="date"
-                    required
-                    value={payablePaymentForm.date}
-                    onChange={e => setPayablePaymentForm({...payablePaymentForm, date: e.target.value})}
-                  />
-                </div>
+      {/* Modal Abono / Pago Cuenta Pagar */}
+      {showPayablePaymentModal && (() => {
+        const account = selectedAccountForPayablePayment || clientPayableAccounts.find(a => a.id === payablePaymentForm.payable_account_id);
+        const previouslyPaid = account?.payable_payments?.reduce((sum: number, p: any) => sum + Number(p.amount_usd || 0), 0) || 0;
+        const totalAmount = Number(account?.total_amount_usd || 0);
+        const currentBalance = Math.max(0, totalAmount - previouslyPaid);
+
+        return (
+          <div className="modal-backdrop">
+            <div className="modal-content animate-scale" style={{ maxWidth: '520px', width: '92%', padding: '2rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+                <h2 style={{ fontSize: '1.35rem', fontWeight: 800, margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'white' }}>
+                  {payablePaymentMode === 'total' ? (
+                    <><CheckCircle size={22} color="var(--success)" /> Liquidar Cuenta por Pagar</>
+                  ) : (
+                    <><DollarSign size={22} color="var(--primary-color)" /> Registrar Abono</>
+                  )}
+                </h2>
+                <button onClick={() => { setShowPayablePaymentModal(false); setSelectedAccountForPayablePayment(null); }} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>
+                  <X size={22} />
+                </button>
               </div>
-              <div style={{ display: 'flex', gap: '1rem', marginTop: '2rem', justifyContent: 'flex-end' }}>
-                <button type="button" className="btn-secondary" onClick={() => setShowPayablePaymentModal(false)}>Cancelar</button>
-                <button type="submit" className="btn-primary">Registrar Abono</button>
+
+              {/* Mode Toggle */}
+              <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem', background: 'rgba(255,255,255,0.05)', padding: '0.3rem', borderRadius: '8px' }}>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  style={{
+                    flex: 1,
+                    justifyContent: 'center',
+                    border: 'none',
+                    background: payablePaymentMode === 'abono' ? 'var(--primary-color)' : 'transparent',
+                    color: 'white',
+                    fontWeight: 700,
+                    fontSize: '0.85rem',
+                    padding: '0.5rem'
+                  }}
+                  onClick={() => {
+                    setPayablePaymentMode('abono');
+                    setPayablePaymentForm({
+                      ...payablePaymentForm,
+                      amount_usd: '',
+                      description: `Abono: ${account?.description || account?.name || 'CxP'}`
+                    });
+                  }}
+                >
+                  <DollarSign size={15} /> Abonar (Parcial)
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  style={{
+                    flex: 1,
+                    justifyContent: 'center',
+                    border: 'none',
+                    background: payablePaymentMode === 'total' ? 'var(--success)' : 'transparent',
+                    color: 'white',
+                    fontWeight: 700,
+                    fontSize: '0.85rem',
+                    padding: '0.5rem'
+                  }}
+                  onClick={() => {
+                    setPayablePaymentMode('total');
+                    setPayablePaymentForm({
+                      ...payablePaymentForm,
+                      amount_usd: formatCurrency(currentBalance),
+                      description: `Liquidación total: ${account?.description || account?.name || 'CxP'}`
+                    });
+                  }}
+                >
+                  <CheckCircle size={15} /> Liquidar (Pagar Todo)
+                </button>
               </div>
-            </form>
+
+              {/* Summary Card */}
+              {account && (
+                <div style={{ background: 'rgba(0,0,0,0.25)', padding: '1rem 1.2rem', borderRadius: '8px', marginBottom: '1.5rem', border: '1px solid rgba(255,255,255,0.08)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem' }}>
+                    <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Beneficiario:</span>
+                    <strong style={{ color: 'white' }}>{account.name}</strong>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem' }}>
+                    <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Proyecto:</span>
+                    <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>{account.project?.proposal_number ? `#${account.project?.proposal_number} - ` : ''}{account.project?.title || 'General'}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem' }}>
+                    <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Total Contrato:</span>
+                    <strong style={{ color: 'white' }}>${formatCurrency(totalAmount)}</strong>
+                  </div>
+                  {previouslyPaid > 0 && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem' }}>
+                      <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Total Abonado Previamente:</span>
+                      <strong style={{ color: 'var(--success)' }}>${formatCurrency(previouslyPaid)}</strong>
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: '0.4rem', borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+                    <span style={{ color: 'var(--danger)', fontWeight: 700, fontSize: '0.9rem' }}>Saldo Pendiente Restante:</span>
+                    <strong style={{ color: 'var(--danger)', fontSize: '1.05rem' }}>${formatCurrency(currentBalance)}</strong>
+                  </div>
+                </div>
+              )}
+
+              <form onSubmit={handleSavePayablePayment}>
+                <div style={{ display: 'grid', gap: '1rem' }}>
+                  <div className="form-group">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
+                      <label style={{ margin: 0, fontSize: '0.85rem' }}>Monto (USD)</label>
+                      {payablePaymentMode === 'abono' && (
+                        <button
+                          type="button"
+                          style={{ background: 'none', border: 'none', color: 'var(--primary-color)', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600, padding: 0 }}
+                          onClick={() => {
+                            setPayablePaymentMode('total');
+                            setPayablePaymentForm({
+                              ...payablePaymentForm,
+                              amount_usd: formatCurrency(currentBalance),
+                              description: `Liquidación total: ${account?.description || account?.name || 'CxP'}`
+                            });
+                          }}
+                        >
+                          ⚡ Liquidar saldo completo (${formatCurrency(currentBalance)})
+                        </button>
+                      )}
+                    </div>
+                    <input
+                      type="text"
+                      required
+                      readOnly={payablePaymentMode === 'total'}
+                      className="input-field"
+                      style={payablePaymentMode === 'total' ? { background: 'rgba(16,185,129,0.08)', borderColor: 'rgba(16,185,129,0.4)', fontWeight: 700, color: 'var(--success)' } : {}}
+                      value={payablePaymentForm.amount_usd}
+                      onChange={(e) => setPayablePaymentForm({...payablePaymentForm, amount_usd: handleMoneyInput(e.target.value)})}
+                      onBlur={(e) => setPayablePaymentForm({...payablePaymentForm, amount_usd: formatOnBlur(e.target.value)})}
+                      placeholder="Ej. 1500.00"
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label style={{ fontSize: '0.85rem' }}>Concepto / Descripción</label>
+                    <input
+                      type="text"
+                      required
+                      className="input-field"
+                      value={payablePaymentForm.description}
+                      onChange={e => setPayablePaymentForm({...payablePaymentForm, description: e.target.value})}
+                      placeholder={payablePaymentMode === 'total' ? `Liquidación total: ${account?.name || 'CxP'}` : 'Ej. Abono primera parte'}
+                    />
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                    <div className="form-group">
+                      <label style={{ fontSize: '0.85rem' }}>Fecha del Pago</label>
+                      <input
+                        type="date"
+                        required
+                        className="input-field"
+                        value={payablePaymentForm.date}
+                        onChange={e => setPayablePaymentForm({...payablePaymentForm, date: e.target.value})}
+                      />
+                    </div>
+                    <div className="form-group">
+                      <label style={{ fontSize: '0.85rem' }}>Referencia / Banco</label>
+                      <input
+                        type="text"
+                        className="input-field"
+                        value={payablePaymentForm.reference}
+                        onChange={e => setPayablePaymentForm({...payablePaymentForm, reference: e.target.value})}
+                        placeholder="Ej. Zelle 1234"
+                      />
+                    </div>
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: '1rem', marginTop: '1.5rem', justifyContent: 'flex-end' }}>
+                  <button type="button" className="btn-secondary" onClick={() => { setShowPayablePaymentModal(false); setSelectedAccountForPayablePayment(null); }}>Cancelar</button>
+                  <button
+                    type="submit"
+                    className="btn-primary"
+                    style={payablePaymentMode === 'total' ? { background: 'var(--success)', borderColor: 'var(--success)' } : {}}
+                  >
+                    {payablePaymentMode === 'total' ? (
+                      <><CheckCircle size={16} /> Confirmar Liquidación Total</>
+                    ) : (
+                      <><DollarSign size={16} /> Registrar Abono</>
+                    )}
+                  </button>
+                </div>
+              </form>
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Estilos para impresión */}
       <style dangerouslySetInnerHTML={{ __html: `

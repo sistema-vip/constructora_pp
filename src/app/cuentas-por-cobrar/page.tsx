@@ -159,9 +159,9 @@ export default function CuentasPorCobrarPage() {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1.5rem', marginBottom: '2rem' }}>
         <div className="card" style={{ padding: '1.5rem', background: 'linear-gradient(145deg, rgba(56,189,248,0.08) 0%, rgba(0,0,0,0) 100%)', borderColor: 'rgba(56,189,248,0.25)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--accent-blue)', marginBottom: '0.75rem', fontSize: '0.85rem', textTransform: 'uppercase' }}>
-            <Briefcase size={16} /> <span style={{ fontWeight: 700 }}>Proyectos Activos</span>
+            <Briefcase size={16} /> <span style={{ fontWeight: 700 }}>Proyectos con Saldo</span>
           </div>
-          <div style={{ fontSize: '2.2rem', fontWeight: 800, color: 'white' }}>{projects.length}</div>
+          <div style={{ fontSize: '2.2rem', fontWeight: 800, color: 'white' }}>{pendientesProjects.length}</div>
         </div>
 
         <div className="card" style={{ padding: '1.5rem', background: 'linear-gradient(145deg, rgba(245,158,11,0.08) 0%, rgba(0,0,0,0) 100%)', borderColor: 'rgba(245, 158, 11, 0.4)' }}>
@@ -234,7 +234,15 @@ export default function CuentasPorCobrarPage() {
           <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-muted)' }}>Cargando proyectos...</div>
         ) : displayedProjects.length === 0 ? (
           <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-muted)' }}>
-            {activeTab === 'pendientes' ? 'No hay cuentas pendientes por cobrar.' : 'No hay cuentas saldadas.'}
+            {activeTab === 'pendientes' ? (
+              <div>
+                <CheckCircle size={40} color="var(--success)" style={{ margin: '0 auto 1rem auto', display: 'block', opacity: 0.8 }} />
+                <p style={{ margin: 0, fontSize: '1.1rem', color: 'white', fontWeight: 600 }}>¡No hay saldos pendientes por cobrar!</p>
+                <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.9rem' }}>Todos los proyectos aprobados han sido cobrados en su totalidad.</p>
+              </div>
+            ) : (
+              'No hay cuentas saldadas registradas.'
+            )}
           </div>
         ) : (
           <div style={{ overflowX: 'auto' }}>
