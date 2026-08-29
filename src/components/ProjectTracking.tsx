@@ -1071,7 +1071,7 @@ export default function ProjectTracking({
       )}
 
       {/* ── DOCUMENTO OFICIAL DIRECTO PARA IMPRESIÓN ── */}
-      <div id="printable-tracking-report-root" style={{ color: '#0f172a', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
+      <div id="printable-tracking-report-root" className="print-only show-only-on-print" style={{ color: '#0f172a', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
         <div style={{ backgroundColor: '#ffffff', color: '#0f172a', width: '100%', padding: '0' }}>
           {/* Membrete Oficial */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', borderBottom: '2.5px solid #0f172a', paddingBottom: '1rem', marginBottom: '1.4rem' }}>
@@ -1226,39 +1226,52 @@ export default function ProjectTracking({
         </div>
       </div>
 
-      {/* ESTILOS DE IMPRESIÓN OFICIALES INFALIBLES */}
+      {/* ESTILOS DE IMPRESIÓN OFICIALES */}
       <style>{`
-        @media screen {
-          #printable-tracking-report-root {
-            display: none !important;
-          }
+        #printable-tracking-report-root {
+          display: none;
         }
         @media print {
-          body * {
-            visibility: hidden !important;
-          }
-          #printable-tracking-report-root, #printable-tracking-report-root * {
-            visibility: visible !important;
-          }
-          #printable-tracking-report-root {
-            display: block !important;
-            position: absolute !important;
-            left: 0 !important;
-            top: 0 !important;
-            width: 100% !important;
-            max-width: none !important;
-            margin: 0 !important;
-            padding: 1.5cm 2cm !important;
-            box-shadow: none !important;
+          body {
             background: white !important;
-            color: black !important;
-            z-index: 9999999 !important;
+            color: #0f172a !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            font-family: system-ui, -apple-system, sans-serif !important;
+          }
+          .app-container, .main-content {
+            padding: 0 !important;
+            margin: 0 !important;
+            max-width: 100% !important;
+            width: 100% !important;
+            display: block !important;
+          }
+          .card {
+            border: none !important;
+            box-shadow: none !important;
+            background: transparent !important;
+            padding: 0 !important;
+            margin: 0 !important;
           }
           .hide-on-print, nav, header, aside, .sidebar, .top-bar, .modal-overlay {
             display: none !important;
           }
+          #printable-tracking-report-root {
+            display: block !important;
+            visibility: visible !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            margin: 0 auto !important;
+            padding: 0 !important;
+            box-shadow: none !important;
+            background: white !important;
+            color: #0f172a !important;
+          }
+          #printable-tracking-report-root * {
+            visibility: visible !important;
+          }
           @page {
-            margin: 0;
+            margin: 1.2cm;
             size: auto;
           }
         }
