@@ -1,12 +1,13 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { Check, CheckCircle, Send, RotateCcw, PenTool, Layout, Wand2, Type, RefreshCw, FileText, Bot, HandCoins, HardHat, Pickaxe, Ruler, Wrench, X, Loader2, Save, Eye, User, DollarSign, Clock, MessageSquare, Sparkles, Plus, Trash2 } from 'lucide-react';
+import { Check, CheckCircle, Send, RotateCcw, PenTool, Layout, Wand2, Type, RefreshCw, FileText, Bot, HandCoins, HardHat, Pickaxe, Ruler, Wrench, X, Loader2, Save, Eye, User, DollarSign, Clock, MessageSquare, Sparkles, Plus, Trash2, ListChecks, Layers, PlusCircle, AlignLeft } from 'lucide-react';
 import { modifyProposalText, refineProposalField, chatAndUpdateForm, ChatMessage, ProposalData, parseProposalTextToForm } from '@/app/actions/ai-actions';
 import { supabase } from '@/lib/supabase';
 import { handleMoneyInput, formatOnBlur, formatCurrency, parseCurrency } from '@/lib/formatters';
 import { useAdminAction } from '@/lib/useAdminAction';
 import ProposalPrintLayout from '@/components/ProposalPrintLayout';
+import { autoPopulateTrackingTasks } from '@/lib/projectTaskHelper';
 
 interface Client { id: string; name: string; company_name?: string; }
 interface Props { isOpen: boolean; onClose: () => void; onSaved?: () => void; onOpenAI?: () => void; initialClientId?: string; existingProposal?: any; }
@@ -297,9 +298,8 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
           description: editableText, 
           budget_usd: amount,
           start_date: form.date || null,
-          created_at: saveDateIso,
-          status: 'proposal',
-          archived_at: null
+          status: existingProposal?.status || 'proposal',
+          archived_at: existingProposal?.archived_at ?? null
         }).eq('id', editingProjectId);
         if (err) throw new Error(err.message);
       } else {
@@ -376,17 +376,14 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
       const displayDate = formatDisplayDate(form.date);
       const fullText = `Proyecto: ${form.title}\nFecha: ${displayDate}\nPara: ${form.clientName}\nÁrea de Ejecución: ${form.area}\n\nObjetivo del Proyecto\n${form.objective}\n\nFases del Trabajo (Alcance Técnico)\n${form.phases}${getCostBreakdownText()}\n\nTiempo de Ejecución y Entrega\n${form.time}\n\n${modalityHeader}\n${form.investmentModality}\n\nINVERSIÓN TOTAL: $${form.amount}\n\nCondiciones y Métodos de Pago\nEsquema de Pago: ${form.payment}\nMoneda de Pago: ${form.currency}\nFormas de Pago: ${form.paymentMethods}`;
 
-      const saveDateIso = form.date ? new Date(form.date + 'T12:00:00Z').toISOString() : new Date().toISOString();
-
       const { error: err } = await supabase.from('projects').update({ 
         client_id: form.clientId || null, 
         title: form.title, 
         description: fullText, 
         budget_usd: amount,
         start_date: form.date || null,
-        created_at: saveDateIso,
-        status: 'proposal',
-        archived_at: null
+        status: existingProposal?.status || 'proposal',
+        archived_at: existingProposal?.archived_at ?? null
       }).eq('id', editingProjectId);
       
       if (err) throw new Error(err.message);
@@ -573,14 +570,50 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
                     </div>
                     <textarea className="input-field" style={{ minHeight: 90, resize: 'vertical', transition: 'all 0.3s', boxShadow: highlightedFields.objective ? '0 0 0 2px var(--primary-color)' : 'none' }} placeholder="Descripción técnica del objetivo..." value={form.objective} onChange={e => setForm({ ...form, objective: e.target.value })} />
                   </div>
+                  {/* FASES DEL TRABAJO (ALCANCE TÉCNICO) */}
                   <div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '.4rem' }}>
-                      <label style={{ fontSize: '.85rem', color: 'var(--text-muted)' }}>Fases del Trabajo</label>
-                      <button onClick={() => handleRefineField('phases', 'Fases del Trabajo')} disabled={refiningField === 'phases'} style={{ background: 'none', border: 'none', color: 'var(--primary-color)', fontSize: '.75rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '.3rem' }}>
-                        {refiningField === 'phases' ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />} Estructurar con IA
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '.4rem' }}>
+                      <label style={{ fontSize: '.85rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '.4rem' }}>
+                        <ListChecks size={15} color="var(--primary-color)" /> Fases del Trabajo (Alcance Técnico)
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => handleRefineField('phases', 'Fases del Trabajo')}
+                        disabled={refiningField === 'phases'}
+                        style={{
+                          background: 'rgba(245,158,11,0.1)',
+                          border: '1px solid rgba(245,158,11,0.3)',
+                          color: 'var(--primary-color)',
+                          fontSize: '.75rem',
+                          borderRadius: '6px',
+                          padding: '0.25rem 0.6rem',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '.3rem',
+                          fontWeight: 600
+                        }}
+                      >
+                        {refiningField === 'phases' ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />} Estructurar con Pepe IA
                       </button>
                     </div>
-                    <textarea className="input-field" style={{ minHeight: 110, resize: 'vertical', transition: 'all 0.3s', boxShadow: highlightedFields.phases ? '0 0 0 2px var(--primary-color)' : 'none' }} placeholder="Fase 1: Saneamiento Estructural — Se realizará limpieza profunda...\nFase 2: Corrección de Pendiente — Aplicación de mortero..." value={form.phases} onChange={e => setForm({ ...form, phases: e.target.value })} />
+                    <textarea
+                      className="input-field"
+                      style={{
+                        minHeight: 140,
+                        resize: 'vertical',
+                        transition: 'all 0.3s',
+                        lineHeight: '1.5',
+                        fontSize: '0.85rem',
+                        boxShadow: highlightedFields.phases ? '0 0 0 2px var(--primary-color)' : 'none'
+                      }}
+                      placeholder={"**Fase 1: Demolición y Albañilería**\n- Levantamiento de paredes en bloque\n- Frisado de muros\n\n**Fase 2: Revestimientos e Instalaciones**\n- Colocación de porcelanato\n- Instalación de duchas y lámparas"}
+                      value={form.phases}
+                      onChange={e => setForm({ ...form, phases: e.target.value })}
+                    />
+                    <p style={{ margin: '0.3rem 0 0 0', fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                      💡 Tip: Puedes escribir tus notas libres y presionar <strong>Estructurar con Pepe IA</strong> para que las ordene en fases y viñetas automáticamente.
+                    </p>
                   </div>
                 </div>
               </div>

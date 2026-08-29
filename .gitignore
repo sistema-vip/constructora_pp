@@ -41,3 +41,13 @@ yarn-error.log*
 next-env.d.ts
 
 .vercel
+
+# WhatsApp Web Auth & Cache
+.wwebjs_auth/
+.wwebjs_cache/
+baileys_auth_info/
+
+# Credentials & outputs
+credentials.json
+token.json
+output/

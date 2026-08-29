@@ -26,13 +26,16 @@ import {
   Eye,
   RotateCcw,
   Check,
-  Ban
+  Ban,
+  BarChart3
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency, handleMoneyInput, parseCurrency, formatOnBlur } from '@/lib/formatters';
 import { useUser } from '@/lib/UserContext';
 import TelegramPendingPanel from '@/components/TelegramPendingPanel';
+import ProjectTracking from '@/components/ProjectTracking';
 import Image from 'next/image';
+import { autoPopulateTrackingTasks } from '@/lib/projectTaskHelper';
 
 interface Project {
   id: string;
@@ -43,7 +46,15 @@ interface Project {
   start_date: string;
   end_date: string;
   proposal_number?: number;
-  clients?: { name: string };
+  clients?: {
+    id?: string;
+    name: string;
+    company_name?: string | null;
+    tax_id?: string | null;
+    phone?: string | null;
+    email?: string | null;
+    address?: string | null;
+  };
   archived_at: string | null;
   created_at: string;
 }
@@ -116,10 +127,10 @@ export default function ProjectDashboard() {
   const [advances, setAdvances] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [isPrintingReport, setIsPrintingReport] = useState(false);
-  const [activeTab, setActiveTab] = useState<'pagos' | 'gastos' | 'adicionales' | 'compromisos' | 'retiros' | 'detalles'>('pagos');
+  const [activeTab, setActiveTab] = useState<'pagos' | 'gastos' | 'adicionales' | 'compromisos' | 'retiros' | 'detalles' | 'seguimiento'>('pagos');
 
   // Estado para impresión y detalles de compromiso
-  const [activePrintJob, setActivePrintJob] = useState<'none' | 'project-report' | 'commitment-voucher'>('none');
+  const [activePrintJob, setActivePrintJob] = useState<'none' | 'project-report' | 'client-statement' | 'commitment-voucher'>('none');
   const [printCommitmentData, setPrintCommitmentData] = useState<any>(null);
   const [selectedCommitmentForDetails, setSelectedCommitmentForDetails] = useState<any>(null);
 
@@ -183,7 +194,7 @@ export default function ProjectDashboard() {
       
       const urlParams = new URLSearchParams(window.location.search);
       const tabParam = urlParams.get('tab');
-      if (tabParam === 'compromisos' || tabParam === 'gastos' || tabParam === 'pagos' || tabParam === 'adicionales' || tabParam === 'retiros' || tabParam === 'detalles') {
+      if (tabParam === 'compromisos' || tabParam === 'gastos' || tabParam === 'pagos' || tabParam === 'adicionales' || tabParam === 'retiros' || tabParam === 'detalles' || tabParam === 'seguimiento') {
         setActiveTab(tabParam as any);
       }
     }
@@ -199,7 +210,7 @@ export default function ProjectDashboard() {
         extrasRes,
         advancesRes
       ] = await Promise.all([
-        supabase.from('projects').select('*, clients(name)').eq('id', projectId).single(),
+        supabase.from('projects').select('*, clients(*)').eq('id', projectId).single(),
         supabase.from('project_payments').select('*').eq('project_id', projectId).order('date', { ascending: false }),
         supabase.from('project_costs').select('*').eq('project_id', projectId).order('created_at', { ascending: false }),
         supabase.from('project_extras').select('*').eq('project_id', projectId).order('created_at', { ascending: true }),
@@ -392,6 +403,12 @@ export default function ProjectDashboard() {
           .update({ status: newStatus })
           .eq('id', projectId);
         if (error) throw error;
+
+        // Auto-poblar tareas de seguimiento al aprobar la propuesta
+        if (newStatus === 'in_progress' && project?.description) {
+          autoPopulateTrackingTasks(projectId, project.description);
+        }
+
         fetchProjectData();
       } catch (err: any) {
         alert('Error al actualizar estado: ' + err.message);
@@ -678,6 +695,16 @@ export default function ProjectDashboard() {
     }, 500);
   }
 
+  function handlePrintClientStatement() {
+    setIsPrintingReport(true);
+    setActivePrintJob('client-statement');
+    setTimeout(() => {
+      window.print();
+      setIsPrintingReport(false);
+      setActivePrintJob('none');
+    }, 500);
+  }
+
   function handlePrintCommitment(c: any) {
     setPrintCommitmentData(c);
     setActivePrintJob('commitment-voucher');
@@ -785,22 +812,30 @@ export default function ProjectDashboard() {
         </div>
         </div>
         
-        <div style={{ display: 'flex', gap: '1rem' }}>
+        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
           <button
             className="btn-secondary"
             onClick={() => router.push(`/proyectos?print=${project.id}`)}
             title="Imprimir Propuesta Original"
-            style={{ padding: '0.75rem 1.5rem', display: 'flex', gap: '0.5rem', alignItems: 'center', background: 'var(--card-bg)' }}
+            style={{ padding: '0.65rem 1.1rem', display: 'flex', gap: '0.4rem', alignItems: 'center', background: 'var(--surface-color)', border: '1px solid var(--border-color)', fontSize: '0.85rem' }}
           >
-            <Printer size={18} /> Reimprimir Propuesta
+            <Printer size={16} /> Propuesta Original
           </button>
           <button
             className="btn-primary"
-            onClick={handlePrintReport}
-            title="Imprimir Reporte Financiero"
-            style={{ padding: '0.75rem 1.5rem', display: 'flex', gap: '0.5rem', alignItems: 'center' }}
+            onClick={handlePrintClientStatement}
+            title="Imprimir Estado de Cuenta Oficial para el Cliente"
+            style={{ padding: '0.65rem 1.2rem', display: 'flex', gap: '0.4rem', alignItems: 'center', fontSize: '0.85rem', fontWeight: 600, boxShadow: '0 4px 12px rgba(245,158,11,0.2)' }}
           >
-            <FileText size={18} /> Imprimir Reporte
+            <FileText size={16} /> Imprimir Estado de Cuenta
+          </button>
+          <button
+            className="btn-secondary"
+            onClick={handlePrintReport}
+            title="Imprimir Reporte Financiero Interno de Socios"
+            style={{ padding: '0.65rem 1.1rem', display: 'flex', gap: '0.4rem', alignItems: 'center', background: 'rgba(139, 92, 246, 0.1)', borderColor: 'rgba(139, 92, 246, 0.3)', color: '#c4b5fd', fontSize: '0.85rem', fontWeight: 600 }}
+          >
+            <BarChart3 size={16} /> Reporte para Socios
           </button>
           {project.status === 'in_progress' && (
             <>
@@ -1031,6 +1066,13 @@ export default function ProjectDashboard() {
             style={{ padding: '0.5rem 1rem', background: activeTab === 'detalles' ? 'var(--accent-blue)' : 'transparent', border: 'none', whiteSpace: 'nowrap' }}
             onClick={() => setActiveTab('detalles')}
           >Detalles</button>
+          {(project?.status === 'in_progress' || project?.status === 'completed') && (
+            <button
+              className={`btn-secondary ${activeTab === 'seguimiento' ? 'btn-primary' : ''}`}
+              style={{ padding: '0.5rem 1rem', background: activeTab === 'seguimiento' ? '#10b981' : 'transparent', border: 'none', whiteSpace: 'nowrap' }}
+              onClick={() => setActiveTab('seguimiento')}
+            >📋 Seguimiento</button>
+          )}
         </div>
 
         {/* TAB: PAGOS */}
@@ -1398,6 +1440,21 @@ export default function ProjectDashboard() {
                 </table>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* TAB: SEGUIMIENTO */}
+        {activeTab === 'seguimiento' && (
+          <div className="animate-fade">
+            <ProjectTracking
+              projectId={projectId}
+              projectTitle={project?.title}
+              proposalNumber={project?.proposal_number}
+              clientName={project?.clients?.name}
+              clientData={project?.clients}
+              projectDescription={project?.description || ''}
+              startDate={project?.start_date}
+            />
           </div>
         )}
       </div>
@@ -1880,14 +1937,163 @@ export default function ProjectDashboard() {
         </div>
       )}
 
-      {/* REPORTE DE IMPRESIÓN DEL PROYECTO */}
-      {(!activePrintJob || activePrintJob === 'project-report') && (
+      {/* ESTADO DE CUENTA PARA CLIENTE (PRINT) */}
+      {activePrintJob === 'client-statement' && (
+        <div className="show-only-on-print" style={{ display: 'none', color: 'black', background: 'white', padding: '2rem', width: '100%', maxWidth: '900px', margin: '0 auto', fontFamily: 'Inter, system-ui, -apple-system, sans-serif' }}>
+          {/* Encabezado con Logo */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #000', paddingBottom: '1.2rem', marginBottom: '1.5rem' }}>
+            <Image src="/logo_3d.png" alt="P&P Construye" width={190} height={85} style={{ objectFit: 'contain' }} />
+            <div style={{ textAlign: 'right' }}>
+              <h2 style={{ margin: 0, fontSize: '22px', fontWeight: 800, color: '#000', letterSpacing: '0.5px' }}>ESTADO DE CUENTA</h2>
+              <p style={{ margin: '4px 0 0 0', fontSize: '13px', color: '#555' }}>Fecha de Emisión: <strong>{new Date().toLocaleDateString('es-VE')}</strong></p>
+              <p style={{ margin: '2px 0 0 0', fontSize: '13px', color: '#555' }}>Propuesta / Obra: <strong>#{project.proposal_number || 'N/A'}</strong></p>
+            </div>
+          </div>
+
+          {/* Información del Cliente y Obra */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', marginBottom: '1.5rem' }}>
+            <div style={{ padding: '1rem', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px' }}>
+              <h4 style={{ margin: '0 0 0.5rem 0', fontSize: '13px', textTransform: 'uppercase', color: '#475569', borderBottom: '1px solid #cbd5e1', paddingBottom: '4px' }}>DATOS DEL CLIENTE</h4>
+              <div style={{ fontSize: '12px', lineHeight: '1.6' }}>
+                <div><strong>Cliente:</strong> {project.clients?.name || 'N/A'}</div>
+                {project.clients?.company_name && <div><strong>Empresa:</strong> {project.clients.company_name}</div>}
+                {project.clients?.tax_id && <div><strong>RIF / CI:</strong> {project.clients.tax_id}</div>}
+                {project.clients?.phone && <div><strong>Teléfono:</strong> {project.clients.phone}</div>}
+                {project.clients?.email && <div><strong>Email:</strong> {project.clients.email}</div>}
+                {project.clients?.address && <div><strong>Dirección:</strong> {project.clients.address}</div>}
+              </div>
+            </div>
+
+            <div style={{ padding: '1rem', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px' }}>
+              <h4 style={{ margin: '0 0 0.5rem 0', fontSize: '13px', textTransform: 'uppercase', color: '#475569', borderBottom: '1px solid #cbd5e1', paddingBottom: '4px' }}>DATOS DEL PROYECTO</h4>
+              <div style={{ fontSize: '12px', lineHeight: '1.6' }}>
+                <div><strong>Proyecto:</strong> {project.title}</div>
+                <div><strong>Estado:</strong> {project.status === 'completed' ? 'Completado' : 'En Ejecución'}</div>
+                <div><strong>Fecha de Inicio:</strong> {new Date(project.created_at).toLocaleDateString('es-VE')}</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Resumen de Estado de Cuenta */}
+          <h3 style={{ fontSize: '15px', fontWeight: 700, borderBottom: '1.5px solid #000', paddingBottom: '0.4rem', marginBottom: '0.8rem', textTransform: 'uppercase' }}>RESUMEN DE CUENTA</h3>
+          <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '1.8rem', fontSize: '13px' }}>
+            <tbody>
+              <tr>
+                <td style={{ padding: '0.6rem 0.8rem', border: '1px solid #cbd5e1', background: '#f8fafc', width: '60%' }}>Presupuesto Base Acordado:</td>
+                <td style={{ padding: '0.6rem 0.8rem', border: '1px solid #cbd5e1', width: '40%', textAlign: 'right', fontWeight: 600 }}>${formatCurrency(baseBudget)}</td>
+              </tr>
+              {extras.length > 0 && (
+                <tr>
+                  <td style={{ padding: '0.6rem 0.8rem', border: '1px solid #cbd5e1', background: '#f8fafc' }}>Trabajos Adicionales Aprobados ({extras.length}):</td>
+                  <td style={{ padding: '0.6rem 0.8rem', border: '1px solid #cbd5e1', textAlign: 'right', fontWeight: 600, color: '#0369a1' }}>+ ${formatCurrency(totalExtra)}</td>
+                </tr>
+              )}
+              <tr style={{ background: '#f1f5f9', fontWeight: 'bold' }}>
+                <td style={{ padding: '0.7rem 0.8rem', border: '1px solid #94a3b8', fontSize: '14px' }}>TOTAL CONTRATADO / INVERSIÓN:</td>
+                <td style={{ padding: '0.7rem 0.8rem', border: '1px solid #94a3b8', textAlign: 'right', fontSize: '14px' }}>${formatCurrency(totalBudget)}</td>
+              </tr>
+              <tr style={{ background: '#f0fdf4' }}>
+                <td style={{ padding: '0.7rem 0.8rem', border: '1px solid #86efac', fontWeight: 'bold', color: '#166534' }}>TOTAL ABONADO / PAGADO:</td>
+                <td style={{ padding: '0.7rem 0.8rem', border: '1px solid #86efac', textAlign: 'right', fontWeight: 'bold', color: '#166534', fontSize: '14px' }}>- ${formatCurrency(totalPaid)}</td>
+              </tr>
+              <tr style={{ background: balanceDue > 0 ? '#fffbeb' : '#f0fdf4' }}>
+                <td style={{ padding: '0.8rem', border: '2px solid ' + (balanceDue > 0 ? '#f59e0b' : '#10b981'), fontWeight: 'bold', fontSize: '15px' }}>SALDO PENDIENTE POR PAGAR:</td>
+                <td style={{ padding: '0.8rem', border: '2px solid ' + (balanceDue > 0 ? '#f59e0b' : '#10b981'), textAlign: 'right', fontWeight: 'bold', fontSize: '16px', color: balanceDue > 0 ? '#b45309' : '#166534' }}>
+                  ${formatCurrency(balanceDue)}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+
+          {/* 1. Detalle de Contratación y Adicionales */}
+          <h3 style={{ fontSize: '14px', fontWeight: 700, borderBottom: '1.5px solid #000', paddingBottom: '0.4rem', marginBottom: '0.8rem', textTransform: 'uppercase' }}>1. DETALLE DE PRESUPUESTO Y ADICIONALES</h3>
+          <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '1.8rem', fontSize: '12px' }}>
+            <thead>
+              <tr style={{ background: '#f1f5f9' }}>
+                <th style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'left' }}>CONCEPTO / DESCRIPCIÓN</th>
+                <th style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'center', width: '120px' }}>TIPO</th>
+                <th style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'right', width: '140px' }}>MONTO (USD)</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem' }}>
+                  <strong>Presupuesto Base Original</strong>
+                  <div style={{ fontSize: '11px', color: '#64748b' }}>{project.title}</div>
+                </td>
+                <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'center', color: '#475569' }}>Contrato Base</td>
+                <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'right', fontWeight: 600 }}>${formatCurrency(baseBudget)}</td>
+              </tr>
+              {extras.map(e => (
+                <tr key={e.id}>
+                  <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem' }}>
+                    <strong>{e.description}</strong>
+                  </td>
+                  <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'center', color: '#0284c7' }}>Trabajo Adicional</td>
+                  <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'right', fontWeight: 600, color: '#0284c7' }}>+ ${formatCurrency(e.amount_usd)}</td>
+                </tr>
+              ))}
+              <tr style={{ background: '#f8fafc', fontWeight: 'bold' }}>
+                <td colSpan={2} style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'right' }}>Total Inversión Acordada:</td>
+                <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'right', fontSize: '13px' }}>${formatCurrency(totalBudget)}</td>
+              </tr>
+            </tbody>
+          </table>
+
+          {/* 2. Historial de Pagos Recibidos */}
+          <h3 style={{ fontSize: '14px', fontWeight: 700, borderBottom: '1.5px solid #000', paddingBottom: '0.4rem', marginBottom: '0.8rem', textTransform: 'uppercase' }}>2. HISTORIAL DE PAGOS Y ABONOS RECIBIDOS</h3>
+          {payments.length === 0 ? (
+            <p style={{ fontSize: '12px', color: '#64748b', marginBottom: '1.5rem', fontStyle: 'italic' }}>No se registran pagos o abonos recibidos hasta la fecha.</p>
+          ) : (
+            <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '1.8rem', fontSize: '12px' }}>
+              <thead>
+                <tr style={{ background: '#f1f5f9' }}>
+                  <th style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'left', width: '100px' }}>FECHA</th>
+                  <th style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'left' }}>CONCEPTO / DESCRIPCIÓN</th>
+                  <th style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'center', width: '140px' }}>REFERENCIA</th>
+                  <th style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'right', width: '140px' }}>MONTO (USD)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {payments.map(p => (
+                  <tr key={p.id}>
+                    <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem' }}>{p.date}</td>
+                    <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem' }}>{p.description || 'Abono a cuenta'}</td>
+                    <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'center', color: '#64748b' }}>{p.reference || 'N/A'}</td>
+                    <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'right', fontWeight: 600, color: '#166534' }}>${formatCurrency(p.amount_usd)}</td>
+                  </tr>
+                ))}
+                <tr style={{ background: '#f0fdf4', fontWeight: 'bold' }}>
+                  <td colSpan={3} style={{ border: '1px solid #86efac', padding: '0.6rem', textAlign: 'right', color: '#166534' }}>Total Abonado Recibido:</td>
+                  <td style={{ border: '1px solid #86efac', padding: '0.6rem', textAlign: 'right', color: '#166534', fontSize: '13px' }}>${formatCurrency(totalPaid)}</td>
+                </tr>
+              </tbody>
+            </table>
+          )}
+
+          {/* Pie de página y Notas */}
+          <div style={{ marginTop: '2.5rem', paddingTop: '1rem', borderTop: '1px solid #cbd5e1', display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#64748b' }}>
+            <div>
+              <p style={{ margin: 0, fontWeight: 600, color: '#334155' }}>P&P Construye C.A.</p>
+              <p style={{ margin: '2px 0 0 0' }}>Ingeniería, Arquitectura y Remodelaciones</p>
+            </div>
+            <div style={{ textAlign: 'right' }}>
+              <p style={{ margin: 0 }}>Documento emitido para uso exclusivo del cliente.</p>
+              <p style={{ margin: '2px 0 0 0' }}>Generado el {new Date().toLocaleString('es-VE')}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* REPORTE FINANCIERO DE SOCIOS (CONFIDENCIAL) */}
+      {activePrintJob === 'project-report' && (
         <div className="show-only-on-print" style={{ display: 'none', color: 'black', background: 'white', padding: '1rem', width: '100%' }}>
         {/* Encabezado con Logo */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #000', paddingBottom: '1rem', marginBottom: '1.5rem' }}>
           <Image src="/logo_3d.png" alt="Logo" width={180} height={80} style={{ objectFit: 'contain' }} />
           <div style={{ textAlign: 'right' }}>
-            <h2 style={{ margin: 0, fontSize: '20px', color: '#000' }}>ESTADO DE CUENTA DEL PROYECTO</h2>
+            <h2 style={{ margin: 0, fontSize: '20px', color: '#000' }}>REPORTE FINANCIERO DE SOCIOS</h2>
+            <p style={{ margin: 0, fontSize: '11px', color: '#dc2626', fontWeight: 600 }}>USO INTERNO EXCLUSIVO DE SOCIOS</p>
             <p style={{ margin: 0, fontSize: '12px', color: '#555' }}>Fecha de Emisión: {new Date().toLocaleDateString('es-VE')}</p>
             <p style={{ margin: 0, fontSize: '12px', color: '#555' }}>Propuesta: #{project.proposal_number || 'N/A'}</p>
           </div>
@@ -2181,7 +2387,7 @@ export default function ProjectDashboard() {
       })()}
 
       <style dangerouslySetInnerHTML={{ __html: `
-        .show-only-on-print { display: none; }
+        .show-only-on-print, .print-only { display: none; }
         @media print {
           body { 
             background: white !important; 
@@ -2190,8 +2396,8 @@ export default function ProjectDashboard() {
             padding: 0 !important;
             font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif !important;
           }
-          .hide-on-print, nav, header, aside, .sidebar, .top-bar { display: none !important; }
-          .show-only-on-print { 
+          .hide-on-print, nav, header, aside, .sidebar, .top-bar, .modal-overlay { display: none !important; }
+          .show-only-on-print, .print-only { 
             display: block !important; 
             width: 100% !important;
             position: absolute;

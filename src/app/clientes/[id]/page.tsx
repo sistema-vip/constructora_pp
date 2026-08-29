@@ -39,7 +39,9 @@ import {
   Wallet,
   RotateCcw,
   Check,
-  Ban
+  Ban,
+  AlertTriangle,
+  BarChart3
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency, handleMoneyInput, parseCurrency, formatOnBlur } from '@/lib/formatters';
@@ -106,8 +108,161 @@ export default function ClienteDashboard() {
   const [aiRefinement, setAiRefinement] = useState('');
   const [refining, setRefining] = useState(false);
   const { role } = useUser();
-  const { isObserver, isClient, isAdmin, isSales } = useAdminAction();
+  const { isObserver, isClient, isAdmin, isSales, canEdit, canDelete } = useAdminAction();
   const isViewer = isObserver || isClient; // Both act as viewers for financial transactions
+
+  // Estados para Edición del Cliente
+  const [showEditClientModal, setShowEditClientModal] = useState(false);
+  const [editClientForm, setEditClientForm] = useState({
+    name: '',
+    company_name: '',
+    tax_id: '',
+    phone: '',
+    email: '',
+    address: '',
+    status: 'active'
+  });
+  const [savingClientEdit, setSavingClientEdit] = useState(false);
+
+  // Estados para Eliminación del Cliente con Validación de Pendientes
+  const [showDeleteClientModal, setShowDeleteClientModal] = useState(false);
+  const [checkingDeletePending, setCheckingDeletePending] = useState(false);
+  const [deletingClient, setDeletingClient] = useState(false);
+  const [clientPendingSummary, setClientPendingSummary] = useState<{
+    hasPending: boolean;
+    proposalsCount: number;
+    activeProjectsCount: number;
+    historyProjectsCount: number;
+    paymentsCount: number;
+    costsCount: number;
+    commitmentsCount: number;
+    pendingTelegramCount: number;
+  } | null>(null);
+
+  const handleOpenEditClient = () => {
+    if (!canEdit) return alert('Solo administradores pueden editar datos del cliente.');
+    if (!client) return;
+    setEditClientForm({
+      name: client.name || '',
+      company_name: client.company_name || '',
+      tax_id: client.tax_id || '',
+      phone: client.phone || '',
+      email: client.email || '',
+      address: client.address || '',
+      status: client.status || 'active'
+    });
+    setShowEditClientModal(true);
+  };
+
+  const handleSaveEditClient = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!canEdit || !client) return;
+    setSavingClientEdit(true);
+    try {
+      const { data, error } = await supabase
+        .from('clients')
+        .update({
+          name: editClientForm.name.trim(),
+          company_name: editClientForm.company_name.trim() || null,
+          tax_id: editClientForm.tax_id.trim() || null,
+          phone: editClientForm.phone.trim() || null,
+          email: editClientForm.email.trim() || null,
+          address: editClientForm.address.trim() || null,
+          status: editClientForm.status || 'active'
+        })
+        .eq('id', clientId)
+        .select()
+        .single();
+
+      if (error) throw error;
+      setClient(data);
+      setShowEditClientModal(false);
+    } catch (err: any) {
+      alert('Error al guardar datos del cliente: ' + err.message);
+    } finally {
+      setSavingClientEdit(false);
+    }
+  };
+
+  const handleInitiateDeleteClient = async () => {
+    if (!canDelete) return alert('Solo administradores pueden eliminar clientes.');
+    setShowDeleteClientModal(true);
+    setCheckingDeletePending(true);
+    setClientPendingSummary(null);
+
+    try {
+      const { data: projectsData, error: projErr } = await supabase
+        .from('projects')
+        .select(`
+          id,
+          title,
+          status,
+          proposal_number,
+          project_payments(id),
+          project_costs(id),
+          project_commitments(id)
+        `)
+        .eq('client_id', clientId);
+
+      if (projErr) throw projErr;
+
+      const prjs = projectsData || [];
+      const prjIds = prjs.map(p => p.id);
+
+      let pendingTelegramCount = 0;
+      if (prjIds.length > 0) {
+        const { count } = await supabase
+          .from('telegram_pending_entries')
+          .select('*', { count: 'exact', head: true })
+          .in('project_id', prjIds)
+          .eq('status', 'pending');
+        pendingTelegramCount = count || 0;
+      }
+
+      const proposals = prjs.filter(p => p.status === 'proposal');
+      const activePrjs = prjs.filter(p => p.status === 'in_progress');
+      const historyPrjs = prjs.filter(p => p.status === 'completed' || p.status === 'cancelled');
+
+      const paymentsCount = prjs.reduce((acc, p) => acc + (p.project_payments?.length || 0), 0);
+      const costsCount = prjs.reduce((acc, p) => acc + (p.project_costs?.length || 0), 0);
+      const commitmentsCount = prjs.reduce((acc, p) => acc + (p.project_commitments?.length || 0), 0);
+
+      const hasPending = prjs.length > 0 || pendingTelegramCount > 0;
+
+      setClientPendingSummary({
+        hasPending,
+        proposalsCount: proposals.length,
+        activeProjectsCount: activePrjs.length,
+        historyProjectsCount: historyPrjs.length,
+        paymentsCount,
+        costsCount,
+        commitmentsCount,
+        pendingTelegramCount
+      });
+    } catch (err: any) {
+      alert('Error verificando registros del cliente: ' + err.message);
+      setShowDeleteClientModal(false);
+    } finally {
+      setCheckingDeletePending(false);
+    }
+  };
+
+  const handleConfirmDeleteClient = async () => {
+    if (!canDelete || clientPendingSummary?.hasPending) return;
+    setDeletingClient(true);
+    try {
+      const { error } = await supabase
+        .from('clients')
+        .delete()
+        .eq('id', clientId);
+
+      if (error) throw error;
+      router.push('/clientes');
+    } catch (err: any) {
+      alert('Error al eliminar cliente: ' + err.message);
+      setDeletingClient(false);
+    }
+  };
 
   const isActionDisabledForSales = (projectId: string) => {
     if (!isSales) return false;
@@ -166,6 +321,7 @@ export default function ClienteDashboard() {
 
   // Estado del modal de selección de impresión
   const [showPrintModal, setShowPrintModal] = useState(false);
+  const [printMode, setPrintMode] = useState<'client-statement' | 'partner-report'>('client-statement');
   const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
@@ -960,16 +1116,58 @@ export default function ClienteDashboard() {
                   {client.status === 'active' ? 'ACTIVO' : 'INACTIVO'}
                 </span>
               </h1>
-              <div style={{ display: 'flex', gap: '1.2rem', alignItems: 'center', marginTop: '0.4rem', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+              <div style={{ display: 'flex', gap: '1.2rem', alignItems: 'center', marginTop: '0.4rem', color: 'var(--text-muted)', fontSize: '0.85rem', flexWrap: 'wrap' }}>
                 {client.company_name && <span style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}><Building size={13} /> {client.company_name}</span>}
+                {client.tax_id && <span style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}><span style={{ color: 'var(--accent-blue)', fontWeight: 600 }}>RIF:</span> {client.tax_id}</span>}
                 {client.phone && <span style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}><Phone size={13} /> {client.phone}</span>}
+                {client.email && <span style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}><Mail size={13} /> {client.email}</span>}
+                {client.address && <span style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}><MapPin size={13} /> {client.address}</span>}
               </div>
             </div>
           </div>
           
-          <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-start' }}>
-            <button className="btn-secondary" onClick={() => { setSelectedProjectIds(new Set(currentProjects.map((p: any) => p.id))); setShowPrintModal(true); }} style={{ padding: '0.7rem 1.2rem', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600, background: 'rgba(255,255,255,0.03)' }}>
-              <Printer size={18} /> Imprimir Reporte
+          <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
+            {canEdit && (
+              <button 
+                className="btn-secondary" 
+                onClick={handleOpenEditClient} 
+                style={{ padding: '0.7rem 1.2rem', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600, color: 'var(--accent-blue)', borderColor: 'rgba(56, 189, 248, 0.3)' }}
+                title="Editar Datos del Cliente"
+              >
+                <Edit3 size={16} /> Editar Cliente
+              </button>
+            )}
+            {canDelete && (
+              <button 
+                className="btn-secondary" 
+                onClick={handleInitiateDeleteClient} 
+                style={{ padding: '0.7rem 1.2rem', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600, color: 'var(--danger)', borderColor: 'rgba(239, 68, 68, 0.3)' }}
+                title="Eliminar Cliente"
+              >
+                <Trash2 size={16} /> Eliminar Cliente
+              </button>
+            )}
+            <button 
+              className="btn-primary" 
+              onClick={() => { 
+                setSelectedProjectIds(new Set(currentProjects.map((p: any) => p.id))); 
+                setPrintMode('client-statement');
+                setShowPrintModal(true); 
+              }} 
+              style={{ padding: '0.65rem 1.1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', fontWeight: 600, boxShadow: '0 4px 12px rgba(245,158,11,0.2)' }}
+            >
+              <FileText size={16} /> Estado de Cuenta
+            </button>
+            <button 
+              className="btn-secondary" 
+              onClick={() => { 
+                setSelectedProjectIds(new Set(currentProjects.map((p: any) => p.id))); 
+                setPrintMode('partner-report');
+                setShowPrintModal(true); 
+              }} 
+              style={{ padding: '0.65rem 1.1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', fontWeight: 600, background: 'rgba(139, 92, 246, 0.1)', borderColor: 'rgba(139, 92, 246, 0.3)', color: '#c4b5fd' }}
+            >
+              <BarChart3 size={16} /> Reporte para Socios
             </button>
           </div>
         </div>
@@ -2195,14 +2393,65 @@ export default function ClienteDashboard() {
           <div className="card modal-content animate-fade" style={{ maxWidth: '600px', width: '95%', maxHeight: '90vh', overflowY: 'auto' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.2rem' }}>
               <h2 style={{ margin: 0, color: 'white', display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1.1rem' }}>
-                <Printer size={18} /> Seleccionar Proyectos a Imprimir
+                <Printer size={18} /> {printMode === 'client-statement' ? 'Imprimir Estado de Cuenta' : 'Imprimir Reporte de Socios'}
               </h2>
               <button onClick={() => setShowPrintModal(false)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '0.25rem' }}>
                 <X size={22} />
               </button>
             </div>
+
+            {/* Selector de Tipo de Documento */}
+            <div style={{ marginBottom: '1.2rem', background: 'rgba(255,255,255,0.03)', padding: '0.35rem', borderRadius: '10px', display: 'flex', gap: '0.35rem', border: '1px solid rgba(255,255,255,0.08)' }}>
+              <button
+                type="button"
+                onClick={() => setPrintMode('client-statement')}
+                style={{
+                  flex: 1,
+                  padding: '0.6rem 0.8rem',
+                  borderRadius: '8px',
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontSize: '0.82rem',
+                  fontWeight: 600,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '0.4rem',
+                  backgroundColor: printMode === 'client-statement' ? 'var(--primary-color)' : 'transparent',
+                  color: printMode === 'client-statement' ? 'white' : 'var(--text-muted)',
+                  transition: 'all 0.2s ease'
+                }}
+              >
+                <FileText size={15} /> Estado de Cuenta (Cliente)
+              </button>
+              <button
+                type="button"
+                onClick={() => setPrintMode('partner-report')}
+                style={{
+                  flex: 1,
+                  padding: '0.6rem 0.8rem',
+                  borderRadius: '8px',
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontSize: '0.82rem',
+                  fontWeight: 600,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '0.4rem',
+                  backgroundColor: printMode === 'partner-report' ? '#8b5cf6' : 'transparent',
+                  color: printMode === 'partner-report' ? 'white' : 'var(--text-muted)',
+                  transition: 'all 0.2s ease'
+                }}
+              >
+                <BarChart3 size={15} /> Reporte de Socios (Interno)
+              </button>
+            </div>
+
             <p style={{ color: 'var(--text-muted)', fontSize: '0.83rem', marginBottom: '1.2rem', marginTop: 0 }}>
-              Seleccione los proyectos a incluir en el reporte. Los totales se recalculan según la selección.
+              {printMode === 'client-statement' 
+                ? 'Documento formal para el cliente: muestra presupuestos base, adicionales y abonos recibidos (sin costos internos ni utilidades).' 
+                : 'Reporte confidencial de socios: incluye gastos detallados, compromisos con proveedores, margen de ganancia y retiros.'}
             </p>
 
             {/* Proyectos activos/completados */}
@@ -2332,249 +2581,433 @@ export default function ClienteDashboard() {
 
       {/* VISTA SOLO PARA IMPRESIÓN */}
       <div className="print-only">
-        {/* Encabezado del Reporte */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', borderBottom: '2px solid #000', paddingBottom: '1rem', marginBottom: '2rem' }}>
+        {printMode === 'client-statement' ? (
           <div>
-             <h1 style={{ margin: 0, fontSize: '24px', color: '#000' }}>P&P CONSTRUYE</h1>
-             <p style={{ margin: 0, fontSize: '12px', color: '#555' }}>Ingeniería, Arquitectura y Construcción</p>
-          </div>
-          <div style={{ textAlign: 'right' }}>
-            <h2 style={{ margin: 0, fontSize: '20px', color: '#000' }}>ESTADO DE CUENTA GLOBAL</h2>
-            <p style={{ margin: 0, fontSize: '12px', color: '#555' }}>Fecha de Emisión: {new Date().toLocaleDateString('es-VE')}</p>
-            <p style={{ margin: 0, fontSize: '12px', color: '#555' }}>Proyectos incluidos: {printProjects.length} de {activeProjects.length}</p>
-          </div>
-        </div>
+            {/* Encabezado del Estado de Cuenta */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', borderBottom: '2px solid #000', paddingBottom: '1.2rem', marginBottom: '1.8rem' }}>
+              <div>
+                 <h1 style={{ margin: 0, fontSize: '24px', fontWeight: 800, color: '#000' }}>P&P CONSTRUYE</h1>
+                 <p style={{ margin: '2px 0 0 0', fontSize: '12px', color: '#555' }}>Ingeniería, Arquitectura y Construcción</p>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <h2 style={{ margin: 0, fontSize: '22px', fontWeight: 800, color: '#000' }}>ESTADO DE CUENTA</h2>
+                <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: '#555' }}>Fecha de Emisión: <strong>{new Date().toLocaleDateString('es-VE')}</strong></p>
+                <p style={{ margin: '2px 0 0 0', fontSize: '12px', color: '#555' }}>Proyectos incluidos: {printProjects.length} de {activeProjects.length}</p>
+              </div>
+            </div>
 
-        {/* Datos del Cliente */}
-        <div style={{ marginBottom: '2rem', padding: '1rem', background: '#f8f9fa', border: '1px solid #ddd', borderRadius: '8px' }}>
-          <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '16px' }}>CLIENTE: {client.name}</h3>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', fontSize: '12px' }}>
-            <div><strong>Empresa:</strong> {client.company_name || 'N/A'}</div>
-            <div><strong>RIF/Identificación:</strong> {client.tax_id || 'N/A'}</div>
-            <div><strong>Teléfono:</strong> {client.phone || 'N/A'}</div>
-            <div><strong>Email:</strong> {client.email || 'N/A'}</div>
-          </div>
-        </div>
+            {/* Datos del Cliente */}
+            <div style={{ marginBottom: '1.8rem', padding: '1rem 1.2rem', background: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: '8px' }}>
+              <h3 style={{ margin: '0 0 0.6rem 0', fontSize: '14px', fontWeight: 700, textTransform: 'uppercase', color: '#334155' }}>CLIENTE: {client.name}</h3>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', fontSize: '12px' }}>
+                <div><strong>Empresa:</strong> {client.company_name || 'N/A'}</div>
+                <div><strong>RIF / CI:</strong> {client.tax_id || 'N/A'}</div>
+                <div><strong>Teléfono:</strong> {client.phone || 'N/A'}</div>
+                <div><strong>Email:</strong> {client.email || 'N/A'}</div>
+                {client.address && <div style={{ gridColumn: 'span 2' }}><strong>Dirección:</strong> {client.address}</div>}
+              </div>
+            </div>
 
-        {/* Resumen Financiero (KPIs) */}
-        <h3 style={{ fontSize: '16px', borderBottom: '1px solid #ccc', paddingBottom: '0.5rem', marginBottom: '1rem' }}>RESUMEN FINANCIERO</h3>
-        <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '2rem', fontSize: '14px' }}>
-          <tbody>
-            <tr>
-              <td style={{ padding: '0.5rem', border: '1px solid #ccc', background: '#f8f9fa', width: '50%' }}><strong>Total Contratado:</strong></td>
-              <td style={{ padding: '0.5rem', border: '1px solid #ccc', width: '50%', textAlign: 'right' }}>${formatCurrency(printTotalContracted)}</td>
-            </tr>
-            <tr>
-              <td style={{ padding: '0.5rem', border: '1px solid #ccc', background: '#f8f9fa' }}><strong>Total Abonado:</strong></td>
-              <td style={{ padding: '0.5rem', border: '1px solid #ccc', textAlign: 'right' }}>${formatCurrency(printTotalPaid)}</td>
-            </tr>
-            <tr>
-              <td style={{ padding: '0.5rem', border: '1px solid #ccc', background: '#f8f9fa' }}><strong>Saldo Pendiente:</strong></td>
-              <td style={{ padding: '0.5rem', border: '1px solid #ccc', textAlign: 'right', color: printBalanceDue > 0 ? '#ff9800' : '#28a745' }}>${formatCurrency(printBalanceDue)}</td>
-            </tr>
-            <tr>
-              <td style={{ padding: '0.5rem', border: '1px solid #ccc', background: '#f8f9fa' }}><strong>Gastos Ejecutados:</strong></td>
-              <td style={{ padding: '0.5rem', border: '1px solid #ccc', textAlign: 'right', color: '#d32f2f' }}>${formatCurrency(printTotalCostsValue)}</td>
-            </tr>
-            <tr>
-              <td style={{ padding: '0.5rem', border: '1px solid #ccc', background: '#f8f9fa' }}><strong>Compromisos Pendientes:</strong></td>
-              <td style={{ padding: '0.5rem', border: '1px solid #ccc', textAlign: 'right', color: '#d32f2f' }}>${formatCurrency(printTotalCommitted)}</td>
-            </tr>
-            <tr>
-              <td style={{ padding: '0.5rem', border: '1px solid #ccc', background: '#f8f9fa' }}><strong>Ganancia Estimada:</strong></td>
-              <td style={{ padding: '0.5rem', border: '1px solid #ccc', textAlign: 'right', color: '#28a745' }}>${formatCurrency(printEstimatedProfit)}</td>
-            </tr>
-            <tr>
-              <td style={{ padding: '0.5rem', border: '1px solid #ccc', background: '#f8f9fa' }}><strong>Total Retiro de Socios:</strong></td>
-              <td style={{ padding: '0.5rem', border: '1px solid #ccc', textAlign: 'right', color: '#d32f2f' }}>${formatCurrency(printTotalAdvances)}</td>
-            </tr>
-            <tr style={{ background: '#e8f5e9' }}>
-              <td style={{ padding: '0.7rem', border: '2px solid #28a745', fontWeight: 'bold' }}><strong>GANANCIA NETA POR RETIRAR:</strong></td>
-              <td style={{ padding: '0.7rem', border: '2px solid #28a745', textAlign: 'right', fontWeight: 'bold', color: '#1b5e20', fontSize: '15px' }}>${formatCurrency(printNetProfit)}</td>
-            </tr>
-          </tbody>
-        </table>
-
-        {/* Detalle de Proyectos */}
-        <h3 style={{ fontSize: '16px', borderBottom: '1px solid #ccc', paddingBottom: '0.5rem', marginBottom: '1rem' }}>1. PROYECTOS Y PRESUPUESTOS</h3>
-        <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '2rem', fontSize: '12px' }}>
-          <thead>
-            <tr style={{ background: '#f1f1f1' }}>
-              <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'left' }}>PROYECTO</th>
-              <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'center' }}>FECHA</th>
-              <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>PRESUPUESTO BASE</th>
-              <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>ADICIONALES</th>
-              <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>TOTAL PROYECTO</th>
-            </tr>
-          </thead>
-          <tbody>
-            {printProjects.map((p: any) => {
-              const pExtras = p.project_extras?.reduce((acc: number, e: any) => acc + Number(e.amount_usd), 0) || 0;
-              const pTotal = Number(p.budget_usd) + pExtras;
-              return (
-                <tr key={p.id}>
-                  <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{p.proposal_number ? `#${p.proposal_number} - ` : ''}{p.title}</td>
-                  <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'center' }}>{new Date(p.created_at).toLocaleDateString('es-VE')}</td>
-                  <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>${formatCurrency(p.budget_usd)}</td>
-                  <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>${formatCurrency(pExtras)}</td>
-                  <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right', fontWeight: 'bold' }}>${formatCurrency(pTotal)}</td>
-                </tr>
-              );
-            })}
-            <tr style={{ background: '#f8f9fa', fontWeight: 'bold' }}>
-              <td colSpan={2} style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>TOTALES GLOBALES:</td>
-              <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>${formatCurrency(printProjects.reduce((s: number, p: any) => s + Number(p.budget_usd), 0))}</td>
-              <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>${formatCurrency(printExtras.reduce((s: number, e: any) => s + Number(e.amount_usd), 0))}</td>
-              <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>${formatCurrency(printTotalContracted)}</td>
-            </tr>
-          </tbody>
-        </table>
-
-        {/* Detalle de Pagos */}
-        <h3 style={{ fontSize: '16px', borderBottom: '1px solid #ccc', paddingBottom: '0.5rem', marginBottom: '1rem' }}>2. HISTORIAL DE PAGOS RECIBIDOS</h3>
-        {printPayments.length === 0 ? (
-           <p style={{ fontSize: '12px', color: '#555', marginBottom: '2rem' }}>No hay pagos registrados.</p>
-        ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '2rem', fontSize: '12px' }}>
-            <thead>
-              <tr style={{ background: '#f1f1f1' }}>
-                <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'left' }}>FECHA</th>
-                <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'left' }}>CONCEPTO / REFERENCIA</th>
-                <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'left' }}>PROYECTO ORIGEN</th>
-                <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>MONTO (USD)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {printPayments.map((p: any) => (
-                <tr key={p.id}>
-                  <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{p.date}</td>
-                  <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{p.description} {p.reference ? `(Ref: ${p.reference})` : ''}</td>
-                  <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{p.proposal_number ? `#${p.proposal_number} - ` : ''}{p.project_title}</td>
-                  <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>${formatCurrency(p.amount_usd)}</td>
-                </tr>
-              ))}
-              <tr style={{ background: '#f8f9fa', fontWeight: 'bold' }}>
-                <td colSpan={3} style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>Total Cobrado:</td>
-                <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>${formatCurrency(printTotalPaid)}</td>
-              </tr>
-            </tbody>
-          </table>
-        )}
-
-        {/* Detalle de Gastos */}
-        <h3 style={{ fontSize: '16px', borderBottom: '1px solid #ccc', paddingBottom: '0.5rem', marginBottom: '1rem' }}>3. RELACIÓN DE GASTOS EJECUTADOS</h3>
-        {printCosts.length === 0 ? (
-           <p style={{ fontSize: '12px', color: '#555', marginBottom: '2rem' }}>No hay gastos registrados.</p>
-        ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '2rem', fontSize: '12px' }}>
-            <thead>
-              <tr style={{ background: '#f1f1f1' }}>
-                <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'left' }}>FECHA</th>
-                <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'left' }}>PROVEEDOR</th>
-                <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'left' }}>CONCEPTO</th>
-                <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'center' }}>CANT.</th>
-                <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>P. UNIT.</th>
-                <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>TOTAL (USD)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {printCosts.map((c: any) => (
-                <tr key={c.id}>
-                  <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{c.date || new Date(c.created_at).toISOString().split('T')[0]}</td>
-                  <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{c.provider || 'N/A'}</td>
-                  <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{c.description}</td>
-                  <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'center' }}>{c.quantity}</td>
-                  <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>${formatCurrency(c.unit_price_usd)}</td>
-                  <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>${formatCurrency(c.quantity * c.unit_price_usd)}</td>
-                </tr>
-              ))}
-              <tr style={{ background: '#f8f9fa', fontWeight: 'bold' }}>
-                <td colSpan={5} style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>Total Gastado:</td>
-                <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right', color: '#d32f2f' }}>${formatCurrency(printTotalCostsValue)}</td>
-              </tr>
-            </tbody>
-          </table>
-        )}
-
-        {/* Detalle de Compromisos */}
-        <h3 style={{ fontSize: '16px', borderBottom: '1px solid #ccc', paddingBottom: '0.5rem', marginBottom: '1rem' }}>4. COMPROMISOS (GASTOS POR EJECUTAR)</h3>
-        {printCommitments.length === 0 ? (
-           <p style={{ fontSize: '12px', color: '#555', marginBottom: '2rem' }}>No hay compromisos pendientes por ejecutar.</p>
-        ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '2rem', fontSize: '12px' }}>
-            <thead>
-              <tr style={{ background: '#f1f1f1' }}>
-                <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'left' }}>FECHA</th>
-                <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'left' }}>PROVEEDOR</th>
-                <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'left' }}>CONCEPTO</th>
-                <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'left' }}>PROYECTO</th>
-                <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>TOTAL PACTADO</th>
-                <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>ABONADO</th>
-                <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>SALDO PENDIENTE (USD)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {printCommitments.map((c: any) => (
-                <tr key={c.id}>
-                  <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{c.date || new Date(c.created_at).toISOString().split('T')[0]}</td>
-                  <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{c.provider || 'N/A'}</td>
-                  <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{c.description}</td>
-                  <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{c.proposal_number ? `#${c.proposal_number} - ` : ''}{c.project_title}</td>
-                  <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>${formatCurrency(c.total_amount)}</td>
-                  <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right', color: '#28a745' }}>${formatCurrency(c.paid_amount)}</td>
-                  <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right', fontWeight: 'bold', color: '#d32f2f' }}>${formatCurrency(c.balance)}</td>
-                </tr>
-              ))}
-              <tr style={{ background: '#f8f9fa', fontWeight: 'bold' }}>
-                <td colSpan={6} style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>Total Compromisos Pendientes:</td>
-                <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right', color: '#d32f2f' }}>${formatCurrency(printTotalCommitted)}</td>
-              </tr>
-            </tbody>
-          </table>
-        )}
-
-        {/* Detalle de Retiros */}
-        <h3 style={{ fontSize: '16px', borderBottom: '1px solid #ccc', paddingBottom: '0.5rem', marginBottom: '1rem' }}>5. RETIRO DE SOCIOS</h3>
-        {printAdvances.length === 0 ? (
-           <p style={{ fontSize: '12px', color: '#555', marginBottom: '2rem' }}>No hay retiros registrados.</p>
-        ) : (
-          <div>
-            <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '2rem', fontSize: '12px' }}>
-              <thead>
-                <tr style={{ background: '#f1f1f1' }}>
-                  <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'left' }}>FECHA</th>
-                  <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'left' }}>SOCIO</th>
-                  <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'left' }}>PROYECTO</th>
-                  <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>MONTO (USD)</th>
-                </tr>
-              </thead>
+            {/* Resumen Financiero de Cliente */}
+            <h3 style={{ fontSize: '15px', fontWeight: 700, borderBottom: '1.5px solid #000', paddingBottom: '0.4rem', marginBottom: '0.8rem', textTransform: 'uppercase' }}>RESUMEN GENERAL</h3>
+            <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '1.8rem', fontSize: '13px' }}>
               <tbody>
-                {printAdvances.map((a: any) => (
-                  <tr key={a.id}>
-                    <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{a.date}</td>
-                    <td style={{ border: '1px solid #ccc', padding: '0.5rem', fontWeight: 'bold' }}>{a.partner_name}</td>
-                    <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{a.proposal_number ? `#${a.proposal_number} - ` : ''}{a.project_title}</td>
-                    <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>${formatCurrency(a.amount_usd)}</td>
+                <tr>
+                  <td style={{ padding: '0.6rem 0.8rem', border: '1px solid #cbd5e1', background: '#f8fafc', width: '60%' }}>Presupuestos Base Acordados:</td>
+                  <td style={{ padding: '0.6rem 0.8rem', border: '1px solid #cbd5e1', width: '40%', textAlign: 'right', fontWeight: 600 }}>${formatCurrency(printProjects.reduce((s: number, p: any) => s + Number(p.budget_usd), 0))}</td>
+                </tr>
+                {printExtras.length > 0 && (
+                  <tr>
+                    <td style={{ padding: '0.6rem 0.8rem', border: '1px solid #cbd5e1', background: '#f8fafc' }}>Total Trabajos Adicionales Aprobados ({printExtras.length}):</td>
+                    <td style={{ padding: '0.6rem 0.8rem', border: '1px solid #cbd5e1', textAlign: 'right', fontWeight: 600, color: '#0369a1' }}>+ ${formatCurrency(printExtras.reduce((s: number, e: any) => s + Number(e.amount_usd), 0))}</td>
                   </tr>
-                ))}
-                <tr style={{ background: '#f8f9fa', fontWeight: 'bold' }}>
-                  <td colSpan={3} style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>Total Retiros Henry Peraza:</td>
-                  <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>${formatCurrency(printAdvances.filter((a: any) => a.partner_name === 'Henry Peraza').reduce((s: number, a: any) => s + Number(a.amount_usd), 0))}</td>
+                )}
+                <tr style={{ background: '#f1f5f9', fontWeight: 'bold' }}>
+                  <td style={{ padding: '0.7rem 0.8rem', border: '1px solid #94a3b8', fontSize: '14px' }}>TOTAL CONTRATADO / INVERSIÓN:</td>
+                  <td style={{ padding: '0.7rem 0.8rem', border: '1px solid #94a3b8', textAlign: 'right', fontSize: '14px' }}>${formatCurrency(printTotalContracted)}</td>
                 </tr>
-                <tr style={{ background: '#f8f9fa', fontWeight: 'bold' }}>
-                  <td colSpan={3} style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>Total Retiros Losbers Perez:</td>
-                  <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>${formatCurrency(printAdvances.filter((a: any) => a.partner_name === 'Losbers Perez').reduce((s: number, a: any) => s + Number(a.amount_usd), 0))}</td>
+                <tr style={{ background: '#f0fdf4' }}>
+                  <td style={{ padding: '0.7rem 0.8rem', border: '1px solid #86efac', fontWeight: 'bold', color: '#166534' }}>TOTAL ABONADO / PAGADO:</td>
+                  <td style={{ padding: '0.7rem 0.8rem', border: '1px solid #86efac', textAlign: 'right', fontWeight: 'bold', color: '#166534', fontSize: '14px' }}>- ${formatCurrency(printTotalPaid)}</td>
                 </tr>
-                <tr style={{ background: '#fff3cd', fontWeight: 'bold' }}>
-                  <td colSpan={3} style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>TOTAL RETIRADO:</td>
-                  <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right', color: '#d32f2f' }}>${formatCurrency(printTotalAdvances)}</td>
+                <tr style={{ background: printBalanceDue > 0 ? '#fffbeb' : '#f0fdf4' }}>
+                  <td style={{ padding: '0.8rem', border: '2px solid ' + (printBalanceDue > 0 ? '#f59e0b' : '#10b981'), fontWeight: 'bold', fontSize: '15px' }}>SALDO PENDIENTE POR PAGAR:</td>
+                  <td style={{ padding: '0.8rem', border: '2px solid ' + (printBalanceDue > 0 ? '#f59e0b' : '#10b981'), textAlign: 'right', fontWeight: 'bold', fontSize: '16px', color: printBalanceDue > 0 ? '#b45309' : '#166534' }}>
+                    ${formatCurrency(printBalanceDue)}
+                  </td>
                 </tr>
               </tbody>
             </table>
+
+            {/* 1. Detalle de Proyectos y Presupuestos */}
+            <h3 style={{ fontSize: '14px', fontWeight: 700, borderBottom: '1.5px solid #000', paddingBottom: '0.4rem', marginBottom: '0.8rem', textTransform: 'uppercase' }}>1. PROYECTOS Y PRESUPUESTOS</h3>
+            <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '1.8rem', fontSize: '12px' }}>
+              <thead>
+                <tr style={{ background: '#f1f5f9' }}>
+                  <th style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'left' }}>PROYECTO</th>
+                  <th style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'center' }}>FECHA</th>
+                  <th style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'right' }}>PRESUPUESTO BASE</th>
+                  <th style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'right' }}>ADICIONALES</th>
+                  <th style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'right' }}>TOTAL PROYECTO</th>
+                </tr>
+              </thead>
+              <tbody>
+                {printProjects.map((p: any) => {
+                  const pExtras = p.project_extras?.reduce((acc: number, e: any) => acc + Number(e.amount_usd), 0) || 0;
+                  const pTotal = Number(p.budget_usd) + pExtras;
+                  return (
+                    <tr key={p.id}>
+                      <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem' }}>{p.proposal_number ? `#${p.proposal_number} - ` : ''}{p.title}</td>
+                      <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'center' }}>{new Date(p.created_at).toLocaleDateString('es-VE')}</td>
+                      <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'right' }}>${formatCurrency(p.budget_usd)}</td>
+                      <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'right' }}>${formatCurrency(pExtras)}</td>
+                      <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'right', fontWeight: 'bold' }}>${formatCurrency(pTotal)}</td>
+                    </tr>
+                  );
+                })}
+                <tr style={{ background: '#f8fafc', fontWeight: 'bold' }}>
+                  <td colSpan={2} style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'right' }}>TOTALES:</td>
+                  <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'right' }}>${formatCurrency(printProjects.reduce((s: number, p: any) => s + Number(p.budget_usd), 0))}</td>
+                  <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'right' }}>${formatCurrency(printExtras.reduce((s: number, e: any) => s + Number(e.amount_usd), 0))}</td>
+                  <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'right' }}>${formatCurrency(printTotalContracted)}</td>
+                </tr>
+              </tbody>
+            </table>
+
+            {/* 2. Detalle de Adicionales si existen */}
+            {printExtras.length > 0 && (
+              <>
+                <h3 style={{ fontSize: '14px', fontWeight: 700, borderBottom: '1.5px solid #000', paddingBottom: '0.4rem', marginBottom: '0.8rem', textTransform: 'uppercase' }}>2. DETALLE DE TRABAJOS ADICIONALES</h3>
+                <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '1.8rem', fontSize: '12px' }}>
+                  <thead>
+                    <tr style={{ background: '#f1f5f9' }}>
+                      <th style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'left' }}>DESCRIPCIÓN</th>
+                      <th style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'left' }}>PROYECTO VINCULADO</th>
+                      <th style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'right' }}>MONTO (USD)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {printExtras.map((e: any) => (
+                      <tr key={e.id}>
+                        <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem' }}>{e.description}</td>
+                        <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem' }}>{e.proposal_number ? `#${e.proposal_number} - ` : ''}{e.project_title}</td>
+                        <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'right', fontWeight: 600, color: '#0284c7' }}>+ ${formatCurrency(e.amount_usd)}</td>
+                      </tr>
+                    ))}
+                    <tr style={{ background: '#f8fafc', fontWeight: 'bold' }}>
+                      <td colSpan={2} style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'right' }}>Total Trabajos Adicionales:</td>
+                      <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'right', color: '#0284c7' }}>${formatCurrency(printExtras.reduce((s: number, e: any) => s + Number(e.amount_usd), 0))}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </>
+            )}
+
+            {/* 3. Historial de Pagos Recibidos */}
+            <h3 style={{ fontSize: '14px', fontWeight: 700, borderBottom: '1.5px solid #000', paddingBottom: '0.4rem', marginBottom: '0.8rem', textTransform: 'uppercase' }}>{printExtras.length > 0 ? '3.' : '2.'} HISTORIAL DE PAGOS Y ABONOS RECIBIDOS</h3>
+            {printPayments.length === 0 ? (
+              <p style={{ fontSize: '12px', color: '#64748b', marginBottom: '1.8rem', fontStyle: 'italic' }}>No se registran pagos o abonos recibidos hasta la fecha.</p>
+            ) : (
+              <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '1.8rem', fontSize: '12px' }}>
+                <thead>
+                  <tr style={{ background: '#f1f5f9' }}>
+                    <th style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'left', width: '100px' }}>FECHA</th>
+                    <th style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'left' }}>CONCEPTO / REFERENCIA</th>
+                    <th style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'left' }}>PROYECTO ORIGEN</th>
+                    <th style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'right', width: '130px' }}>MONTO (USD)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {printPayments.map((p: any) => (
+                    <tr key={p.id}>
+                      <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem' }}>{p.date}</td>
+                      <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem' }}>{p.description} {p.reference ? `(Ref: ${p.reference})` : ''}</td>
+                      <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem' }}>{p.proposal_number ? `#${p.proposal_number} - ` : ''}{p.project_title}</td>
+                      <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'right', fontWeight: 600, color: '#166534' }}>${formatCurrency(p.amount_usd)}</td>
+                    </tr>
+                  ))}
+                  <tr style={{ background: '#f0fdf4', fontWeight: 'bold' }}>
+                    <td colSpan={3} style={{ border: '1px solid #86efac', padding: '0.6rem', textAlign: 'right', color: '#166534' }}>Total Abonado Recibido:</td>
+                    <td style={{ border: '1px solid #86efac', padding: '0.6rem', textAlign: 'right', color: '#166534', fontSize: '13px' }}>${formatCurrency(printTotalPaid)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            )}
+
+            {/* Pie de página */}
+            <div style={{ marginTop: '2.5rem', paddingTop: '1rem', borderTop: '1px solid #cbd5e1', display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#64748b' }}>
+              <div>
+                <p style={{ margin: 0, fontWeight: 600, color: '#334155' }}>P&P Construye C.A.</p>
+                <p style={{ margin: '2px 0 0 0' }}>Ingeniería, Arquitectura y Remodelaciones</p>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <p style={{ margin: 0 }}>Documento emitido para uso exclusivo del cliente.</p>
+                <p style={{ margin: '2px 0 0 0' }}>Generado el {new Date().toLocaleString('es-VE')}</p>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div>
+            {/* Encabezado del Reporte */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', borderBottom: '2px solid #000', paddingBottom: '1rem', marginBottom: '2rem' }}>
+              <div>
+                 <h1 style={{ margin: 0, fontSize: '24px', color: '#000' }}>P&P CONSTRUYE</h1>
+                 <p style={{ margin: 0, fontSize: '12px', color: '#555' }}>Ingeniería, Arquitectura y Construcción</p>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <h2 style={{ margin: 0, fontSize: '20px', color: '#000' }}>REPORTE FINANCIERO DE SOCIOS</h2>
+                <p style={{ margin: 0, fontSize: '11px', color: '#dc2626', fontWeight: 600 }}>USO INTERNO EXCLUSIVO DE SOCIOS</p>
+                <p style={{ margin: 0, fontSize: '12px', color: '#555' }}>Fecha de Emisión: {new Date().toLocaleDateString('es-VE')}</p>
+                <p style={{ margin: 0, fontSize: '12px', color: '#555' }}>Proyectos incluidos: {printProjects.length} de {activeProjects.length}</p>
+              </div>
+            </div>
+
+            {/* Datos del Cliente */}
+            <div style={{ marginBottom: '2rem', padding: '1rem', background: '#f8f9fa', border: '1px solid #ddd', borderRadius: '8px' }}>
+              <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '16px' }}>CLIENTE: {client.name}</h3>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', fontSize: '12px' }}>
+                <div><strong>Empresa:</strong> {client.company_name || 'N/A'}</div>
+                <div><strong>RIF/Identificación:</strong> {client.tax_id || 'N/A'}</div>
+                <div><strong>Teléfono:</strong> {client.phone || 'N/A'}</div>
+                <div><strong>Email:</strong> {client.email || 'N/A'}</div>
+              </div>
+            </div>
+
+            {/* Resumen Financiero (KPIs) */}
+            <h3 style={{ fontSize: '16px', borderBottom: '1px solid #ccc', paddingBottom: '0.5rem', marginBottom: '1rem' }}>RESUMEN FINANCIERO</h3>
+            <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '2rem', fontSize: '14px' }}>
+              <tbody>
+                <tr>
+                  <td style={{ padding: '0.5rem', border: '1px solid #ccc', background: '#f8f9fa', width: '50%' }}><strong>Total Contratado:</strong></td>
+                  <td style={{ padding: '0.5rem', border: '1px solid #ccc', width: '50%', textAlign: 'right' }}>${formatCurrency(printTotalContracted)}</td>
+                </tr>
+                <tr>
+                  <td style={{ padding: '0.5rem', border: '1px solid #ccc', background: '#f8f9fa' }}><strong>Total Abonado:</strong></td>
+                  <td style={{ padding: '0.5rem', border: '1px solid #ccc', textAlign: 'right' }}>${formatCurrency(printTotalPaid)}</td>
+                </tr>
+                <tr>
+                  <td style={{ padding: '0.5rem', border: '1px solid #ccc', background: '#f8f9fa' }}><strong>Saldo Pendiente:</strong></td>
+                  <td style={{ padding: '0.5rem', border: '1px solid #ccc', textAlign: 'right', color: printBalanceDue > 0 ? '#ff9800' : '#28a745' }}>${formatCurrency(printBalanceDue)}</td>
+                </tr>
+                <tr>
+                  <td style={{ padding: '0.5rem', border: '1px solid #ccc', background: '#f8f9fa' }}><strong>Gastos Ejecutados:</strong></td>
+                  <td style={{ padding: '0.5rem', border: '1px solid #ccc', textAlign: 'right', color: '#d32f2f' }}>${formatCurrency(printTotalCostsValue)}</td>
+                </tr>
+                <tr>
+                  <td style={{ padding: '0.5rem', border: '1px solid #ccc', background: '#f8f9fa' }}><strong>Compromisos Pendientes:</strong></td>
+                  <td style={{ padding: '0.5rem', border: '1px solid #ccc', textAlign: 'right', color: '#d32f2f' }}>${formatCurrency(printTotalCommitted)}</td>
+                </tr>
+                <tr>
+                  <td style={{ padding: '0.5rem', border: '1px solid #ccc', background: '#f8f9fa' }}><strong>Ganancia Estimada:</strong></td>
+                  <td style={{ padding: '0.5rem', border: '1px solid #ccc', textAlign: 'right', color: '#28a745' }}>${formatCurrency(printEstimatedProfit)}</td>
+                </tr>
+                <tr>
+                  <td style={{ padding: '0.5rem', border: '1px solid #ccc', background: '#f8f9fa' }}><strong>Total Retiro de Socios:</strong></td>
+                  <td style={{ padding: '0.5rem', border: '1px solid #ccc', textAlign: 'right', color: '#d32f2f' }}>${formatCurrency(printTotalAdvances)}</td>
+                </tr>
+                <tr style={{ background: '#e8f5e9' }}>
+                  <td style={{ padding: '0.7rem', border: '2px solid #28a745', fontWeight: 'bold' }}><strong>GANANCIA NETA POR RETIRAR:</strong></td>
+                  <td style={{ padding: '0.7rem', border: '2px solid #28a745', textAlign: 'right', fontWeight: 'bold', color: '#1b5e20', fontSize: '15px' }}>${formatCurrency(printNetProfit)}</td>
+                </tr>
+              </tbody>
+            </table>
+
+            {/* Detalle de Proyectos */}
+            <h3 style={{ fontSize: '16px', borderBottom: '1px solid #ccc', paddingBottom: '0.5rem', marginBottom: '1rem' }}>1. PROYECTOS Y PRESUPUESTOS</h3>
+            <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '2rem', fontSize: '12px' }}>
+              <thead>
+                <tr style={{ background: '#f1f1f1' }}>
+                  <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'left' }}>PROYECTO</th>
+                  <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'center' }}>FECHA</th>
+                  <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>PRESUPUESTO BASE</th>
+                  <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>ADICIONALES</th>
+                  <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>TOTAL PROYECTO</th>
+                </tr>
+              </thead>
+              <tbody>
+                {printProjects.map((p: any) => {
+                  const pExtras = p.project_extras?.reduce((acc: number, e: any) => acc + Number(e.amount_usd), 0) || 0;
+                  const pTotal = Number(p.budget_usd) + pExtras;
+                  return (
+                    <tr key={p.id}>
+                      <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{p.proposal_number ? `#${p.proposal_number} - ` : ''}{p.title}</td>
+                      <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'center' }}>{new Date(p.created_at).toLocaleDateString('es-VE')}</td>
+                      <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>${formatCurrency(p.budget_usd)}</td>
+                      <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>${formatCurrency(pExtras)}</td>
+                      <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right', fontWeight: 'bold' }}>${formatCurrency(pTotal)}</td>
+                    </tr>
+                  );
+                })}
+                <tr style={{ background: '#f8f9fa', fontWeight: 'bold' }}>
+                  <td colSpan={2} style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>TOTALES GLOBALES:</td>
+                  <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>${formatCurrency(printProjects.reduce((s: number, p: any) => s + Number(p.budget_usd), 0))}</td>
+                  <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>${formatCurrency(printExtras.reduce((s: number, e: any) => s + Number(e.amount_usd), 0))}</td>
+                  <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>${formatCurrency(printTotalContracted)}</td>
+                </tr>
+              </tbody>
+            </table>
+
+            {/* Detalle de Pagos */}
+            <h3 style={{ fontSize: '16px', borderBottom: '1px solid #ccc', paddingBottom: '0.5rem', marginBottom: '1rem' }}>2. HISTORIAL DE PAGOS RECIBIDOS</h3>
+            {printPayments.length === 0 ? (
+               <p style={{ fontSize: '12px', color: '#555', marginBottom: '2rem' }}>No hay pagos registrados.</p>
+            ) : (
+              <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '2rem', fontSize: '12px' }}>
+                <thead>
+                  <tr style={{ background: '#f1f1f1' }}>
+                    <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'left' }}>FECHA</th>
+                    <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'left' }}>CONCEPTO / REFERENCIA</th>
+                    <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'left' }}>PROYECTO ORIGEN</th>
+                    <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>MONTO (USD)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {printPayments.map((p: any) => (
+                    <tr key={p.id}>
+                      <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{p.date}</td>
+                      <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{p.description} {p.reference ? `(Ref: ${p.reference})` : ''}</td>
+                      <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{p.proposal_number ? `#${p.proposal_number} - ` : ''}{p.project_title}</td>
+                      <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>${formatCurrency(p.amount_usd)}</td>
+                    </tr>
+                  ))}
+                  <tr style={{ background: '#f8f9fa', fontWeight: 'bold' }}>
+                    <td colSpan={3} style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>Total Cobrado:</td>
+                    <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>${formatCurrency(printTotalPaid)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            )}
+
+            {/* Detalle de Gastos */}
+            <h3 style={{ fontSize: '16px', borderBottom: '1px solid #ccc', paddingBottom: '0.5rem', marginBottom: '1rem' }}>3. RELACIÓN DE GASTOS EJECUTADOS</h3>
+            {printCosts.length === 0 ? (
+               <p style={{ fontSize: '12px', color: '#555', marginBottom: '2rem' }}>No hay gastos registrados.</p>
+            ) : (
+              <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '2rem', fontSize: '12px' }}>
+                <thead>
+                  <tr style={{ background: '#f1f1f1' }}>
+                    <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'left' }}>FECHA</th>
+                    <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'left' }}>PROVEEDOR</th>
+                    <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'left' }}>CONCEPTO</th>
+                    <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'center' }}>CANT.</th>
+                    <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>P. UNIT.</th>
+                    <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>TOTAL (USD)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {printCosts.map((c: any) => (
+                    <tr key={c.id}>
+                      <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{c.date || new Date(c.created_at).toISOString().split('T')[0]}</td>
+                      <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{c.provider || 'N/A'}</td>
+                      <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{c.description}</td>
+                      <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'center' }}>{c.quantity}</td>
+                      <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>${formatCurrency(c.unit_price_usd)}</td>
+                      <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>${formatCurrency(c.quantity * c.unit_price_usd)}</td>
+                    </tr>
+                  ))}
+                  <tr style={{ background: '#f8f9fa', fontWeight: 'bold' }}>
+                    <td colSpan={5} style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>Total Gastado:</td>
+                    <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right', color: '#d32f2f' }}>${formatCurrency(printTotalCostsValue)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            )}
+
+            {/* Detalle de Compromisos */}
+            <h3 style={{ fontSize: '16px', borderBottom: '1px solid #ccc', paddingBottom: '0.5rem', marginBottom: '1rem' }}>4. COMPROMISOS (GASTOS POR EJECUTAR)</h3>
+            {printCommitments.length === 0 ? (
+               <p style={{ fontSize: '12px', color: '#555', marginBottom: '2rem' }}>No hay compromisos pendientes por ejecutar.</p>
+            ) : (
+              <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '2rem', fontSize: '12px' }}>
+                <thead>
+                  <tr style={{ background: '#f1f1f1' }}>
+                    <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'left' }}>FECHA</th>
+                    <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'left' }}>PROVEEDOR</th>
+                    <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'left' }}>CONCEPTO</th>
+                    <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'left' }}>PROYECTO</th>
+                    <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>TOTAL PACTADO</th>
+                    <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>ABONADO</th>
+                    <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>SALDO PENDIENTE (USD)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {printCommitments.map((c: any) => (
+                    <tr key={c.id}>
+                      <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{c.date || new Date(c.created_at).toISOString().split('T')[0]}</td>
+                      <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{c.provider || 'N/A'}</td>
+                      <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{c.description}</td>
+                      <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{c.proposal_number ? `#${c.proposal_number} - ` : ''}{c.project_title}</td>
+                      <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>${formatCurrency(c.total_amount)}</td>
+                      <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right', color: '#28a745' }}>${formatCurrency(c.paid_amount)}</td>
+                      <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right', fontWeight: 'bold', color: '#d32f2f' }}>${formatCurrency(c.balance)}</td>
+                    </tr>
+                  ))}
+                  <tr style={{ background: '#f8f9fa', fontWeight: 'bold' }}>
+                    <td colSpan={6} style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>Total Compromisos Pendientes:</td>
+                    <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right', color: '#d32f2f' }}>${formatCurrency(printTotalCommitted)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            )}
+
+            {/* Detalle de Retiros */}
+            <h3 style={{ fontSize: '16px', borderBottom: '1px solid #ccc', paddingBottom: '0.5rem', marginBottom: '1rem' }}>5. RETIRO DE SOCIOS</h3>
+            {printAdvances.length === 0 ? (
+               <p style={{ fontSize: '12px', color: '#555', marginBottom: '2rem' }}>No hay retiros registrados.</p>
+            ) : (
+              <div>
+                <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '2rem', fontSize: '12px' }}>
+                  <thead>
+                    <tr style={{ background: '#f1f1f1' }}>
+                      <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'left' }}>FECHA</th>
+                      <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'left' }}>SOCIO</th>
+                      <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'left' }}>PROYECTO</th>
+                      <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>MONTO (USD)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {printAdvances.map((a: any) => (
+                      <tr key={a.id}>
+                        <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{a.date}</td>
+                        <td style={{ border: '1px solid #ccc', padding: '0.5rem', fontWeight: 'bold' }}>{a.partner_name}</td>
+                        <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{a.proposal_number ? `#${a.proposal_number} - ` : ''}{a.project_title}</td>
+                        <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>${formatCurrency(a.amount_usd)}</td>
+                      </tr>
+                    ))}
+                    <tr style={{ background: '#f8f9fa', fontWeight: 'bold' }}>
+                      <td colSpan={3} style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>Total Retiros Henry Peraza:</td>
+                      <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>${formatCurrency(printAdvances.filter((a: any) => a.partner_name === 'Henry Peraza').reduce((s: number, a: any) => s + Number(a.amount_usd), 0))}</td>
+                    </tr>
+                    <tr style={{ background: '#f8f9fa', fontWeight: 'bold' }}>
+                      <td colSpan={3} style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>Total Retiros Losbers Perez:</td>
+                      <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>${formatCurrency(printAdvances.filter((a: any) => a.partner_name === 'Losbers Perez').reduce((s: number, a: any) => s + Number(a.amount_usd), 0))}</td>
+                    </tr>
+                    <tr style={{ background: '#fff3cd', fontWeight: 'bold' }}>
+                      <td colSpan={3} style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>TOTAL RETIRADO:</td>
+                      <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right', color: '#d32f2f' }}>${formatCurrency(printTotalAdvances)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {clientNotes && (
+              <div style={{ marginTop: '1.5rem' }}>
+                <h3 style={{ fontSize: '16px', borderBottom: '1px solid #ccc', paddingBottom: '0.5rem', marginBottom: '1rem' }}>OBSERVACIONES IMPORTANTES</h3>
+                <div style={{ padding: '1rem', border: '1px solid #ccc', borderRadius: '4px', whiteSpace: 'pre-wrap', fontSize: '12px' }}>
+                  {clientNotes}
+                </div>
+              </div>
+            )}
+
+            <div style={{ marginTop: '3rem', textAlign: 'center', fontSize: '10px', color: '#777' }}>
+              <p>Documento generado por el Sistema Administrativo de P&P Construye</p>
+            </div>
           </div>
         )}
+      </div>
 
-        {/* Modal Abono Cuenta Pagar */}
+      {/* Modal Abono Cuenta Pagar */}
       {showPayablePaymentModal && (
         <div className="modal-backdrop">
           <div className="modal-content animate-scale">
@@ -2629,21 +3062,6 @@ export default function ClienteDashboard() {
           </div>
         </div>
       )}
-
-      {/* Modal Avanzado de Ajustes y Notas */}
-        {clientNotes && (
-          <div>
-            <h3 style={{ fontSize: '16px', borderBottom: '1px solid #ccc', paddingBottom: '0.5rem', marginBottom: '1rem' }}>OBSERVACIONES IMPORTANTES</h3>
-            <div style={{ padding: '1rem', border: '1px solid #ccc', borderRadius: '4px', whiteSpace: 'pre-wrap', fontSize: '12px' }}>
-              {clientNotes}
-            </div>
-          </div>
-        )}
-
-        <div style={{ marginTop: '3rem', textAlign: 'center', fontSize: '10px', color: '#777' }}>
-          <p>Documento generado por el Sistema Administrativo de P&P Construye</p>
-        </div>
-      </div>
 
       {/* Estilos para impresión */}
       <style dangerouslySetInnerHTML={{ __html: `
@@ -3286,6 +3704,245 @@ export default function ClienteDashboard() {
                 </div>
               );
             })()}
+          </div>
+        </div>
+      )}
+
+      {/* Modal Editar Cliente */}
+      {showEditClientModal && client && (
+        <div className="modal-overlay">
+          <div className="card modal-content animate-fade">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+              <h2 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Edit3 size={20} color="var(--accent-blue)" /> Editar Datos del Cliente
+              </h2>
+              <button 
+                type="button" 
+                onClick={() => setShowEditClientModal(false)}
+                style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}
+              >
+                <X size={20} />
+              </button>
+            </div>
+            
+            <form onSubmit={handleSaveEditClient} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+              <div style={{ gridColumn: 'span 2' }}>
+                <label style={{ display: 'block', fontSize: '0.85rem', marginBottom: '0.4rem', color: 'var(--text-muted)' }}>Nombre Completo *</label>
+                <input 
+                  required
+                  type="text" 
+                  className="input-field" 
+                  value={editClientForm.name} 
+                  onChange={(e) => setEditClientForm({...editClientForm, name: e.target.value})}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', marginBottom: '0.4rem', color: 'var(--text-muted)' }}>Empresa</label>
+                <input 
+                  type="text" 
+                  className="input-field" 
+                  value={editClientForm.company_name} 
+                  onChange={(e) => setEditClientForm({...editClientForm, company_name: e.target.value})}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', marginBottom: '0.4rem', color: 'var(--text-muted)' }}>RIF / CI</label>
+                <input 
+                  type="text" 
+                  className="input-field" 
+                  value={editClientForm.tax_id} 
+                  onChange={(e) => setEditClientForm({...editClientForm, tax_id: e.target.value})}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', marginBottom: '0.4rem', color: 'var(--text-muted)' }}>Teléfono</label>
+                <input 
+                  type="text" 
+                  className="input-field" 
+                  value={editClientForm.phone} 
+                  onChange={(e) => setEditClientForm({...editClientForm, phone: e.target.value})}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', marginBottom: '0.4rem', color: 'var(--text-muted)' }}>Email</label>
+                <input 
+                  type="email" 
+                  className="input-field" 
+                  value={editClientForm.email} 
+                  onChange={(e) => setEditClientForm({...editClientForm, email: e.target.value})}
+                />
+              </div>
+
+              <div style={{ gridColumn: 'span 2' }}>
+                <label style={{ display: 'block', fontSize: '0.85rem', marginBottom: '0.4rem', color: 'var(--text-muted)' }}>Estado del Cliente</label>
+                <select
+                  className="input-field"
+                  value={editClientForm.status}
+                  onChange={(e) => setEditClientForm({...editClientForm, status: e.target.value})}
+                  style={{ background: 'var(--surface-elevated)', color: 'white' }}
+                >
+                  <option value="active">Activo</option>
+                  <option value="inactive">Inactivo</option>
+                </select>
+              </div>
+
+              <div style={{ gridColumn: 'span 2' }}>
+                <label style={{ display: 'block', fontSize: '0.85rem', marginBottom: '0.4rem', color: 'var(--text-muted)' }}>Dirección</label>
+                <textarea 
+                  className="input-field" 
+                  style={{ minHeight: '80px', resize: 'vertical' }}
+                  value={editClientForm.address} 
+                  onChange={(e) => setEditClientForm({...editClientForm, address: e.target.value})}
+                ></textarea>
+              </div>
+
+              <div style={{ gridColumn: 'span 2', display: 'flex', gap: '1rem', marginTop: '1rem' }}>
+                <button 
+                  type="submit" 
+                  className="btn-primary" 
+                  style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem' }}
+                  disabled={savingClientEdit}
+                >
+                  {savingClientEdit ? <><Loader2 size={16} className="animate-spin" /> Guardando...</> : 'Guardar Cambios'}
+                </button>
+                <button 
+                  type="button" 
+                  className="btn-secondary" 
+                  style={{ flex: 1 }}
+                  onClick={() => setShowEditClientModal(false)}
+                  disabled={savingClientEdit}
+                >
+                  Cancelar
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Eliminación con Validación de Pendientes */}
+      {showDeleteClientModal && client && (
+        <div className="modal-overlay">
+          <div className="card modal-content animate-fade" style={{ maxWidth: '520px' }}>
+            {checkingDeletePending ? (
+              <div style={{ textAlign: 'center', padding: '2.5rem 1rem' }}>
+                <Loader2 size={36} className="animate-spin" style={{ margin: '0 auto 1rem auto', color: 'var(--primary-color)' }} />
+                <h3 style={{ marginBottom: '0.5rem' }}>Verificando registros del cliente...</h3>
+                <p className="text-muted" style={{ fontSize: '0.9rem' }}>Comprobando si existen propuestas, obras o gastos vinculados.</p>
+              </div>
+            ) : clientPendingSummary?.hasPending ? (
+              // CASO BLOQUEADO: TIENE ASUNTOS PENDIENTES
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem', color: 'var(--danger)' }}>
+                  <AlertTriangle size={28} />
+                  <h3 style={{ margin: 0, color: 'var(--danger)' }}>No se puede eliminar el cliente</h3>
+                </div>
+
+                <p style={{ fontSize: '0.95rem', color: 'white', marginBottom: '1rem' }}>
+                  El cliente <strong>{client.name}</strong> tiene registros activos o asuntos pendientes en el sistema:
+                </p>
+
+                <div style={{ background: 'rgba(239, 68, 68, 0.08)', border: '1px solid rgba(239, 68, 68, 0.25)', borderRadius: '10px', padding: '1rem', marginBottom: '1.25rem' }}>
+                  <ul style={{ listStyleType: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: '0.5rem', fontSize: '0.9rem' }}>
+                    {clientPendingSummary.activeProjectsCount > 0 && (
+                      <li style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#fca5a5' }}>
+                        • <strong>{clientPendingSummary.activeProjectsCount}</strong> Obras / Proyectos en ejecución
+                      </li>
+                    )}
+                    {clientPendingSummary.proposalsCount > 0 && (
+                      <li style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#fde047' }}>
+                        • <strong>{clientPendingSummary.proposalsCount}</strong> Propuesta(s) pendiente(s)
+                      </li>
+                    )}
+                    {clientPendingSummary.historyProjectsCount > 0 && (
+                      <li style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#cbd5e1' }}>
+                        • <strong>{clientPendingSummary.historyProjectsCount}</strong> Obra(s) completada(s) / archivada(s)
+                      </li>
+                    )}
+                    {clientPendingSummary.paymentsCount > 0 && (
+                      <li style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#86efac' }}>
+                        • <strong>{clientPendingSummary.paymentsCount}</strong> Pagos / Abonos registrados
+                      </li>
+                    )}
+                    {clientPendingSummary.costsCount > 0 && (
+                      <li style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#fca5a5' }}>
+                        • <strong>{clientPendingSummary.costsCount}</strong> Gastos de obra registrados
+                      </li>
+                    )}
+                    {clientPendingSummary.commitmentsCount > 0 && (
+                      <li style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#fde047' }}>
+                        • <strong>{clientPendingSummary.commitmentsCount}</strong> Compromisos / Cuentas por pagar vinculadas
+                      </li>
+                    )}
+                    {clientPendingSummary.pendingTelegramCount > 0 && (
+                      <li style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#fde047' }}>
+                        • <strong>{clientPendingSummary.pendingTelegramCount}</strong> Entradas pendientes por aprobar desde Telegram
+                      </li>
+                    )}
+                  </ul>
+                </div>
+
+                <div style={{ background: 'rgba(255, 255, 255, 0.03)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '0.9rem', marginBottom: '1.5rem', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                  💡 <strong>¿Por qué está protegido?</strong> Para preservar la trazabilidad contable y evitar inconsistencias financieras, un cliente con propuestas o proyectos no puede eliminarse directamente. Si ya no requiere al cliente, puede cambiar su estado a <strong>Inactivo</strong> o eliminar previamente sus proyectos asociados.
+                </div>
+
+                <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end' }}>
+                  <button 
+                    type="button" 
+                    className="btn-primary" 
+                    style={{ minWidth: '130px' }}
+                    onClick={() => setShowDeleteClientModal(false)}
+                  >
+                    Entendido
+                  </button>
+                </div>
+              </div>
+            ) : (
+              // CASO PERMITIDO: NO TIENE NINGÚN ASUNTO PENDIENTE
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem', color: 'var(--danger)' }}>
+                  <Trash2 size={28} />
+                  <h3 style={{ margin: 0, color: 'var(--danger)' }}>Confirmar Eliminación</h3>
+                </div>
+
+                <p style={{ fontSize: '0.95rem', color: 'white', marginBottom: '0.75rem' }}>
+                  ¿Estás seguro de que deseas eliminar permanentemente al cliente <strong>{client.name}</strong>?
+                </p>
+
+                <div style={{ background: 'rgba(16, 185, 129, 0.08)', border: '1px solid rgba(16, 185, 129, 0.25)', borderRadius: '10px', padding: '0.9rem', marginBottom: '1.25rem', fontSize: '0.85rem', color: '#86efac' }}>
+                  <CheckCircle2 size={16} style={{ display: 'inline', verticalAlign: 'middle', marginRight: '0.4rem' }} />
+                  Verificación completada: Este cliente no tiene propuestas, obras ni gastos pendientes asociados.
+                </div>
+
+                <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '1.5rem' }}>
+                  Esta acción es irreversible y removerá la ficha del cliente del sistema. Será redirigido al listado de clientes.
+                </p>
+
+                <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end' }}>
+                  <button 
+                    type="button" 
+                    className="btn-secondary" 
+                    onClick={() => setShowDeleteClientModal(false)}
+                    disabled={deletingClient}
+                  >
+                    Cancelar
+                  </button>
+                  <button 
+                    type="button" 
+                    className="btn-primary" 
+                    style={{ background: 'var(--danger)', borderColor: 'var(--danger)', color: 'white', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                    onClick={handleConfirmDeleteClient}
+                    disabled={deletingClient}
+                  >
+                    {deletingClient ? <><Loader2 size={16} className="animate-spin" /> Eliminando...</> : <><Trash2 size={16} /> Eliminar Cliente</>}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

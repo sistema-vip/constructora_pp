@@ -50,7 +50,17 @@ Objetivo del Proyecto
 [Descripción técnica y formal del propósito fundamental de la obra, detallando de forma clara, profesional y explícita el resultado esperado y el alcance general, sin exagerar pero con un lenguaje ingenieril elegante y descriptivo (1 o 2 párrafos).]
 
 Fases del Trabajo (Alcance Técnico)
-[Lista secuencial de las fases de ejecución. Cada fase debe ir OBLIGATORIAMENTE en una nueva línea. NO coloques números de lista antes de la palabra "Fase" (Ej. usa directamente: **Fase 1 - Nombre de la fase**: descripción), e incluye una breve descripción técnica.]
+[Estructura OBLIGATORIAMENTE en fases numeradas en negrita (**Fase 1: Título de la Fase**, **Fase 2: Título**, etc.). Debajo de cada fase, desglosa los servicios y actividades técnicas específicas en viñetas con guión (-).
+Ejemplo:
+**Fase 1: Demolición y Albañilería**
+- Demolición y remoción de manto asfáltico deteriorado
+- Levantamiento de paredes en bloque de 15cm
+- Frisado de muros con acabado liso
+
+**Fase 2: Revestimientos e Instalaciones**
+- Colocación de pisos de porcelanato
+- Instalación de duchas y piezas sanitarias
+- Colocación de lámparas y puntos de iluminación]
 
 Tiempo de Ejecución y Entrega
 [Tiempo estimado basado en lo discutido]
@@ -80,11 +90,11 @@ TAMBIÉN incluye al inicio un bloque JSON (antes del texto de la propuesta):
 </JSON_DATA>`;
 
 const FALLBACK_MODELS = [
+  'gemini-3.1-pro-preview',
+  'gemini-3.7-flash',
   'gemini-3.6-flash',
   'gemini-3.5-flash',
-  'gemini-3.5-flash-lite',
-  'gemini-3.7-flash',
-  'gemini-flash-lite-latest'
+  'gemini-flash-latest'
 ];
 
 async function sleep(ms: number): Promise<void> {
@@ -313,7 +323,15 @@ Instrucciones:
 2. Extrae el nombre del cliente (clientName).
 3. Busca en la lista de clientes registrados el que mejor coincida con el nombre mencionado. Si encuentras uno, pon su ID exacto en 'matchedClientId'. Si no hay coincidencia clara o no se menciona cliente, déjalo vacío ("").
 4. Genera una descripción técnica profesional como 'objective' (Objetivo del Proyecto).
-5. Genera un desglose de las fases de trabajo técnico en 'phases' (Fases del Trabajo). NO uses listas numeradas tradicionales; comienza la línea directamente con "**Fase 1**" (o la fase correspondiente).
+5. Genera un desglose de las fases de trabajo técnico en 'phases' (Fases del Trabajo). Estructura OBLIGATORIAMENTE cada fase con su título en negrita (**Fase 1: Título**, **Fase 2: Título**) y debajo cada servicio u actividad específica en viñetas con guión (-).
+Ejemplo:
+**Fase 1: Albañilería y Paredes**
+- Levantamiento de paredes en bloque de 15cm
+- Frisado de muros con acabado liso
+
+**Fase 2: Revestimientos e Instalaciones**
+- Colocación de porcelanato en pisos
+- Instalación de duchas y lámparas
 6. Extrae o estima el tiempo de ejecución en 'time'.
 7. Extrae el monto total (solo números o formato de moneda) en 'amount'. Si no se menciona, pon "".
 8. Extrae las condiciones de pago en 'payment'. Si no se mencionan, pon "60% anticipo / 40% al finalizar".
@@ -363,8 +381,8 @@ export async function refineProposalField(
     return { success: false, error: 'API Key de Gemini no configurada.' };
   }
 
-  const prompt = `Eres un ingeniero civil / arquitecto de la constructora P&P CONSTRUYE.
-Tu objetivo es redactar, mejorar y estructurar el texto para un campo específico de una propuesta.
+  const prompt = `Eres un ingeniero civil / supervisor de obras de la constructora P&P CONSTRUYE.
+Tu objetivo es redactar, mejorar y estructurar el texto para un campo específico de una propuesta técnica.
 
 Contexto general del proyecto:
 "${context}"
@@ -375,8 +393,18 @@ Texto actual o notas:
 
 Instrucciones:
 - Mejora la redacción, ortografía y estructura técnica.
-- Usa lenguaje profesional y conciso, orientado a la construcción.
-- Devuelve ÚNICAMENTE el texto mejorado, sin introducciones ni comillas.`;
+- Usa lenguaje profesional y conciso, orientado a la construcción venezolana.
+${fieldName.toLowerCase().includes('fase') ? `- Para las Fases del Trabajo, estructura el texto OBLIGATORIAMENTE en fases numeradas en negrita, y debajo de cada fase coloca cada servicio u actividad en una viñeta separada con guión (-).
+Ejemplo:
+**Fase 1: Albañilería y Paredes**
+- Levantamiento de paredes en bloque de 15cm
+- Frisado de muros con acabado liso
+
+**Fase 2: Revestimientos e Instalaciones**
+- Colocación de porcelanato en pisos
+- Instalación de duchas y piezas sanitarias
+- Colocación de lámparas y puntos de iluminación` : ''}
+- Devuelve ÚNICAMENTE el texto mejorado, sin introducciones, saludos ni comillas.`;
 
   try {
     return await callGeminiWithFallback(apiKey, async (model) => {
@@ -453,7 +481,18 @@ Instrucciones:
 5. Si el usuario te pide que "hagas el presupuesto", "calcules" o "estimes", genera descripciones técnicas profesionales y estimaciones realistas basadas en tu conocimiento de ingeniería para rellenar los campos (objetivo, fases, tiempo, etc.), manteniendo siempre la coherencia.
 6. En cuanto a la 'Modalidad del Presupuesto' (investmentModality): si el usuario menciona "mano de obra", actualiza este campo con una descripción formal para Solo Mano de Obra. Si menciona "materiales", usa una descripción formal para Solo Materiales. Por defecto, usa la descripción de "A Todo Costo".
 7. Formula una respuesta conversacional corta, amable y profesional firmada como Pepe (máximo 3 párrafos, sin adornos excesivos, explicando de manera resumida qué campos actualizaste o pidiendo aclaraciones si falta información clave).
-8. IMPORTANTE SOBRE 'phases' vs 'workItems': El campo 'phases' es EXCLUSIVAMENTE descriptivo — describe qué se va a hacer en cada fase, sin precios ni montos. NUNCA incluyas precios en 'phases'. El campo 'workItems' es una sección SEPARADA llamada 'Desglose de Inversión' que SOLO se usa cuando el usuario pide explícitamente desglosar costos por concepto (ej. "ponme el aire a 850 y la pared a 1200"). Si el usuario NO pide desglose de precios, deja 'workItems' vacío ([]). Cada objeto de 'workItems' debe tener un 'id' único (string), una 'description' y un 'price' (solo el número en formato string, sin símbolo de dólar).
+8. IMPORTANTE SOBRE 'phases' vs 'workItems': El campo 'phases' es EXCLUSIVAMENTE descriptivo y técnico (sin precios). Debes estructurarlo OBLIGATORIAMENTE con el título de cada fase en negrita (**Fase 1: Título**, **Fase 2: Título**, etc.) y debajo de cada una los servicios y actividades técnicas específicas desglosadas en viñetas con guión (-).
+Ejemplo:
+**Fase 1: Albañilería y Paredes**
+- Levantamiento de paredes en bloque de 15cm
+- Frisado de muros con acabado liso
+
+**Fase 2: Revestimientos e Instalaciones**
+- Colocación de porcelanato en pisos
+- Instalación de duchas y piezas sanitarias
+- Colocación de lámparas y puntos de iluminación
+
+El campo 'workItems' es una sección SEPARADA llamada 'Desglose de Inversión' que SOLO se usa cuando el usuario pide explícitamente desglosar costos por concepto (ej. "ponme el aire a 850 y la pared a 1200"). Si el usuario NO pide desglose de precios, deja 'workItems' vacío ([]). Cada objeto de 'workItems' debe tener un 'id' único (string), una 'description' y un 'price' (solo el número en formato string, sin símbolo de dólar).
 9. DEVUELVE TU RESPUESTA ESTRICTAMENTE EN FORMATO JSON con las siguientes dos claves:
 {
   "reply": "Tu mensaje conversacional explicando qué hiciste o preguntando detalles...",
@@ -573,6 +612,91 @@ IMPORTANTE: Responde ÚNICAMENTE con un objeto JSON válido con las siguientes c
     });
   } catch (error: any) {
     return { success: false, error: `Error al parsear propuesta: ${error?.message || error}` };
+  }
+}
+
+// ─────────────────────────────────────────────
+// PEPE IA: EXTRAER SERVICIOS OFRECIDOS EN LA PROPUESTA
+// ─────────────────────────────────────────────
+export interface ExtractedServicePhase {
+  phase: string;
+  tasks: string[];
+}
+
+export async function extractServicesFromProposalWithPepe(proposalText: string): Promise<{
+  success: boolean;
+  phases?: ExtractedServicePhase[];
+  error?: string;
+}> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey || apiKey === 'TU_API_KEY_AQUI') {
+    return { success: false, error: 'API Key de Gemini no configurada. Agrega GEMINI_API_KEY en el archivo .env.local' };
+  }
+
+  const prompt = `Eres "Pepe", el asistente técnico de ingeniería y obras de P&P CONSTRUYE.
+Tu misión es analizar el texto de una propuesta técnica y económica y extraer ÚNICA Y EXCLUSIVAMENTE los SERVICIOS Y ACTIVIDADES DE OBRA OFRECIDOS al cliente, para cargarlos en la lista de seguimiento y control de ejecución.
+
+TEXTO DE LA PROPUESTA:
+"""
+${proposalText}
+"""
+
+REGLAS ESTRICTAS DE EXTRACCIÓN:
+1. Extrae únicamente las actividades técnicas, partidas reales y servicios ofrecidos que el equipo debe ejecutar en la obra (ejemplos: "Demolición y remoción de manto asfáltico deteriorado", "Aplicación de imprimante asfáltico en 45 m²", "Colocación de manto asfáltico 4mm con soplete", "Instalación de tuberías sanitarias PVC 4 pulgadas", "Prueba de estanqueidad por 48 horas", etc.).
+2. Agrupa los servicios bajo el nombre de su Fase correspondiente tal como se redactó en la propuesta (ej. "Fase 1: Preparación y Demolición", "Fase 2: Impermeabilización", "Fase 3: Acabados"). Si la propuesta no tiene fases explícitas, agrúpalas en fases lógicas de construcción ("Fase 1: Trabajos Preliminares", "Fase 2: Ejecución Principal", "Fase 3: Acabados y Entrega").
+3. DESCARTA ABSOLUTAMENTE Y NO INCLUYAS:
+   - Esquemas o porcentajes de pago (anticipo, porcentajes de finalización, etc.).
+   - Monedas, divisas, bancos, Zelle, Binance, efectivo o tasas de cambio.
+   - Precios, costos unitarios o montos de inversión en los títulos.
+   - Nombres de clientes, saludos, introducciones comerciales o firmas.
+   - Garantías o textos administrativos.
+4. Cada tarea debe ser una frase clara, descriptiva y ejecutable de lo que se prometió hacer.
+
+Responde OBLIGATORIAMENTE en formato JSON con la siguiente estructura:
+[
+  {
+    "phase": "Fase 1: Nombre de la fase",
+    "tasks": [
+      "Descripción clara del servicio o actividad 1",
+      "Descripción clara del servicio o actividad 2"
+    ]
+  },
+  {
+    "phase": "Fase 2: Nombre de la fase",
+    "tasks": [
+      "Descripción del servicio..."
+    ]
+  }
+]`;
+
+  try {
+    return await callGeminiWithFallback(apiKey, async (model) => {
+      const result = await model.generateContent({
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig: {
+          responseMimeType: "application/json",
+        }
+      });
+
+      const responseText = result.response.text();
+      const parsedData = JSON.parse(responseText);
+
+      if (!Array.isArray(parsedData)) {
+        throw new Error('La respuesta de Pepe IA no tuvo el formato de lista esperado.');
+      }
+
+      // Validar y limpiar estructura
+      const cleanPhases: ExtractedServicePhase[] = parsedData.map((item: any, idx: number) => ({
+        phase: typeof item.phase === 'string' && item.phase.trim() ? item.phase.trim() : `Fase ${idx + 1}`,
+        tasks: Array.isArray(item.tasks) 
+          ? item.tasks.map((t: any) => String(t).trim()).filter((t: string) => t.length > 0)
+          : []
+      })).filter(p => p.tasks.length > 0);
+
+      return { success: true, phases: cleanPhases };
+    });
+  } catch (error: any) {
+    return { success: false, error: `Error de Pepe IA al extraer servicios: ${error?.message || error}` };
   }
 }
 

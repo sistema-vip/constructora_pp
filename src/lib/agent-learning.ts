@@ -91,11 +91,11 @@ Responde ÚNICAMENTE con este JSON:
 `;
 
   const fallbackModels = [
+    'gemini-3.1-pro-preview',
+    'gemini-3.7-flash',
     'gemini-3.6-flash',
     'gemini-3.5-flash',
-    'gemini-3.5-flash-lite',
-    'gemini-3.7-flash',
-    'gemini-flash-lite-latest'
+    'gemini-flash-latest'
   ];
   let parsed: any = null;
 
@@ -206,11 +206,11 @@ Si es solo una negación casual sin regla duradera (ej. "no gracias", "no entien
 `;
 
   const fallbackModels = [
+    'gemini-3.1-pro-preview',
+    'gemini-3.7-flash',
     'gemini-3.6-flash',
     'gemini-3.5-flash',
-    'gemini-3.5-flash-lite',
-    'gemini-3.7-flash',
-    'gemini-flash-lite-latest'
+    'gemini-flash-latest'
   ];
   let parsed: any = null;
 

@@ -28,6 +28,7 @@ import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { useAdminAction } from '@/lib/useAdminAction';
 import NewProposalModal from '@/components/NewProposalModal';
+import { autoPopulateTrackingTasks } from '@/lib/projectTaskHelper';
 
 interface Project {
   id: string;
@@ -148,21 +149,29 @@ export default function ProyectosPage() {
   async function handleStatusUpdate(id: string, newStatus: string) {
     executeWithAuth(async () => {
       const statusText = newStatus === 'in_progress' ? 'aprobar' : 'rechazar';
-    if (!confirm(`¿Estás seguro de que deseas ${statusText} esta propuesta?`)) return;
+      if (!confirm(`¿Estás seguro de que deseas ${statusText} esta propuesta?`)) return;
 
-    const { error } = await supabase
-      .from('projects')
-      .update({ status: newStatus })
-      .eq('id', id);
+      const { error } = await supabase
+        .from('projects')
+        .update({ status: newStatus })
+        .eq('id', id);
 
-    if (error) {
-      alert(`Error: ${error.message}`);
-    } else {
-      setProjects(projects.map(p => p.id === id ? { ...p, status: newStatus } : p));
-      if (selectedProject?.id === id) {
-        setSelectedProject({ ...selectedProject, status: newStatus });
+      if (error) {
+        alert(`Error: ${error.message}`);
+      } else {
+        // Auto-poblar tareas de seguimiento con los servicios ofrecidos
+        if (newStatus === 'in_progress') {
+          const targetProj = projects.find(p => p.id === id);
+          if (targetProj && targetProj.description) {
+            autoPopulateTrackingTasks(id, targetProj.description);
+          }
+        }
+
+        setProjects(projects.map(p => p.id === id ? { ...p, status: newStatus } : p));
+        if (selectedProject?.id === id) {
+          setSelectedProject({ ...selectedProject, status: newStatus });
+        }
       }
-    }
     });
   }
 

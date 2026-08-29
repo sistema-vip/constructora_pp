@@ -16,6 +16,8 @@ import { supabase } from '@/lib/supabase';
 import Link from 'next/link';
 import { handleMoneyInput, parseCurrency, formatOnBlur } from '@/lib/formatters';
 import TelegramPendingPanel from '@/components/TelegramPendingPanel';
+import RecentActivityFeed from '@/components/RecentActivityFeed';
+import { Activity } from 'lucide-react';
 
 export default function Home() {
   const [stats, setStats] = useState({
@@ -227,6 +229,19 @@ export default function Home() {
           clientName: p.clients?.name || 'Cliente sin nombre'
         }))}
       />
+
+      {/* Registros Recientes */}
+      <div className="card" style={{ marginBottom: '2rem' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            <div style={{ background: 'rgba(139, 92, 246, 0.1)', padding: '0.5rem', borderRadius: '10px', color: '#8b5cf6' }}>
+              <Activity size={20} />
+            </div>
+            <h3 style={{ fontSize: '1.1rem', fontWeight: 600 }}>Registros Recientes</h3>
+          </div>
+        </div>
+        <RecentActivityFeed maxItems={10} />
+      </div>
 
       {/* Main Content Split */}
       <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '2rem' }}>

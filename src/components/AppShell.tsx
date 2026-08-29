@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import {
   BarChart3, Users, HardHat, Wallet, LayoutDashboard,
-  Settings, PlusCircle, Package, LogOut, ShieldCheck, TrendingUp
+  Settings, PlusCircle, Package, LogOut, ShieldCheck, TrendingUp, ClipboardList
 } from 'lucide-react';
 import Image from 'next/image';
 import Link from 'next/link';
@@ -71,6 +71,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           </Link>
           <Link href="/proyectos" className={`nav-link ${pathname.startsWith('/proyectos') ? 'active' : ''}`}>
             <HardHat size={20} /> Proyectos
+          </Link>
+          <Link href="/anteproyecto" className={`nav-link ${pathname.startsWith('/anteproyecto') ? 'active' : ''}`}>
+            <ClipboardList size={20} /> Anteproyecto
           </Link>
           <Link href="/cuentas-por-pagar" className={`nav-link ${pathname.startsWith('/cuentas-por-pagar') ? 'active' : ''}`}>
             <Wallet size={20} /> Cuentas por Pagar
