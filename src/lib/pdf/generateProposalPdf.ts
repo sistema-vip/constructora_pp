@@ -90,8 +90,159 @@ export function generateProposalPdfBuffer(data: ProposalData): Promise<Buffer> {
 
       doc.moveDown(0.8);
 
-      // 2. PARSE CONTENT LINES
-      const lines = (data.description || '').split('\n');
+      // 2. PARSE CONTENT LINES & UNIFIED METADATA
+      let cleanDescription = data.description || '';
+      
+      // Parse unified additionals tags if present
+      let unifiedAdditionals: { proposal_number?: number; title: string; budget_usd: number }[] = [];
+      let originalBaseBudget: number | null = null;
+
+      const addMatch = cleanDescription.match(/<!--\s*PP_UNIFIED_ADDITIONALS:\s*(\[[\s\S]*?\])\s*-->/);
+      if (addMatch) {
+        try {
+          const parsed = JSON.parse(addMatch[1]);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            unifiedAdditionals = parsed.map((a: any) => ({
+              proposal_number: a.proposal_number,
+              title: a.title,
+              budget_usd: Number(a.budget_usd || 0)
+            }));
+          }
+        } catch (e) {
+          console.warn('Error parsing PP_UNIFIED_ADDITIONALS in PDF:', e);
+        }
+      }
+
+      const origMatch = cleanDescription.match(/<!--\s*PP_ORIGINAL_BUDGET:\s*([\d\.]+)\s*-->/);
+      if (origMatch) {
+        const val = parseFloat(origMatch[1]);
+        if (!isNaN(val)) originalBaseBudget = val;
+      }
+
+      // Remove HTML comment tags from printable lines
+      cleanDescription = cleanDescription
+        .replace(/<!--\s*PP_UNIFIED_ADDITIONALS:[\s\S]*?-->/g, '')
+        .replace(/<!--\s*PP_ORIGINAL_BUDGET:[\s\S]*?-->/g, '')
+        .trim();
+
+      // If there are unified projects, render an initial breakdown banner
+      if (unifiedAdditionals.length > 0) {
+        const baseBudget = originalBaseBudget !== null ? originalBaseBudget : (data.budget_usd || 0);
+        const totalUnified = baseBudget + unifiedAdditionals.reduce((sum, a) => sum + a.budget_usd, 0);
+
+        doc.moveDown(0.5);
+        const bannerStartY = doc.y;
+        const bannerPadding = 8;
+        const totalItems = 1 + unifiedAdditionals.length;
+        const rowHeight = 16;
+        const bannerHeight = 26 + (totalItems * rowHeight) + 24;
+
+        // Background card
+        doc
+          .roundedRect(doc.page.margins.left, bannerStartY, pageWidth, bannerHeight, 4)
+          .fillAndStroke('#F8FAFC', '#CBD5E1');
+
+        // Header
+        doc
+          .fontSize(9.5)
+          .font('Helvetica-Bold')
+          .fillColor('#0284C7')
+          .text(
+            `CONSOLIDACIÓN DE PRESUPUESTOS UNIFICADOS (${totalItems} CONCEPTOS)`,
+            doc.page.margins.left + 10,
+            bannerStartY + 8,
+            { width: pageWidth - 20 }
+          );
+
+        let curRowY = bannerStartY + 24;
+
+        // Base project row
+        doc
+          .fontSize(9)
+          .font('Helvetica-Bold')
+          .fillColor(darkColor)
+          .text(
+            `• Proyecto Principal (${data.proposal_number ? '#' + data.proposal_number : 'Base'}): ${data.title}`,
+            doc.page.margins.left + 12,
+            curRowY,
+            { width: pageWidth - 140 }
+          );
+
+        doc
+          .fontSize(9)
+          .font('Helvetica-Bold')
+          .fillColor('#0F172A')
+          .text(
+            `$${baseBudget.toLocaleString('es-VE', { minimumFractionDigits: 2 })} USD`,
+            doc.page.width - doc.page.margins.right - 120,
+            curRowY,
+            { width: 110, align: 'right' }
+          );
+
+        curRowY += rowHeight;
+
+        // Additional projects rows
+        for (const add of unifiedAdditionals) {
+          doc
+            .fontSize(9)
+            .font('Helvetica')
+            .fillColor('#0369A1')
+            .text(
+              `• Proyecto Unificado (${add.proposal_number ? '#' + add.proposal_number : 'Adicional'}): ${add.title}`,
+              doc.page.margins.left + 12,
+              curRowY,
+              { width: pageWidth - 140 }
+            );
+
+          doc
+            .fontSize(9)
+            .font('Helvetica-Bold')
+            .fillColor('#0369A1')
+            .text(
+              `+ $${add.budget_usd.toLocaleString('es-VE', { minimumFractionDigits: 2 })} USD`,
+              doc.page.width - doc.page.margins.right - 120,
+              curRowY,
+              { width: 110, align: 'right' }
+            );
+
+          curRowY += rowHeight;
+        }
+
+        // Divider line in banner
+        doc
+          .strokeColor('#94A3B8')
+          .lineWidth(0.5)
+          .moveTo(doc.page.margins.left + 10, curRowY + 2)
+          .lineTo(doc.page.width - doc.page.margins.right - 10, curRowY + 2)
+          .stroke();
+
+        // Total Consolidated row
+        doc
+          .fontSize(9.5)
+          .font('Helvetica-Bold')
+          .fillColor(copperColor)
+          .text(
+            'TOTAL PRESUPUESTO CONSOLIDADO:',
+            doc.page.margins.left + 12,
+            curRowY + 6,
+            { width: pageWidth - 140 }
+          );
+
+        doc
+          .fontSize(10)
+          .font('Helvetica-Bold')
+          .fillColor(copperColor)
+          .text(
+            `$${totalUnified.toLocaleString('es-VE', { minimumFractionDigits: 2 })} USD`,
+            doc.page.width - doc.page.margins.right - 120,
+            curRowY + 6,
+            { width: 110, align: 'right' }
+          );
+
+        doc.y = bannerStartY + bannerHeight + 10;
+      }
+
+      const lines = cleanDescription.split('\n');
 
       const headers = [
         'objetivo del proyecto',
@@ -108,7 +259,11 @@ export function generateProposalPdfBuffer(data: ProposalData): Promise<Buffer> {
         'presupuesto de inversión',
         'desglose de inversión',
         'condiciones y métodos de pago',
-        'resumen financiero y ejecución'
+        'resumen financiero y ejecución',
+        'alcance de trabajo adicional vinculado',
+        'trabajo adicional vinculado',
+        'obras adicionales unificadas',
+        'alcance técnico adicional'
       ];
 
       const labels = [
@@ -130,6 +285,42 @@ export function generateProposalPdfBuffer(data: ProposalData): Promise<Buffer> {
         const rawLine = lines[i].trim();
         if (!rawLine) {
           doc.moveDown(0.3);
+          continue;
+        }
+
+        // Ignore HTML comments if any remains
+        if (rawLine.startsWith('<!--') || rawLine.endsWith('-->')) {
+          continue;
+        }
+
+        // Check for unification section separator banner (e.g. --- [UNIFICACIÓN CON PROPUESTA 100134] --- or ════════)
+        if (
+          rawLine.includes('[UNIFICACIÓN CON PROPUESTA') ||
+          rawLine.includes('[UNIFICACION CON PROPUESTA') ||
+          /^[═=\-]{5,}$/.test(rawLine)
+        ) {
+          if (rawLine.includes('[UNIFICACIÓN') || rawLine.includes('[UNIFICACION')) {
+            if (doc.y > doc.page.height - doc.page.margins.bottom - 90) {
+              doc.addPage();
+            } else {
+              doc.moveDown(0.8);
+            }
+            const unifY = doc.y;
+            doc
+              .rect(doc.page.margins.left, unifY, pageWidth, 22)
+              .fillAndStroke('#E0F2FE', '#0284C7');
+
+            const cleanTitle = rawLine.replace(/[\-=\[\]]/g, '').trim();
+            doc
+              .fontSize(9.5)
+              .font('Helvetica-Bold')
+              .fillColor('#0369A1')
+              .text(`🔗 ${cleanTitle}`, doc.page.margins.left + 10, unifY + 5, {
+                width: pageWidth - 20,
+                align: 'center'
+              });
+            doc.y = unifY + 28;
+          }
           continue;
         }
 

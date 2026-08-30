@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS public.projects (
   budget_ves      numeric(18,2) DEFAULT 0,
   progress_pct    integer DEFAULT 0,
   proposal_number integer,
+  notes           text,
   created_at      timestamptz DEFAULT now()
 );
 

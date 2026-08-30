@@ -27,7 +27,9 @@ import {
   RotateCcw,
   Check,
   Ban,
-  BarChart3
+  BarChart3,
+  Save,
+  CheckCircle2
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency, handleMoneyInput, parseCurrency, formatOnBlur } from '@/lib/formatters';
@@ -36,6 +38,7 @@ import TelegramPendingPanel from '@/components/TelegramPendingPanel';
 import ProjectTracking from '@/components/ProjectTracking';
 import Image from 'next/image';
 import { autoPopulateTrackingTasks } from '@/lib/projectTaskHelper';
+import { parseProjectRelation, ProjectRelationInfo } from '@/lib/projectRelationsHelper';
 
 interface Project {
   id: string;
@@ -56,7 +59,10 @@ interface Project {
     address?: string | null;
   };
   archived_at: string | null;
+  notes?: string | null;
   created_at: string;
+  parent_project_id?: string | null;
+  is_additional?: boolean;
 }
 
 interface Payment {
@@ -138,7 +144,12 @@ export default function ProjectDashboard() {
   const [advances, setAdvances] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [isPrintingReport, setIsPrintingReport] = useState(false);
-  const [activeTab, setActiveTab] = useState<'pagos' | 'gastos' | 'cuentas_pagar' | 'retiros' | 'adicionales' | 'seguimiento'>('pagos');
+  const [activeTab, setActiveTab] = useState<'pagos' | 'gastos' | 'cuentas_pagar' | 'retiros' | 'adicionales' | 'seguimiento' | 'notas'>('pagos');
+
+  // Estado para Notas del Proyecto
+  const [projectNotes, setProjectNotes] = useState('');
+  const [savingNotes, setSavingNotes] = useState(false);
+  const [notesSaved, setNotesSaved] = useState(false);
 
   // Estado para impresión y detalles de cuentas por pagar
   const [activePrintJob, setActivePrintJob] = useState<'none' | 'project-report' | 'client-statement' | 'payable-voucher'>('none');
@@ -163,6 +174,7 @@ export default function ProjectDashboard() {
   const [extraForm, setExtraForm] = useState({ description: '', amount_usd: '' });
   const [advanceForm, setAdvanceForm] = useState({ partner_name: 'Henry Peraza', amount_usd: '', description: '', date: new Date().toISOString().split('T')[0] });
   const [payableForm, setPayableForm] = useState({ description: '', provider: '', category: 'materials', type: 'proveedor', quantity: 1, unit_price_usd: '', total_amount_usd: '', date: new Date().toISOString().split('T')[0] });
+  const [projectRelation, setProjectRelation] = useState<ProjectRelationInfo | null>(null);
 
   // Estado para pagos a cuentas por pagar
   const [showPayablePayModal, setShowPayablePayModal] = useState(false);
@@ -218,7 +230,7 @@ export default function ProjectDashboard() {
         setActiveTab('cuentas_pagar');
       } else if (tabParam === 'adicionales' || tabParam === 'detalles' || tabParam === 'propuesta_adicionales') {
         setActiveTab('adicionales');
-      } else if (tabParam === 'gastos' || tabParam === 'pagos' || tabParam === 'retiros' || tabParam === 'seguimiento') {
+      } else if (tabParam === 'gastos' || tabParam === 'pagos' || tabParam === 'retiros' || tabParam === 'seguimiento' || tabParam === 'notas') {
         setActiveTab(tabParam as any);
       }
     }
@@ -331,6 +343,39 @@ export default function ProjectDashboard() {
       }
 
       setProject(projectRes.data);
+
+      // Obtener todos los proyectos del cliente para detectar relaciones padre/hijo
+      let allClientProjects: any[] = [];
+      if (projectRes.data?.client_id) {
+        const { data: clientProjs } = await supabase
+          .from('projects')
+          .select('id, title, proposal_number, budget_usd, description, status, parent_project_id, created_at')
+          .eq('client_id', projectRes.data.client_id);
+        allClientProjects = clientProjs || [];
+      }
+
+      const relationInfo = parseProjectRelation(projectRes.data, allClientProjects);
+      setProjectRelation(relationInfo);
+
+      // Cargar notas del proyecto (con fallback a global_settings si la columna notes aún no existe en Supabase)
+      if (projectRes.data?.notes) {
+        setProjectNotes(projectRes.data.notes);
+      } else {
+        try {
+          const { data: noteSetting } = await supabase
+            .from('global_settings')
+            .select('setting_value')
+            .eq('setting_key', `project_notes_${projectId}`)
+            .maybeSingle();
+          if (noteSetting?.setting_value?.text) {
+            setProjectNotes(noteSetting.setting_value.text);
+          } else if (typeof noteSetting?.setting_value === 'string') {
+            setProjectNotes(noteSetting.setting_value);
+          }
+        } catch {
+          // Fallback silencioso si global_settings no contiene la clave
+        }
+      }
       setPayments(paymentsRes.data || []);
       setCosts(costsRes.data || []);
       setExtras(extrasRes.data || []);
@@ -902,6 +947,42 @@ export default function ProjectDashboard() {
     }
   }
 
+  async function handleSaveNotes() {
+    if (!projectId) return;
+    setSavingNotes(true);
+    try {
+      // 1. Intentar actualizar directamente la columna notes en projects
+      const { error: projError } = await supabase
+        .from('projects')
+        .update({ notes: projectNotes })
+        .eq('id', projectId);
+
+      if (projError) {
+        console.warn('Fallo al actualizar columna notes en projects, guardando en global_settings:', projError.message);
+        // 2. Fallback resiliente a global_settings si la columna aún no existe
+        const { error: settingsError } = await supabase
+          .from('global_settings')
+          .upsert({
+            setting_key: `project_notes_${projectId}`,
+            setting_value: { text: projectNotes, updated_at: new Date().toISOString() }
+          }, { onConflict: 'setting_key' });
+
+        if (settingsError) throw settingsError;
+      }
+
+      setNotesSaved(true);
+      if (project) {
+        setProject({ ...project, notes: projectNotes });
+      }
+      setTimeout(() => setNotesSaved(false), 3000);
+    } catch (err: any) {
+      console.error('Error al guardar notas del proyecto:', err);
+      alert('Error al guardar notas: ' + (err.message || err));
+    } finally {
+      setSavingNotes(false);
+    }
+  }
+
   if (loading) {
     return (
       <div className="animate-fade" style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
@@ -957,6 +1038,16 @@ export default function ProjectDashboard() {
             {project.archived_at && (
               <span className="badge" style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)', fontSize: '0.7rem' }}>
                 Archivado {new Date(project.archived_at).toLocaleDateString()}
+              </span>
+            )}
+            {projectRelation?.isAdditional && projectRelation.parentProject && (
+              <span className="badge" style={{ background: 'rgba(234, 88, 12, 0.2)', color: '#fb923c', border: '1px solid rgba(234, 88, 12, 0.4)', fontSize: '0.75rem', fontWeight: 600 }}>
+                🔗 Adicional de {projectRelation.parentProject.proposal_number ? `#${projectRelation.parentProject.proposal_number}` : 'Obra Principal'}
+              </span>
+            )}
+            {!projectRelation?.isAdditional && projectRelation?.additionals && projectRelation.additionals.length > 0 && (
+              <span className="badge" style={{ background: 'rgba(16, 185, 129, 0.15)', color: '#34d399', border: '1px solid rgba(16, 185, 129, 0.3)', fontSize: '0.75rem', fontWeight: 600 }}>
+                ⭐ Principal (+{projectRelation.additionals.length} Adicional{projectRelation.additionals.length === 1 ? '' : 'es'})
               </span>
             )}
           </div>
@@ -1095,6 +1186,45 @@ export default function ProjectDashboard() {
         />
       )}
 
+      {/* Banner de Proyectos Unificados */}
+      {projectRelation?.additionals && projectRelation.additionals.length > 0 && !projectRelation.isAdditional && (
+        <div style={{
+          background: 'linear-gradient(135deg, rgba(14, 165, 233, 0.08) 0%, rgba(2, 132, 199, 0.03) 100%)',
+          border: '1px solid rgba(14, 165, 233, 0.25)',
+          borderRadius: '12px',
+          padding: '1rem 1.25rem',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '0.6rem'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <span style={{ fontSize: '1.1rem' }}>🔗</span>
+              <strong style={{ color: '#38bdf8', fontSize: '0.95rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                Proyectos Unificados ({1 + projectRelation.additionals.length} Conceptos Consolidados)
+              </strong>
+            </div>
+            <span style={{ fontSize: '0.8rem', color: '#94a3b8' }}>
+              Presupuesto Total Consolidado: <strong style={{ color: 'white', fontSize: '0.9rem' }}>${Number(project.budget_usd).toLocaleString('es-VE', { minimumFractionDigits: 2 })} USD</strong>
+            </span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '0.75rem', marginTop: '0.2rem' }}>
+            <div style={{ background: 'rgba(255, 255, 255, 0.03)', padding: '0.6rem 0.8rem', borderRadius: '8px', border: '1px solid rgba(255, 255, 255, 0.06)' }}>
+              <div style={{ fontSize: '0.72rem', color: '#94a3b8', textTransform: 'uppercase', fontWeight: 600 }}>Proyecto Base Principal (#{project.proposal_number || 'Base'})</div>
+              <div style={{ color: 'white', fontWeight: 600, fontSize: '0.85rem', margin: '0.2rem 0' }}>{project.title}</div>
+              <div style={{ color: '#38bdf8', fontWeight: 700, fontSize: '0.9rem' }}>${projectRelation.originalBudgetUsd.toLocaleString('es-VE', { minimumFractionDigits: 2 })} USD</div>
+            </div>
+            {projectRelation.additionals.map((a: any, idx: number) => (
+              <div key={a.id || idx} style={{ background: 'rgba(14, 165, 233, 0.05)', padding: '0.6rem 0.8rem', borderRadius: '8px', border: '1px solid rgba(14, 165, 233, 0.15)' }}>
+                <div style={{ fontSize: '0.72rem', color: '#7dd3fc', textTransform: 'uppercase', fontWeight: 600 }}>Proyecto Unificado (#{a.proposal_number || 'Adicional'})</div>
+                <div style={{ color: 'white', fontWeight: 600, fontSize: '0.85rem', margin: '0.2rem 0' }}>{a.title}</div>
+                <div style={{ color: '#38bdf8', fontWeight: 700, fontSize: '0.9rem' }}>${Number(a.budget_usd || 0).toLocaleString('es-VE', { minimumFractionDigits: 2 })} USD</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '1.25rem' }}>
         {/* 1. MONTO DEL PROYECTO */}
         <div className="card" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.4rem', background: 'linear-gradient(145deg, rgba(255,255,255,0.03) 0%, rgba(0,0,0,0) 100%)' }}>
@@ -1219,6 +1349,13 @@ export default function ProjectDashboard() {
               onClick={() => setActiveTab('seguimiento')}
             >📋 Seguimiento</button>
           )}
+          <button
+            className={`btn-secondary ${activeTab === 'notas' ? 'btn-primary' : ''}`}
+            style={{ padding: '0.5rem 1rem', background: activeTab === 'notas' ? '#f59e0b' : 'transparent', border: 'none', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '0.4rem' }}
+            onClick={() => setActiveTab('notas')}
+          >
+            <FileText size={15} /> Notas
+          </button>
         </div>
 
         {/* TAB: PAGOS */}
@@ -1532,6 +1669,65 @@ export default function ProjectDashboard() {
               )}
             </div>
 
+            {/* SECCIÓN DE PRESUPUESTOS / PROYECTOS UNIFICADOS */}
+            {projectRelation?.additionals && projectRelation.additionals.length > 0 && (
+              <div style={{ background: 'linear-gradient(135deg, rgba(14, 165, 233, 0.08) 0%, rgba(2, 132, 199, 0.03) 100%)', border: '1px solid rgba(14, 165, 233, 0.3)', borderRadius: '12px', padding: '1.25rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.8rem', marginBottom: '1rem', borderBottom: '1px solid rgba(14, 165, 233, 0.2)', paddingBottom: '0.6rem' }}>
+                  <div>
+                    <h4 style={{ margin: 0, color: '#38bdf8', fontSize: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <span>🔗</span> Presupuestos Unificados al Contrato Principal
+                    </h4>
+                    <p style={{ margin: '0.2rem 0 0 0', fontSize: '0.8rem', color: '#94a3b8' }}>
+                      Presupuestos y obras adicionales aprobados e integrados al valor de este proyecto.
+                    </p>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>Suma Adicionales Unificados:</span>
+                    <div style={{ fontSize: '1.1rem', fontWeight: 800, color: '#38bdf8' }}>
+                      +${projectRelation.totalAdditionalsBudget.toLocaleString('es-VE', { minimumFractionDigits: 2 })} USD
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '0.8rem' }}>
+                  <div style={{ background: 'rgba(255, 255, 255, 0.03)', padding: '0.8rem 1rem', borderRadius: '8px', border: '1px solid rgba(255, 255, 255, 0.08)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontSize: '0.72rem', color: '#94a3b8', textTransform: 'uppercase', fontWeight: 700 }}>Contrato Base (#{project.proposal_number || 'Principal'})</span>
+                      <span style={{ fontSize: '0.7rem', padding: '0.1rem 0.4rem', borderRadius: '4px', background: 'rgba(255,255,255,0.1)', color: '#e2e8f0' }}>Base</span>
+                    </div>
+                    <div style={{ color: 'white', fontWeight: 600, fontSize: '0.9rem', margin: '0.4rem 0' }}>{project.title}</div>
+                    <div style={{ color: '#f8fafc', fontWeight: 700, fontSize: '1rem' }}>
+                      ${projectRelation.originalBudgetUsd.toLocaleString('es-VE', { minimumFractionDigits: 2 })} USD
+                    </div>
+                  </div>
+
+                  {projectRelation.additionals.map((add: any, idx: number) => (
+                    <div key={add.id || idx} style={{ background: 'rgba(14, 165, 233, 0.06)', padding: '0.8rem 1rem', borderRadius: '8px', border: '1px solid rgba(14, 165, 233, 0.25)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: '0.72rem', color: '#38bdf8', textTransform: 'uppercase', fontWeight: 700 }}>
+                          {add.proposal_number ? `Propuesta #${add.proposal_number}` : 'Trabajo Adicional'}
+                        </span>
+                        <span style={{ fontSize: '0.7rem', padding: '0.1rem 0.4rem', borderRadius: '4px', background: 'rgba(14, 165, 233, 0.2)', color: '#7dd3fc', fontWeight: 600 }}>
+                          Unificado
+                        </span>
+                      </div>
+                      <div style={{ color: 'white', fontWeight: 600, fontSize: '0.9rem', margin: '0.4rem 0' }}>{add.title}</div>
+                      <div style={{ color: '#38bdf8', fontWeight: 700, fontSize: '1rem' }}>
+                        +${Number(add.budget_usd || 0).toLocaleString('es-VE', { minimumFractionDigits: 2 })} USD
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div style={{ marginTop: '0.8rem', paddingTop: '0.6rem', borderTop: '1px dashed rgba(14, 165, 233, 0.2)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.85rem' }}>
+                  <span style={{ color: '#94a3b8' }}>Total Presupuesto Consolidado de la Obra:</span>
+                  <span style={{ color: 'white', fontWeight: 800, fontSize: '1rem' }}>
+                    ${Number(project.budget_usd || 0).toLocaleString('es-VE', { minimumFractionDigits: 2 })} USD
+                  </span>
+                </div>
+              </div>
+            )}
+
             {extras.length === 0 ? (
               <div style={{ padding: '3.5rem 1.5rem', textAlign: 'center', color: 'var(--text-muted)', background: 'rgba(0,0,0,0.2)', borderRadius: '10px', border: '1px solid var(--border-color)' }}>
                 <PlusCircle size={44} style={{ margin: '0 auto 1rem auto', display: 'block', opacity: 0.35, color: 'var(--accent-blue)' }} />
@@ -1639,7 +1835,80 @@ export default function ProjectDashboard() {
               clientData={project?.clients}
               projectDescription={project?.description || ''}
               startDate={project?.start_date}
+              isAdditional={projectRelation?.isAdditional}
+              parentProject={projectRelation?.parentProject}
+              additionals={projectRelation?.additionals}
             />
+          </div>
+        )}
+
+        {/* TAB: NOTAS DEL PROYECTO */}
+        {activeTab === 'notas' && (
+          <div className="animate-fade" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
+              <div>
+                <h3 style={{ fontSize: '1.15rem', fontWeight: 700, margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'white' }}>
+                  <FileText size={20} style={{ color: '#f59e0b' }} /> Notas del Proyecto
+                </h3>
+                <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+                  Espacio centralizado para bitácora, acuerdos con el cliente, apuntes técnicos de obra o pendientes del equipo.
+                </p>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                {notesSaved && (
+                  <span style={{ color: 'var(--success)', fontSize: '0.85rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.3rem', background: 'rgba(16,185,129,0.1)', padding: '0.35rem 0.75rem', borderRadius: '6px', border: '1px solid rgba(16,185,129,0.25)' }}>
+                    <CheckCircle2 size={16} /> Cambios guardados
+                  </span>
+                )}
+                {canEdit && (
+                  <button
+                    className="btn-primary"
+                    onClick={handleSaveNotes}
+                    disabled={savingNotes}
+                    style={{ minWidth: '160px', justifyContent: 'center', display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.55rem 1.25rem' }}
+                  >
+                    <Save size={17} />
+                    {savingNotes ? 'Guardando...' : 'Guardar Notas'}
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div style={{ position: 'relative' }}>
+              <textarea
+                className="input-field"
+                style={{
+                  width: '100%',
+                  minHeight: '320px',
+                  resize: 'vertical',
+                  fontFamily: 'inherit',
+                  fontSize: '0.92rem',
+                  lineHeight: '1.6',
+                  padding: '1rem 1.25rem',
+                  background: 'rgba(0,0,0,0.25)',
+                  borderRadius: '10px',
+                  border: '1px solid var(--border-color)',
+                  color: 'white'
+                }}
+                placeholder="Escribe aquí las notas del proyecto: bitácora de obra, acuerdos comerciales, especificaciones técnicas, números de contacto o temas pendientes..."
+                value={projectNotes}
+                onChange={(e) => setProjectNotes(e.target.value)}
+                disabled={!canEdit}
+                onKeyDown={(e) => {
+                  // Atajo de teclado: Ctrl+Enter o Cmd+Enter para guardar notas
+                  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                    e.preventDefault();
+                    if (canEdit && !savingNotes) {
+                      handleSaveNotes();
+                    }
+                  }
+                }}
+              />
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.4rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                <span>💡 Tip: Presiona <kbd style={{ padding: '0.1rem 0.35rem', background: 'rgba(255,255,255,0.08)', borderRadius: '4px', border: '1px solid rgba(255,255,255,0.15)', fontSize: '0.7rem' }}>Ctrl + Enter</kbd> para guardar rápidamente.</span>
+                <span>{projectNotes.length} caracteres</span>
+              </div>
+            </div>
           </div>
         )}
         </div>
@@ -2229,6 +2498,16 @@ export default function ProjectDashboard() {
                 <div><strong>Proyecto:</strong> {project.title}</div>
                 <div><strong>Estado:</strong> {project.status === 'completed' ? 'Completado' : 'En Ejecución'}</div>
                 <div><strong>Fecha de Inicio:</strong> {new Date(project.created_at).toLocaleDateString('es-VE')}</div>
+                {projectRelation?.isAdditional && projectRelation.parentProject && (
+                  <div style={{ marginTop: '4px', color: '#c2410c', fontWeight: 600 }}>
+                    <strong>Tipo:</strong> OBRA ADICIONAL vinculada a Obra #{projectRelation.parentProject.proposal_number || 'S/N'} ({projectRelation.parentProject.title})
+                  </div>
+                )}
+                {!projectRelation?.isAdditional && projectRelation?.additionals && projectRelation.additionals.length > 0 && (
+                  <div style={{ marginTop: '4px', color: '#15803d', fontWeight: 600 }}>
+                    <strong>Tipo:</strong> CONTRATO PRINCIPAL (+{projectRelation.additionals.length} Adicional{projectRelation.additionals.length === 1 ? '' : 'es'} unificado{projectRelation.additionals.length === 1 ? '' : 's'})
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -2238,12 +2517,26 @@ export default function ProjectDashboard() {
           <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '1.8rem', fontSize: '13px' }}>
             <tbody>
               <tr>
-                <td style={{ padding: '0.6rem 0.8rem', border: '1px solid #cbd5e1', background: '#f8fafc', width: '60%' }}>Presupuesto Base Acordado:</td>
-                <td style={{ padding: '0.6rem 0.8rem', border: '1px solid #cbd5e1', width: '40%', textAlign: 'right', fontWeight: 600 }}>${formatCurrency(baseBudget)}</td>
+                <td style={{ padding: '0.6rem 0.8rem', border: '1px solid #cbd5e1', background: '#f8fafc', width: '60%' }}>
+                  Presupuesto Base Acordado (Original):
+                </td>
+                <td style={{ padding: '0.6rem 0.8rem', border: '1px solid #cbd5e1', width: '40%', textAlign: 'right', fontWeight: 600 }}>
+                  ${formatCurrency(projectRelation?.originalBudgetUsd || baseBudget)}
+                </td>
               </tr>
+              {projectRelation?.additionals && projectRelation.additionals.length > 0 && (
+                <tr>
+                  <td style={{ padding: '0.6rem 0.8rem', border: '1px solid #cbd5e1', background: '#f8fafc' }}>
+                    Proyectos Adicionales Unificados ({projectRelation.additionals.length}):
+                  </td>
+                  <td style={{ padding: '0.6rem 0.8rem', border: '1px solid #cbd5e1', textAlign: 'right', fontWeight: 600, color: '#15803d' }}>
+                    + ${formatCurrency(projectRelation.totalAdditionalsBudget)}
+                  </td>
+                </tr>
+              )}
               {extras.length > 0 && (
                 <tr>
-                  <td style={{ padding: '0.6rem 0.8rem', border: '1px solid #cbd5e1', background: '#f8fafc' }}>Trabajos Adicionales Aprobados ({extras.length}):</td>
+                  <td style={{ padding: '0.6rem 0.8rem', border: '1px solid #cbd5e1', background: '#f8fafc' }}>Partidas Adicionales de Proyecto ({extras.length}):</td>
                   <td style={{ padding: '0.6rem 0.8rem', border: '1px solid #cbd5e1', textAlign: 'right', fontWeight: 600, color: '#0369a1' }}>+ ${formatCurrency(totalExtra)}</td>
                 </tr>
               )}
@@ -2270,7 +2563,7 @@ export default function ProjectDashboard() {
             <thead>
               <tr style={{ background: '#f1f5f9' }}>
                 <th style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'left' }}>CONCEPTO / DESCRIPCIÓN</th>
-                <th style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'center', width: '120px' }}>TIPO</th>
+                <th style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'center', width: '140px' }}>TIPO</th>
                 <th style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'right', width: '140px' }}>MONTO (USD)</th>
               </tr>
             </thead>
@@ -2280,9 +2573,25 @@ export default function ProjectDashboard() {
                   <strong>Presupuesto Base Original</strong>
                   <div style={{ fontSize: '11px', color: '#64748b' }}>{project.title}</div>
                 </td>
-                <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'center', color: '#475569' }}>Contrato Base</td>
-                <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'right', fontWeight: 600 }}>${formatCurrency(baseBudget)}</td>
+                <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'center', color: '#475569' }}>Contrato Base Original</td>
+                <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'right', fontWeight: 600 }}>
+                  ${formatCurrency(projectRelation?.originalBudgetUsd || baseBudget)}
+                </td>
               </tr>
+              {projectRelation?.additionals?.map((add, idx) => (
+                <tr key={idx} style={{ background: '#f0fdf4' }}>
+                  <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem' }}>
+                    <strong>{add.proposal_number ? `Propuesta Adicional #${add.proposal_number}: ` : ''}{add.title}</strong>
+                    <div style={{ fontSize: '11px', color: '#166534' }}>Obra Adicional Unificada</div>
+                  </td>
+                  <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'center', color: '#15803d', fontWeight: 600 }}>
+                    Adicional Unificado
+                  </td>
+                  <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'right', fontWeight: 600, color: '#15803d' }}>
+                    + ${formatCurrency(add.budget_usd || 0)}
+                  </td>
+                </tr>
+              ))}
               {extras.map(e => (
                 <tr key={e.id}>
                   <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem' }}>
@@ -2363,9 +2672,31 @@ export default function ProjectDashboard() {
           <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '16px' }}>PROYECTO: {project.title}</h3>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', fontSize: '12px' }}>
             <div><strong>Cliente:</strong> {project.clients?.name}</div>
-            <div><strong>Presupuesto Original:</strong> ${formatCurrency(project.budget_usd)}</div>
+            <div><strong>Presupuesto Contrato Base:</strong> ${formatCurrency(projectRelation?.originalBudgetUsd || project.budget_usd)}</div>
             <div><strong>Estado Actual:</strong> {project.status === 'proposal' ? 'PROPUESTA' : project.status === 'in_progress' ? 'EN EJECUCIÓN' : 'COMPLETADO'}</div>
             <div><strong>Fecha de Inicio:</strong> {new Date(project.created_at).toLocaleDateString('es-VE')}</div>
+            {projectRelation?.isAdditional && projectRelation.parentProject && (
+              <div style={{ gridColumn: 'span 2', color: '#c2410c', fontWeight: 600, marginTop: '0.3rem' }}>
+                🔗 TIPO: OBRA ADICIONAL vinculada a la Obra #{projectRelation.parentProject.proposal_number || 'S/N'} ({projectRelation.parentProject.title})
+              </div>
+            )}
+            {!projectRelation?.isAdditional && projectRelation?.additionals && projectRelation.additionals.length > 0 && (
+              <div style={{ gridColumn: 'span 2', marginTop: '0.5rem', padding: '0.6rem 0.8rem', background: '#e0f2fe', borderRadius: '6px', border: '1px solid #bae6fd' }}>
+                <div style={{ fontSize: '11px', fontWeight: 700, color: '#0369a1', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '4px' }}>
+                  🔗 PROYECTOS UNIFICADOS ({1 + projectRelation.additionals.length} CONCEPTOS CONSOLIDADOS)
+                </div>
+                <div style={{ fontSize: '12px', color: '#0f172a', display: 'flex', justifyContent: 'space-between', marginBottom: '3px' }}>
+                  <span>• <strong>Proyecto Principal ({project.proposal_number ? `#${project.proposal_number}` : 'Base'}):</strong> {project.title}</span>
+                  <strong style={{ whiteSpace: 'nowrap', marginLeft: '8px' }}>${formatCurrency(projectRelation.originalBudgetUsd)} USD</strong>
+                </div>
+                {projectRelation.additionals.map((a: any, aIdx: number) => (
+                  <div key={a.id || aIdx} style={{ fontSize: '12px', color: '#0369a1', display: 'flex', justifyContent: 'space-between' }}>
+                    <span>• <strong>Proyecto Unificado ({a.proposal_number ? `#${a.proposal_number}` : 'Adicional'}):</strong> {a.title}</span>
+                    <strong style={{ whiteSpace: 'nowrap', marginLeft: '8px' }}>${formatCurrency(a.budget_usd)} USD</strong>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 

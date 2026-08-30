@@ -50,6 +50,7 @@ import NewProposalModal from '@/components/NewProposalModal';
 import TelegramPendingPanel from '@/components/TelegramPendingPanel';
 import { useUser } from '@/lib/UserContext';
 import { useAdminAction } from '@/lib/useAdminAction';
+import { parseProjectRelation, executeProjectUnification } from '@/lib/projectRelationsHelper';
 
 interface Client {
   id: string;
@@ -647,52 +648,24 @@ export default function ClienteDashboard() {
 
     setMerging(true);
     try {
-      const primary = projects.find(p => p.id === primaryProjectId);
-      const secondary = projects.find(p => p.id === secondaryProjectId);
+      const result = await executeProjectUnification({
+        targetProjectId: primaryProjectId,
+        sourceProjectIds: [secondaryProjectId],
+        projectsList: projects
+      });
 
-      if (!primary || !secondary) throw new Error("Proyecto no encontrado");
-
-      const newBudget = Number(primary.budget_usd) + Number(secondary.budget_usd);
-      const newDescription = `${primary.description || ''}\n\n--- [UNIFICACIÓN CON PROPUESTA ${secondary.proposal_number || 'S/N'}] ---\n\n${secondary.description || ''}`.trim();
-
-      // 1. Actualizar el proyecto principal
-      const { error: updateError } = await supabase
-        .from('projects')
-        .update({ budget_usd: newBudget, description: newDescription })
-        .eq('id', primaryProjectId);
-      if (updateError) throw updateError;
-
-      // 2. Transferir registros
-      const transferData = async (table: string) => {
-        const { error } = await supabase
-          .from(table)
-          .update({ project_id: primaryProjectId })
-          .eq('project_id', secondaryProjectId);
-        if (error) throw error;
-      };
-
-      await Promise.all([
-        transferData('project_payments'),
-        transferData('project_costs'),
-        transferData('project_extras'),
-        transferData('project_commitments'),
-        transferData('partner_advances')
-      ]);
-
-      // 3. Eliminar el proyecto secundario
-      const { error: deleteError } = await supabase
-        .from('projects')
-        .delete()
-        .eq('id', secondaryProjectId);
-      if (deleteError) throw deleteError;
+      if (!result.success) {
+        throw new Error(result.error || 'Error al unificar proyectos');
+      }
 
       setShowMergeModal(false);
       setPrimaryProjectId('');
       setSecondaryProjectId('');
       await fetchClientData();
-    } catch (error: any) {
-      console.error("Error al unificar:", error);
-      alert("Error al unificar proyectos: " + error.message);
+      alert("¡Proyectos unificados con éxito! El proyecto secundario quedó vinculado como Proyecto Adicional y se conservó todo su desglose financiero e histórico.");
+    } catch (err: any) {
+      console.error("Error al unificar proyectos:", err);
+      alert(`Error al unificar proyectos: ${err.message}`);
     } finally {
       setMerging(false);
     }
@@ -2101,14 +2074,14 @@ export default function ClienteDashboard() {
           <div className="card" style={{ display: 'flex', flexDirection: 'column' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
               <h3 style={{ fontSize: '1.1rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0 }}>
-                <FileText size={18} className="text-muted" /> Notas del Cliente
+                <FileText size={18} className="text-muted" /> Notas
               </h3>
               {settingsSaved && <span style={{ color: 'var(--success)', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.25rem' }}><CheckCircle2 size={14} /> Guardado</span>}
             </div>
             <textarea 
               className="input-field"
               style={{ flex: 1, resize: 'vertical', minHeight: '120px', fontFamily: 'inherit', lineHeight: '1.5' }}
-              placeholder="Acuerdos, pendientes o información específica..."
+              placeholder="Notas generales, acuerdos, pendientes o información relevante..."
               value={clientNotes}
               onChange={(e) => setClientNotes(e.target.value)}
             />
@@ -2520,8 +2493,22 @@ export default function ClienteDashboard() {
             })()}
 
             {/* Botones */}
-            <div style={{ display: 'flex', gap: '0.75rem' }}>
+            <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
               <button className="btn-secondary" style={{ flex: 1 }} onClick={() => setShowPrintModal(false)}>Cancelar</button>
+              {printMode === 'partner-report' && (
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  style={{ flex: 1, justifyContent: 'center', display: 'flex', alignItems: 'center', gap: '0.5rem', borderColor: 'rgba(139, 92, 246, 0.4)', color: '#c4b5fd' }}
+                  onClick={() => {
+                    const firstId = Array.from(selectedProjectIds)[0];
+                    const url = `/api/clientes/${clientId}/reporte-socios-pdf${firstId && selectedProjectIds.size === 1 ? `?project_id=${firstId}&format=pdf` : '?format=pdf'}`;
+                    window.open(url, '_blank');
+                  }}
+                >
+                  <FileText size={15} /> Descargar PDF
+                </button>
+              )}
               <button
                 className="btn-primary"
                 style={{ flex: 2, justifyContent: 'center', display: 'flex', alignItems: 'center', gap: '0.5rem', opacity: selectedProjectIds.size === 0 ? 0.5 : 1, cursor: selectedProjectIds.size === 0 ? 'not-allowed' : 'pointer' }}
@@ -2612,13 +2599,49 @@ export default function ClienteDashboard() {
               <tbody>
                 {printProjects.map((p: any) => {
                   const pExtras = p.project_extras?.reduce((acc: number, e: any) => acc + Number(e.amount_usd), 0) || 0;
+                  const rel = parseProjectRelation(p, printProjects);
                   const pTotal = Number(p.budget_usd) + pExtras;
                   return (
-                    <tr key={p.id}>
-                      <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem' }}>{p.proposal_number ? `#${p.proposal_number} - ` : ''}{p.title}</td>
+                    <tr key={p.id} style={{ background: rel.isAdditional ? '#fff7ed' : 'transparent' }}>
+                      <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem' }}>
+                        {rel.isOriginalWithAdditionals && (
+                          <div style={{ display: 'inline-block', fontSize: '10px', fontWeight: 700, background: '#e0f2fe', color: '#0369a1', padding: '2px 6px', borderRadius: '4px', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px', border: '1px solid #bae6fd' }}>
+                            🔗 Proyectos Unificados ({1 + rel.additionals.length})
+                          </div>
+                        )}
+                        <div style={{ fontWeight: 600 }}>
+                          {p.proposal_number ? `#${p.proposal_number} - ` : ''}{p.title}
+                        </div>
+                        {rel.isAdditional && rel.parentProject && (
+                          <div style={{ fontSize: '11px', color: '#c2410c', fontWeight: 600, marginTop: '3px' }}>
+                            ↳ Obra Adicional vinculada al Proyecto #{rel.parentProject.proposal_number || 'S/N'} ({rel.parentProject.title})
+                          </div>
+                        )}
+                        {!rel.isAdditional && rel.additionals.length > 0 && (
+                          <div style={{ marginTop: '6px', padding: '6px 8px', background: '#f8fafc', borderLeft: '3px solid #0284c7', borderRadius: '2px', fontSize: '11px' }}>
+                            <div style={{ fontWeight: 700, color: '#0f172a', marginBottom: '4px', textTransform: 'uppercase', fontSize: '10px' }}>
+                              Desglose de Conceptos Originales Unificados:
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px', color: '#334155' }}>
+                              <span>• <strong>Proyecto Principal ({p.proposal_number ? `#${p.proposal_number}` : 'Base'}):</strong> {p.title}</span>
+                              <strong style={{ whiteSpace: 'nowrap', marginLeft: '8px' }}>${formatCurrency(rel.originalBudgetUsd)} USD</strong>
+                            </div>
+                            {rel.additionals.map((a: any, aIdx: number) => (
+                              <div key={a.id || aIdx} style={{ display: 'flex', justifyContent: 'space-between', marginTop: '2px', color: '#0369a1' }}>
+                                <span>• <strong>Proyecto Unificado ({a.proposal_number ? `#${a.proposal_number}` : 'Adicional'}):</strong> {a.title}</span>
+                                <strong style={{ whiteSpace: 'nowrap', marginLeft: '8px' }}>${formatCurrency(a.budget_usd)} USD</strong>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </td>
                       <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'center' }}>{new Date(p.created_at).toLocaleDateString('es-VE')}</td>
-                      <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'right' }}>${formatCurrency(p.budget_usd)}</td>
-                      <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'right' }}>${formatCurrency(pExtras)}</td>
+                      <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'right' }}>
+                        ${formatCurrency(rel.originalBudgetUsd || p.budget_usd)}
+                      </td>
+                      <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'right', color: (rel.totalAdditionalsBudget > 0 || pExtras > 0) ? '#0284c7' : 'inherit' }}>
+                        ${formatCurrency(pExtras + (rel.isOriginalWithAdditionals ? rel.totalAdditionalsBudget : 0))}
+                      </td>
                       <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'right', fontWeight: 'bold' }}>${formatCurrency(pTotal)}</td>
                     </tr>
                   );
@@ -2785,13 +2808,43 @@ export default function ClienteDashboard() {
               <tbody>
                 {printProjects.map((p: any) => {
                   const pExtras = p.project_extras?.reduce((acc: number, e: any) => acc + Number(e.amount_usd), 0) || 0;
+                  const rel = parseProjectRelation(p, printProjects);
                   const pTotal = Number(p.budget_usd) + pExtras;
                   return (
-                    <tr key={p.id}>
-                      <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{p.proposal_number ? `#${p.proposal_number} - ` : ''}{p.title}</td>
+                    <tr key={p.id} style={{ background: rel.isAdditional ? '#fff7ed' : 'transparent' }}>
+                      <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>
+                        {rel.isOriginalWithAdditionals && (
+                          <div style={{ display: 'inline-block', fontSize: '10px', fontWeight: 700, background: '#e0f2fe', color: '#0369a1', padding: '2px 6px', borderRadius: '4px', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px', border: '1px solid #bae6fd' }}>
+                            🔗 Proyectos Unificados ({1 + rel.additionals.length})
+                          </div>
+                        )}
+                        <div><strong>{p.proposal_number ? `#${p.proposal_number} - ` : ''}{p.title}</strong></div>
+                        {rel.isAdditional && rel.parentProject && (
+                          <div style={{ fontSize: '11px', color: '#c2410c', fontWeight: 600, marginTop: '3px' }}>
+                            ↳ Adicional vinculado a #{rel.parentProject.proposal_number || 'S/N'} ({rel.parentProject.title})
+                          </div>
+                        )}
+                        {!rel.isAdditional && rel.additionals.length > 0 && (
+                          <div style={{ marginTop: '6px', padding: '6px 8px', background: '#f8fafc', borderLeft: '3px solid #0284c7', borderRadius: '2px', fontSize: '11px' }}>
+                            <div style={{ fontWeight: 700, color: '#0f172a', marginBottom: '4px', textTransform: 'uppercase', fontSize: '10px' }}>
+                              Desglose de Conceptos Originales Unificados:
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px', color: '#334155' }}>
+                              <span>• <strong>Proyecto Principal ({p.proposal_number ? `#${p.proposal_number}` : 'Base'}):</strong> {p.title}</span>
+                              <strong style={{ whiteSpace: 'nowrap', marginLeft: '8px' }}>${formatCurrency(rel.originalBudgetUsd)} USD</strong>
+                            </div>
+                            {rel.additionals.map((a: any, aIdx: number) => (
+                              <div key={a.id || aIdx} style={{ display: 'flex', justifyContent: 'space-between', marginTop: '2px', color: '#0369a1' }}>
+                                <span>• <strong>Proyecto Unificado ({a.proposal_number ? `#${a.proposal_number}` : 'Adicional'}):</strong> {a.title}</span>
+                                <strong style={{ whiteSpace: 'nowrap', marginLeft: '8px' }}>${formatCurrency(a.budget_usd)} USD</strong>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </td>
                       <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'center' }}>{new Date(p.created_at).toLocaleDateString('es-VE')}</td>
-                      <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>${formatCurrency(p.budget_usd)}</td>
-                      <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>${formatCurrency(pExtras)}</td>
+                      <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>${formatCurrency(rel.originalBudgetUsd || p.budget_usd)}</td>
+                      <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>${formatCurrency(pExtras + (rel.isOriginalWithAdditionals ? rel.totalAdditionalsBudget : 0))}</td>
                       <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right', fontWeight: 'bold' }}>${formatCurrency(pTotal)}</td>
                     </tr>
                   );

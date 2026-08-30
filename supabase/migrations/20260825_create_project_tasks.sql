@@ -15,3 +15,6 @@ CREATE TABLE IF NOT EXISTS project_tasks (
 
 ALTER TABLE project_tasks ENABLE ROW LEVEL SECURITY;
 CREATE POLICY allow_all_project_tasks ON project_tasks FOR ALL TO public USING (true) WITH CHECK (true);
+
+-- Agregar columna notes a projects si no existe
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS notes TEXT;

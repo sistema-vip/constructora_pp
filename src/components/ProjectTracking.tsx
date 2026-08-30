@@ -42,6 +42,18 @@ export interface ProjectTrackingProps {
   projectDescription?: string;
   startDate?: string;
   area?: string;
+  isAdditional?: boolean;
+  parentProject?: {
+    id: string;
+    proposal_number?: number | string;
+    title: string;
+  } | null;
+  additionals?: Array<{
+    id: string;
+    proposal_number?: number | string;
+    title: string;
+    budget_usd?: number;
+  }>;
 }
 
 export interface Task {
@@ -60,13 +72,16 @@ export interface Task {
 
 export default function ProjectTracking({ 
   projectId, 
-  projectTitle = 'Proyecto', 
+  projectTitle = 'Sin título', 
   proposalNumber, 
-  clientName = 'Cliente', 
+  clientName = 'Cliente no especificado', 
   clientData, 
-  projectDescription, 
+  projectDescription = '', 
   startDate,
-  area 
+  area,
+  isAdditional = false,
+  parentProject = null,
+  additionals = []
 }: ProjectTrackingProps) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
@@ -544,7 +559,32 @@ export default function ProjectTracking({
       )}
 
       {/* ── HEADER PRINCIPAL (LIMPIO Y ELEGANTE) ── */}
-      <div className="hide-on-print" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.8rem' }}>
+      {/* Header / Acciones Principales */}
+      {isAdditional && parentProject && (
+        <div style={{ padding: '0.85rem 1.25rem', background: 'rgba(234, 88, 12, 0.1)', border: '1px solid rgba(234, 88, 12, 0.3)', borderRadius: '10px', display: 'flex', alignItems: 'center', gap: '0.75rem', color: '#fb923c', fontSize: '0.9rem' }}>
+          <span style={{ fontSize: '1.2rem' }}>🔗</span>
+          <div>
+            <strong>OBRA ADICIONAL:</strong> Este proyecto es un alcance adicional vinculado al <strong>Proyecto Original {parentProject.proposal_number ? `#${parentProject.proposal_number}` : ''} - {parentProject.title}</strong>.
+          </div>
+        </div>
+      )}
+
+      {!isAdditional && additionals && additionals.length > 0 && (
+        <div style={{ padding: '0.85rem 1.25rem', background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.3)', borderRadius: '10px', display: 'flex', flexDirection: 'column', gap: '0.35rem', color: '#34d399', fontSize: '0.88rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 700 }}>
+            <span>⭐</span> PROYECTO ORIGINAL (CON {additionals.length} {additionals.length === 1 ? 'OBRA ADICIONAL UNIFICADA' : 'OBRAS ADICIONALES UNIFICADAS'}):
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginTop: '0.2rem' }}>
+            {additionals.map((add, idx) => (
+              <span key={idx} style={{ background: 'rgba(255,255,255,0.06)', padding: '0.2rem 0.6rem', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.1)', fontSize: '0.8rem', color: '#e2e8f0' }}>
+                📌 {add.proposal_number ? `#${add.proposal_number} - ` : ''}{add.title} {add.budget_usd ? `($${add.budget_usd.toLocaleString('es-VE')} USD)` : ''}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
         <div>
           <h2 style={{ margin: 0, fontSize: '1.2rem', color: 'white', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             <HardHat size={20} color="var(--primary-color)" />
@@ -1092,6 +1132,16 @@ export default function ProjectTracking({
                   Fecha: <strong>{new Date(reportDate).toLocaleDateString('es-VE')}</strong>
                   {proposalNumber && ` | Obra Nº: #${proposalNumber}`}
                 </p>
+                {isAdditional && parentProject && (
+                  <div style={{ marginTop: '3px', fontSize: '10.5px', color: '#c2410c', fontWeight: 700 }}>
+                    [ OBRA ADICIONAL VINCULADA AL PROYECTO ORIGINAL {parentProject.proposal_number ? `#${parentProject.proposal_number}` : ''} ]
+                  </div>
+                )}
+                {!isAdditional && additionals && additionals.length > 0 && (
+                  <div style={{ marginTop: '3px', fontSize: '10.5px', color: '#15803d', fontWeight: 700 }}>
+                    [ PROYECTO ORIGINAL - CON {additionals.length} {additionals.length === 1 ? 'ADICIONAL UNIFICADO' : 'ADICIONALES UNIFICADOS'} ]
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1102,11 +1152,29 @@ export default function ProjectTracking({
                   <div><strong>PROYECTO:</strong> {projectTitle}</div>
                   <div><strong>CLIENTE:</strong> {clientName}</div>
                   {clientData?.company_name && <div><strong>EMPRESA:</strong> {clientData.company_name}</div>}
+                  {isAdditional && parentProject && (
+                    <div style={{ marginTop: '0.2rem', color: '#c2410c' }}>
+                      <strong>PROYECTO PRINCIPAL:</strong> {parentProject.proposal_number ? `Obra #${parentProject.proposal_number} - ` : ''}{parentProject.title}
+                    </div>
+                  )}
                 </div>
                 <div>
                   {startDate && <div><strong>INICIO:</strong> {new Date(startDate).toLocaleDateString('es-VE')}</div>}
                   {area && <div><strong>ÁREA:</strong> {area}</div>}
                   {clientData?.address && <div><strong>UBICACIÓN:</strong> {clientData.address}</div>}
+                  {!isAdditional && additionals && additionals.length > 0 && (
+                    <div style={{ marginTop: '0.4rem', padding: '0.4rem 0.6rem', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '4px', color: '#166534' }}>
+                      <div style={{ fontWeight: 700, fontSize: '11px', textTransform: 'uppercase', marginBottom: '0.2rem' }}>
+                        Desglose de Presupuestos Unificados:
+                      </div>
+                      {additionals.map((a, idx) => (
+                        <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', fontSize: '11px' }}>
+                          <span>• {a.proposal_number ? `#${a.proposal_number} ` : ''}{a.title}</span>
+                          <strong>+${Number(a.budget_usd || 0).toLocaleString('es-VE', { minimumFractionDigits: 2 })} USD</strong>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

@@ -29,6 +29,7 @@ import { useRouter } from 'next/navigation';
 import { useAdminAction } from '@/lib/useAdminAction';
 import NewProposalModal from '@/components/NewProposalModal';
 import { autoPopulateTrackingTasks } from '@/lib/projectTaskHelper';
+import { executeProjectUnification, parseProjectRelation } from '@/lib/projectRelationsHelper';
 
 interface Project {
   id: string;
@@ -39,8 +40,11 @@ interface Project {
   start_date?: string;
   created_at: string;
   proposal_number?: number;
+  notes?: string | null;
   clients?: { name: string };
   archived_at: string | null;
+  parent_project_id?: string | null;
+  is_additional?: boolean;
 }
 
 export default function ProyectosPage() {
@@ -208,32 +212,26 @@ export default function ProyectosPage() {
   async function handleMerge() {
     executeWithAuth(async () => {
       if (!targetMergeId || selectedForMerge.length < 2) return;
-    setMerging(true);
-    try {
-      const sourcesIds = selectedForMerge.filter(id => id !== targetMergeId);
-      const totalBudget = selectedForMerge.reduce(
-        (sum, id) => sum + (projects.find(p => p.id === id)?.budget_usd ?? 0), 0
-      );
+      setMerging(true);
+      try {
+        const sourceIds = selectedForMerge.filter(id => id !== targetMergeId);
+        const result = await executeProjectUnification({
+          targetProjectId: targetMergeId,
+          sourceProjectIds: sourceIds,
+          projectsList: projects
+        });
 
-      for (const sourceId of sourcesIds) {
-        await supabase.from('project_payments').update({ project_id: targetMergeId }).eq('project_id', sourceId);
-        await supabase.from('project_costs').update({ project_id: targetMergeId }).eq('project_id', sourceId);
-        await supabase.from('project_extras').update({ project_id: targetMergeId }).eq('project_id', sourceId);
-        await supabase.from('project_commitments').update({ project_id: targetMergeId }).eq('project_id', sourceId);
-        await supabase.from('partner_advances').update({ project_id: targetMergeId }).eq('project_id', sourceId);
-      }
+        if (!result.success) {
+          throw new Error(result.error || 'Error al unificar proyectos');
+        }
 
-      await supabase.from('projects').update({ budget_usd: totalBudget }).eq('id', targetMergeId);
-      await supabase.from('projects')
-        .update({ status: 'cancelled', archived_at: new Date().toISOString() })
-        .in('id', sourcesIds);
-
-      setShowMergeModal(false);
-      setSelectedForMerge([]);
-      setTargetMergeId('');
-      fetchProjects();
-    } catch (err: any) {
-      alert('Error al unificar: ' + err.message);
+        setShowMergeModal(false);
+        setSelectedForMerge([]);
+        setTargetMergeId('');
+        await fetchProjects();
+        alert('¡Proyectos unificados con éxito! Se transfirieron pagos, costos, tareas de seguimiento y se preservó el desglose del proyecto original y sus adicionales.');
+      } catch (err: any) {
+        alert('Error al unificar: ' + err.message);
       } finally {
         setMerging(false);
       }
@@ -383,17 +381,46 @@ export default function ProyectosPage() {
                     </td>
                   )}
                   <td style={{ padding: '1.25rem 1.5rem' }}>
-                    <div style={{ fontWeight: '600', color: 'white', marginBottom: '0.2rem' }}>
-                      {project.title}
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                      {project.proposal_number && (
-                        <span style={{ background: 'rgba(59,130,246,0.1)', color: 'var(--primary-color)', padding: '0.1rem 0.4rem', borderRadius: '4px', border: '1px solid rgba(59,130,246,0.2)' }}>
-                          Propuesta #{project.proposal_number}
-                        </span>
-                      )}
-                      <span>📅 {new Date(project.created_at).toLocaleDateString()}</span>
-                    </div>
+                    {(() => {
+                      const rel = parseProjectRelation(project, projects);
+                      return (
+                        <>
+                          <div style={{ fontWeight: '600', color: 'white', marginBottom: '0.2rem', display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                            <span>{project.title}</span>
+                            {rel.isAdditional && rel.parentProject && (
+                              <span style={{ fontSize: '0.72rem', background: 'rgba(234, 88, 12, 0.15)', color: '#fb923c', border: '1px solid rgba(234, 88, 12, 0.3)', padding: '0.1rem 0.4rem', borderRadius: '4px', fontWeight: 600 }}>
+                                🔗 Adicional de #{rel.parentProject.proposal_number || 'Principal'}
+                              </span>
+                            )}
+                            {!rel.isAdditional && rel.additionals.length > 0 && (
+                              <span style={{ fontSize: '0.72rem', background: 'rgba(14, 165, 233, 0.15)', color: '#38bdf8', border: '1px solid rgba(14, 165, 233, 0.3)', padding: '0.1rem 0.4rem', borderRadius: '4px', fontWeight: 600 }}>
+                                🔗 Proyectos Unificados ({1 + rel.additionals.length})
+                              </span>
+                            )}
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                            {project.proposal_number && (
+                              <span style={{ background: 'rgba(59,130,246,0.1)', color: 'var(--primary-color)', padding: '0.1rem 0.4rem', borderRadius: '4px', border: '1px solid rgba(59,130,246,0.2)' }}>
+                                Propuesta #{project.proposal_number}
+                              </span>
+                            )}
+                            <span>📅 {new Date(project.created_at).toLocaleDateString()}</span>
+                            {rel.additionals.length > 0 && (
+                              <div style={{ width: '100%', marginTop: '0.3rem', padding: '0.4rem 0.6rem', background: 'rgba(255,255,255,0.03)', borderRadius: '4px', borderLeft: '2px solid #0284c7', fontSize: '0.75rem' }}>
+                                <div style={{ color: '#94a3b8', marginBottom: '2px' }}>
+                                  <span style={{ color: '#cbd5e1' }}>• {project.title}:</span> <strong style={{ color: '#38bdf8' }}>${rel.originalBudgetUsd.toLocaleString('es-VE')} USD</strong>
+                                </div>
+                                {rel.additionals.map((a: any, idx: number) => (
+                                  <div key={a.id || idx} style={{ color: '#94a3b8' }}>
+                                    <span style={{ color: '#cbd5e1' }}>• {a.title}:</span> <strong style={{ color: '#38bdf8' }}>${Number(a.budget_usd || 0).toLocaleString('es-VE')} USD</strong>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </>
+                      );
+                    })()}
                   </td>
                   <td style={{ padding: '1.25rem 1.5rem', color: 'var(--text-secondary)' }}>
                     {project.clients?.name || 'Cliente por definir'}

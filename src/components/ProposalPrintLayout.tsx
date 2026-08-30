@@ -23,8 +23,97 @@ const parseBoldText = (text: string) => {
 export const renderStructuredProposal = (text: string | null | undefined) => {
   if (!text) return null;
 
-  const lines = text.split('\n');
+  // Extraer metadatos de adicionales unificados si existen
+  let unifiedAdditionals: { proposal_number?: number | string; title: string; budget_usd: number }[] = [];
+  let originalBaseBudget: number | null = null;
+
+  const addMatch = text.match(/<!--\s*PP_UNIFIED_ADDITIONALS:\s*(\[[\s\S]*?\])\s*-->/);
+  if (addMatch) {
+    try {
+      const parsed = JSON.parse(addMatch[1]);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        unifiedAdditionals = parsed.map((a: any) => ({
+          proposal_number: a.proposal_number,
+          title: a.title,
+          budget_usd: Number(a.budget_usd || 0)
+        }));
+      }
+    } catch (e) {
+      console.warn('Error parsing unifiedAdditionals in print layout:', e);
+    }
+  }
+
+  const origMatch = text.match(/<!--\s*PP_ORIGINAL_BUDGET:\s*([\d\.]+)\s*-->/);
+  if (origMatch) {
+    const val = parseFloat(origMatch[1]);
+    if (!isNaN(val)) originalBaseBudget = val;
+  }
+
+  // Limpiar comentarios HTML del texto visible
+  const cleanText = text
+    .replace(/<!--\s*PP_UNIFIED_ADDITIONALS:[\s\S]*?-->/g, '')
+    .replace(/<!--\s*PP_ORIGINAL_BUDGET:[\s\S]*?-->/g, '')
+    .replace(/<!--\s*PP_PARENT_PROJECT:[\s\S]*?-->/g, '')
+    .trim();
+
+  const lines = cleanText.split('\n');
   const renderedElements: React.ReactNode[] = [];
+
+  // Si hay presupuestos unificados, renderizar recuadro destacado
+  if (unifiedAdditionals.length > 0) {
+    const baseBudget = originalBaseBudget !== null ? originalBaseBudget : 0;
+    const totalUnified = baseBudget + unifiedAdditionals.reduce((sum, a) => sum + a.budget_usd, 0);
+
+    renderedElements.push(
+      <div key="unified-breakdown-card" style={{
+        margin: '0.8rem 0 1.2rem 0',
+        padding: '0.9rem 1.1rem',
+        background: '#f8fafc',
+        border: '1.5px solid #0284c7',
+        borderRadius: '6px',
+        fontSize: '11pt'
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #cbd5e1', paddingBottom: '0.4rem', marginBottom: '0.6rem' }}>
+          <strong style={{ color: '#0284c7', textTransform: 'uppercase', fontSize: '10.5pt', letterSpacing: '0.5px' }}>
+            Desglose de Presupuestos Unificados ({1 + unifiedAdditionals.length} Conceptos)
+          </strong>
+          <span style={{ fontSize: '9.5pt', color: '#64748b' }}>Consolidado Oficial</span>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ color: '#000' }}>
+              • <strong>Propuesta Principal:</strong> Concepto Base Original
+            </span>
+            <strong style={{ color: '#000' }}>
+              ${baseBudget.toLocaleString('es-VE', { minimumFractionDigits: 2 })} USD
+            </strong>
+          </div>
+
+          {unifiedAdditionals.map((add, idx) => (
+            <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ color: '#0369a1' }}>
+                • <strong>{add.proposal_number ? `Propuesta Adicional #${add.proposal_number}: ` : 'Adicional: '}</strong>
+                {add.title}
+              </span>
+              <strong style={{ color: '#0369a1' }}>
+                + ${add.budget_usd.toLocaleString('es-VE', { minimumFractionDigits: 2 })} USD
+              </strong>
+            </div>
+          ))}
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.4rem', paddingTop: '0.4rem', borderTop: '1.5px solid #b87333' }}>
+            <strong style={{ color: '#b87333', fontSize: '11pt', textTransform: 'uppercase' }}>
+              INVERSIÓN TOTAL CONSOLIDADA:
+            </strong>
+            <strong style={{ color: '#b87333', fontSize: '12pt' }}>
+              ${totalUnified.toLocaleString('es-VE', { minimumFractionDigits: 2 })} USD
+            </strong>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const headers = [
     'objetivo del proyecto',
@@ -41,7 +130,11 @@ export const renderStructuredProposal = (text: string | null | undefined) => {
     'presupuesto de inversión',
     'desglose de inversión',
     'condiciones y métodos de pago',
-    'resumen financiero y ejecución'
+    'resumen financiero y ejecución',
+    'alcance de trabajo adicional vinculado',
+    'trabajo adicional vinculado',
+    'obras adicionales unificadas',
+    'alcance técnico adicional'
   ];
 
   const labels = [
