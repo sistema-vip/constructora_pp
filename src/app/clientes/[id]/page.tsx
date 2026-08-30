@@ -2754,6 +2754,73 @@ export default function ClienteDashboard() {
               </div>
             </div>
 
+            {/* Desglose de Presupuesto y Adicionales */}
+            <h3 style={{ fontSize: '15px', fontWeight: 700, borderBottom: '1.5px solid #000', paddingBottom: '0.4rem', marginBottom: '0.8rem', textTransform: 'uppercase' }}>
+              DESGLOSE DE PRESUPUESTO Y ADICIONALES
+            </h3>
+            <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '1.8rem', fontSize: '12px' }}>
+              <thead>
+                <tr style={{ background: '#f1f1f1' }}>
+                  <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'left' }}>CONCEPTO / DESCRIPCIÓN</th>
+                  <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'center', width: '160px' }}>TIPO</th>
+                  <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right', width: '140px' }}>MONTO (USD)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {printProjects.map((p: any) => {
+                  const rel = parseProjectRelation(p, printProjects);
+                  return (
+                    <React.Fragment key={p.id}>
+                      <tr>
+                        <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>
+                          <strong>{p.proposal_number ? `#${p.proposal_number} - ` : ''}{p.title}</strong>
+                          <div style={{ fontSize: '11px', color: '#64748b' }}>Presupuesto Base Original</div>
+                        </td>
+                        <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'center', color: '#475569' }}>Contrato Base Original</td>
+                        <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right', fontWeight: 600 }}>
+                          ${formatCurrency(rel.originalBudgetUsd || p.budget_usd)}
+                        </td>
+                      </tr>
+                      {!rel.isAdditional && rel.additionals && rel.additionals.length > 0 && rel.additionals.map((add: any, addIdx: number) => (
+                        <tr key={add.id || addIdx} style={{ background: '#f0fdf4' }}>
+                          <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>
+                            <strong>{add.proposal_number ? `Propuesta Adicional #${add.proposal_number}: ` : ''}{add.title}</strong>
+                            <div style={{ fontSize: '11px', color: '#166534' }}>Obra Adicional Unificada</div>
+                          </td>
+                          <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'center', color: '#15803d', fontWeight: 600 }}>
+                            Adicional Unificado
+                          </td>
+                          <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right', fontWeight: 600, color: '#15803d' }}>
+                            + ${formatCurrency(add.budget_usd || 0)}
+                          </td>
+                        </tr>
+                      ))}
+                    </React.Fragment>
+                  );
+                })}
+                {printExtras.map((e: any) => (
+                  <tr key={e.id}>
+                    <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>
+                      <strong>{e.description}</strong>
+                      {e.project_title && (
+                        <div style={{ fontSize: '11px', color: '#64748b' }}>
+                          {e.proposal_number ? `#${e.proposal_number} - ` : ''}{e.project_title}
+                        </div>
+                      )}
+                    </td>
+                    <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'center', color: '#0284c7' }}>Trabajo Adicional</td>
+                    <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right', fontWeight: 600, color: '#0284c7' }}>
+                      + ${formatCurrency(e.amount_usd)}
+                    </td>
+                  </tr>
+                ))}
+                <tr style={{ background: '#f8f9fa', fontWeight: 'bold' }}>
+                  <td colSpan={2} style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>Total Presupuesto Contratado:</td>
+                  <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right', fontSize: '13px' }}>${formatCurrency(printTotalContracted)}</td>
+                </tr>
+              </tbody>
+            </table>
+
             {/* Resumen Financiero (KPIs) */}
             <h3 style={{ fontSize: '16px', borderBottom: '1px solid #ccc', paddingBottom: '0.5rem', marginBottom: '1rem' }}>RESUMEN FINANCIERO</h3>
             <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '2rem', fontSize: '14px' }}>

@@ -119,6 +119,57 @@ export function generatePartnerReportHtml(data: PartnerReportData): string {
       </div>
     </div>
 
+    <!-- Desglose de Presupuesto y Adicionales -->
+    <h3 style="font-size: 15px; font-weight: 700; border-bottom: 1.5px solid #000; padding-bottom: 0.4rem; margin-bottom: 0.8rem; text-transform: uppercase;">DESGLOSE DE PRESUPUESTO Y ADICIONALES</h3>
+    <table style="width: 100%; border-collapse: collapse; margin-bottom: 1.8rem; font-size: 12px;">
+      <thead>
+        <tr style="background: #f1f1f1;">
+          <th style="border: 1px solid #ccc; padding: 0.5rem; text-align: left;">CONCEPTO / DESCRIPCIÓN</th>
+          <th style="border: 1px solid #ccc; padding: 0.5rem; text-align: center; width: 160px;">TIPO</th>
+          <th style="border: 1px solid #ccc; padding: 0.5rem; text-align: right; width: 140px;">MONTO (USD)</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${printProjects.map(p => {
+          const rel = parseProjectRelation(p, printProjects);
+          return `
+            <tr>
+              <td style="border: 1px solid #ccc; padding: 0.5rem;">
+                <strong>${p.proposal_number ? '#' + p.proposal_number + ' - ' : ''}${p.title}</strong>
+                <div style="font-size: 11px; color: #64748b;">Presupuesto Base Original</div>
+              </td>
+              <td style="border: 1px solid #ccc; padding: 0.5rem; text-align: center; color: #475569;">Contrato Base Original</td>
+              <td style="border: 1px solid #ccc; padding: 0.5rem; text-align: right; font-weight: 600;">$${formatCurrency(rel.originalBudgetUsd || p.budget_usd)}</td>
+            </tr>
+            ${!rel.isAdditional && rel.additionals && rel.additionals.length > 0 ? rel.additionals.map(add => `
+              <tr style="background: #f0fdf4;">
+                <td style="border: 1px solid #ccc; padding: 0.5rem;">
+                  <strong>${add.proposal_number ? 'Propuesta Adicional #' + add.proposal_number + ': ' : ''}${add.title}</strong>
+                  <div style="font-size: 11px; color: #166534;">Obra Adicional Unificada</div>
+                </td>
+                <td style="border: 1px solid #ccc; padding: 0.5rem; text-align: center; color: #15803d; font-weight: 600;">Adicional Unificado</td>
+                <td style="border: 1px solid #ccc; padding: 0.5rem; text-align: right; font-weight: 600; color: #15803d;">+ $${formatCurrency(add.budget_usd || 0)}</td>
+              </tr>
+            `).join('') : ''}
+          `;
+        }).join('')}
+        ${printExtras.map(e => `
+          <tr>
+            <td style="border: 1px solid #ccc; padding: 0.5rem;">
+              <strong>${e.description}</strong>
+              ${e.project_title ? `<div style="font-size: 11px; color: #64748b;">${e.proposal_number ? '#' + e.proposal_number + ' - ' : ''}${e.project_title}</div>` : ''}
+            </td>
+            <td style="border: 1px solid #ccc; padding: 0.5rem; text-align: center; color: #0284c7;">Trabajo Adicional</td>
+            <td style="border: 1px solid #ccc; padding: 0.5rem; text-align: right; font-weight: 600; color: #0284c7;">+ $${formatCurrency(e.amount_usd)}</td>
+          </tr>
+        `).join('')}
+        <tr style="background: #f8f9fa; font-weight: bold;">
+          <td colspan="2" style="border: 1px solid #ccc; padding: 0.5rem; text-align: right;">Total Presupuesto Contratado:</td>
+          <td style="border: 1px solid #ccc; padding: 0.5rem; text-align: right; font-size: 13px;">$${formatCurrency(printTotalContracted)}</td>
+        </tr>
+      </tbody>
+    </table>
+
     <!-- Resumen Financiero (KPIs) -->
     <h3 style="font-size: 16px; font-weight: bold; border-bottom: 1px solid #ccc; padding-bottom: 0.5rem; margin-bottom: 1rem;">RESUMEN FINANCIERO</h3>
     <table style="width: 100%; border-collapse: collapse; margin-bottom: 2rem; font-size: 14px;">

@@ -2672,7 +2672,7 @@ export default function ProjectDashboard() {
           <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '16px' }}>PROYECTO: {project.title}</h3>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', fontSize: '12px' }}>
             <div><strong>Cliente:</strong> {project.clients?.name}</div>
-            <div><strong>Presupuesto Contrato Base:</strong> ${formatCurrency(projectRelation?.originalBudgetUsd || project.budget_usd)}</div>
+            {project.clients?.company_name && <div><strong>Empresa:</strong> {project.clients.company_name}</div>}
             <div><strong>Estado Actual:</strong> {project.status === 'proposal' ? 'PROPUESTA' : project.status === 'in_progress' ? 'EN EJECUCIÓN' : 'COMPLETADO'}</div>
             <div><strong>Fecha de Inicio:</strong> {new Date(project.created_at).toLocaleDateString('es-VE')}</div>
             {projectRelation?.isAdditional && projectRelation.parentProject && (
@@ -2680,25 +2680,63 @@ export default function ProjectDashboard() {
                 🔗 TIPO: OBRA ADICIONAL vinculada a la Obra #{projectRelation.parentProject.proposal_number || 'S/N'} ({projectRelation.parentProject.title})
               </div>
             )}
-            {!projectRelation?.isAdditional && projectRelation?.additionals && projectRelation.additionals.length > 0 && (
-              <div style={{ gridColumn: 'span 2', marginTop: '0.5rem', padding: '0.6rem 0.8rem', background: '#e0f2fe', borderRadius: '6px', border: '1px solid #bae6fd' }}>
-                <div style={{ fontSize: '11px', fontWeight: 700, color: '#0369a1', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '4px' }}>
-                  🔗 PROYECTOS UNIFICADOS ({1 + projectRelation.additionals.length} CONCEPTOS CONSOLIDADOS)
-                </div>
-                <div style={{ fontSize: '12px', color: '#0f172a', display: 'flex', justifyContent: 'space-between', marginBottom: '3px' }}>
-                  <span>• <strong>Proyecto Principal ({project.proposal_number ? `#${project.proposal_number}` : 'Base'}):</strong> {project.title}</span>
-                  <strong style={{ whiteSpace: 'nowrap', marginLeft: '8px' }}>${formatCurrency(projectRelation.originalBudgetUsd)} USD</strong>
-                </div>
-                {projectRelation.additionals.map((a: any, aIdx: number) => (
-                  <div key={a.id || aIdx} style={{ fontSize: '12px', color: '#0369a1', display: 'flex', justifyContent: 'space-between' }}>
-                    <span>• <strong>Proyecto Unificado ({a.proposal_number ? `#${a.proposal_number}` : 'Adicional'}):</strong> {a.title}</span>
-                    <strong style={{ whiteSpace: 'nowrap', marginLeft: '8px' }}>${formatCurrency(a.budget_usd)} USD</strong>
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
         </div>
+
+        {/* Desglose de Presupuesto y Adicionales */}
+        <h3 style={{ fontSize: '15px', fontWeight: 700, borderBottom: '1.5px solid #000', paddingBottom: '0.4rem', marginBottom: '0.8rem', textTransform: 'uppercase' }}>
+          DESGLOSE DE PRESUPUESTO Y ADICIONALES
+        </h3>
+        <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '1.8rem', fontSize: '12px' }}>
+          <thead>
+            <tr style={{ background: '#f1f1f1' }}>
+              <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'left' }}>CONCEPTO / DESCRIPCIÓN</th>
+              <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'center', width: '160px' }}>TIPO</th>
+              <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right', width: '140px' }}>MONTO (USD)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>
+                <strong>Presupuesto Base Original</strong>
+                <div style={{ fontSize: '11px', color: '#64748b' }}>{project.title}</div>
+              </td>
+              <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'center', color: '#475569' }}>Contrato Base Original</td>
+              <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right', fontWeight: 600 }}>
+                ${formatCurrency(projectRelation?.originalBudgetUsd || baseBudget)}
+              </td>
+            </tr>
+            {projectRelation?.additionals?.map((add: any, idx: number) => (
+              <tr key={idx} style={{ background: '#f0fdf4' }}>
+                <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>
+                  <strong>{add.proposal_number ? `Propuesta Adicional #${add.proposal_number}: ` : ''}{add.title}</strong>
+                  <div style={{ fontSize: '11px', color: '#166534' }}>Obra Adicional Unificada</div>
+                </td>
+                <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'center', color: '#15803d', fontWeight: 600 }}>
+                  Adicional Unificado
+                </td>
+                <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right', fontWeight: 600, color: '#15803d' }}>
+                  + ${formatCurrency(add.budget_usd || 0)}
+                </td>
+              </tr>
+            ))}
+            {extras.map((e: any) => (
+              <tr key={e.id}>
+                <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>
+                  <strong>{e.description}</strong>
+                </td>
+                <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'center', color: '#0284c7' }}>Trabajo Adicional</td>
+                <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right', fontWeight: 600, color: '#0284c7' }}>
+                  + ${formatCurrency(e.amount_usd)}
+                </td>
+              </tr>
+            ))}
+            <tr style={{ background: '#f8f9fa', fontWeight: 'bold' }}>
+              <td colSpan={2} style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>Total Presupuesto Contratado:</td>
+              <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right', fontSize: '13px' }}>${formatCurrency(totalBudget)}</td>
+            </tr>
+          </tbody>
+        </table>
 
         {/* Resumen Financiero (KPIs) */}
         <h3 style={{ fontSize: '16px', borderBottom: '1px solid #ccc', paddingBottom: '0.5rem', marginBottom: '1rem' }}>RESUMEN FINANCIERO</h3>
