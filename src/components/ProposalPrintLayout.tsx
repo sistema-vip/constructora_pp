@@ -68,16 +68,16 @@ export const renderStructuredProposal = (text: string | null | undefined) => {
       <div key="unified-breakdown-card" style={{
         margin: '0.8rem 0 1.2rem 0',
         padding: '0.9rem 1.1rem',
-        background: '#f8fafc',
-        border: '1.5px solid #0284c7',
+        background: '#fbf7f2',
+        border: '1.5px solid #b87333',
         borderRadius: '6px',
         fontSize: '11pt'
       }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #cbd5e1', paddingBottom: '0.4rem', marginBottom: '0.6rem' }}>
-          <strong style={{ color: '#0284c7', textTransform: 'uppercase', fontSize: '10.5pt', letterSpacing: '0.5px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #e5d5c5', paddingBottom: '0.4rem', marginBottom: '0.6rem' }}>
+          <strong style={{ color: '#b87333', textTransform: 'uppercase', fontSize: '10.5pt', letterSpacing: '0.5px' }}>
             Desglose de Presupuestos Unificados ({1 + unifiedAdditionals.length} Conceptos)
           </strong>
-          <span style={{ fontSize: '9.5pt', color: '#64748b' }}>Consolidado Oficial</span>
+          <span style={{ fontSize: '9.5pt', color: '#8c6038' }}>Consolidado Oficial</span>
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
@@ -92,11 +92,11 @@ export const renderStructuredProposal = (text: string | null | undefined) => {
 
           {unifiedAdditionals.map((add, idx) => (
             <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ color: '#0369a1' }}>
+              <span style={{ color: '#1a1a1a' }}>
                 • <strong>{add.proposal_number ? `Propuesta Adicional #${add.proposal_number}: ` : 'Adicional: '}</strong>
                 {add.title}
               </span>
-              <strong style={{ color: '#0369a1' }}>
+              <strong style={{ color: '#b87333' }}>
                 + ${add.budget_usd.toLocaleString('es-VE', { minimumFractionDigits: 2 })} USD
               </strong>
             </div>
@@ -260,14 +260,14 @@ export const renderStructuredProposal = (text: string | null | undefined) => {
     );
   }
 
-  return <div style={{ display: 'flex', flexDirection: 'column' }}>{renderedElements}</div>;
+  return <div className="proposal-body" style={{ display: 'block' }}>{renderedElements}</div>;
 };
 
 export default function ProposalPrintLayout({ proposalNumber, date, contentText }: ProposalPrintLayoutProps) {
   return (
-    <div className="print-area" style={{ padding: '2rem', overflowY: 'auto', flex: 1, background: '#ffffff' }}>
+    <div className="print-area" style={{ padding: '1.5rem', flex: 1, background: '#ffffff' }}>
       {/* Header de la Propuesta */}
-      <div style={{ marginBottom: '1.5rem', display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', borderBottom: '2px solid #b87333', paddingBottom: '0.5rem' }}>
+      <div style={{ marginBottom: '1.2rem', display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', borderBottom: '2px solid #b87333', paddingBottom: '0.5rem', pageBreakAfter: 'avoid', breakAfter: 'avoid' }}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src="/logo_3d.png" alt="P&P CONSTRUYE" width={160} height={80} style={{ objectFit: 'contain' }} />
         <div style={{ textAlign: 'right', color: '#333' }}>

@@ -17,8 +17,10 @@ import {
   Archive,
   HardHat,
   RotateCcw,
-  GitMerge
+  GitMerge,
+  Share2
 } from 'lucide-react';
+import ReportShareModal from '@/components/ReportShareModal';
 import { useUser } from '@/lib/UserContext';
 import ProposalPrintLayout from '@/components/ProposalPrintLayout';
 import { supabase } from '@/lib/supabase';
@@ -30,6 +32,8 @@ import { useAdminAction } from '@/lib/useAdminAction';
 import NewProposalModal from '@/components/NewProposalModal';
 import { autoPopulateTrackingTasks } from '@/lib/projectTaskHelper';
 import { executeProjectUnification, parseProjectRelation } from '@/lib/projectRelationsHelper';
+import { useIsMobile } from '@/hooks/useIsMobile';
+import MobileProjectsView from '@/components/mobile/MobileProjectsView';
 
 interface Project {
   id: string;
@@ -56,6 +60,7 @@ export default function ProyectosPage() {
   };
 
   const router = useRouter();
+  const isMobile = useIsMobile();
   const { isAdmin, isSales, isObserver, isClient } = useAdminAction();
   const isCreatorRole = isAdmin || isSales || isClient;
   const [projects, setProjects] = useState<Project[]>([]);
@@ -80,6 +85,16 @@ export default function ProyectosPage() {
   const [reopenTarget, setReopenTarget] = useState<Project | null>(null);
   const [reopenPassword, setReopenPassword] = useState('');
   const [reopenError, setReopenError] = useState('');
+
+  // Share Modal state
+  const [shareModalConfig, setShareModalConfig] = useState<{
+    isOpen: boolean;
+    title: string;
+    subtitle?: string;
+    fileName: string;
+    pdfUrl: string;
+    clientPhone?: string;
+  } | null>(null);
 
   // Auth Modal state for non-admins
   const [showAuthModal, setShowAuthModal] = useState(false);
@@ -276,6 +291,27 @@ export default function ProyectosPage() {
     p.clients?.name?.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
+  if (isMobile) {
+    return (
+      <>
+        <MobileProjectsView
+          projects={projects}
+          loading={loading}
+          onNewProject={() => setShowProposalModal(true)}
+          canCreate={isCreatorRole}
+        />
+        <NewProposalModal
+          isOpen={showProposalModal}
+          onClose={() => setShowProposalModal(false)}
+          onSaved={() => {
+            setShowProposalModal(false);
+            fetchProjects();
+          }}
+        />
+      </>
+    );
+  }
+
   return (
     <>
       <div className="animate-fade">
@@ -457,13 +493,19 @@ export default function ProyectosPage() {
                           <button
                             className="btn-secondary"
                             style={{ padding: '0.5rem', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
-                            title="Imprimir Propuesta"
+                            title="Descargar / Compartir Propuesta PDF"
                             onClick={() => {
-                              setSelectedProject(project);
-                              setTimeout(() => window.print(), 300);
+                              const safeClient = (project.clients?.name || 'cliente').replace(/[^a-zA-Z0-9]/g, '_');
+                              setShareModalConfig({
+                                isOpen: true,
+                                title: `Propuesta #${project.proposal_number || ''} - ${project.title}`,
+                                subtitle: `Cliente: ${project.clients?.name || 'N/A'} • $${formatCurrency(project.budget_usd)}`,
+                                fileName: `Propuesta_${project.proposal_number || 'draft'}_${safeClient}.pdf`,
+                                pdfUrl: `/api/proyectos/${project.id}/pdf`
+                              });
                             }}
                           >
-                            <Printer size={14} />
+                            <Share2 size={14} />
                           </button>
                           {!isObserver && (
                             <button
@@ -496,13 +538,19 @@ export default function ProyectosPage() {
                               <button
                                 className="btn-primary"
                                 style={{ padding: '0.5rem', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
-                                title="Imprimir Propuesta"
+                                title="Descargar / Compartir Propuesta PDF"
                                 onClick={() => {
-                                  setSelectedProject(project);
-                                  setTimeout(() => window.print(), 300);
+                                  const safeClient = (project.clients?.name || 'cliente').replace(/[^a-zA-Z0-9]/g, '_');
+                                  setShareModalConfig({
+                                    isOpen: true,
+                                    title: `Propuesta #${project.proposal_number || ''} - ${project.title}`,
+                                    subtitle: `Cliente: ${project.clients?.name || 'N/A'} • $${formatCurrency(project.budget_usd)}`,
+                                    fileName: `Propuesta_${project.proposal_number || 'draft'}_${safeClient}.pdf`,
+                                    pdfUrl: `/api/proyectos/${project.id}/pdf`
+                                  });
                                 }}
                               >
-                                <Printer size={14} /> Imprimir
+                                <Share2 size={14} /> Compartir PDF
                               </button>
                               {!isObserver && project.status === 'in_progress' && (
                                 <button
@@ -563,13 +611,19 @@ export default function ProyectosPage() {
                               <button
                                 className="btn-secondary"
                                 style={{ padding: '0.5rem', fontSize: '0.8rem' }}
-                                title="Imprimir Propuesta"
+                                title="Descargar / Compartir Propuesta PDF"
                                 onClick={() => {
-                                  setSelectedProject(project);
-                                  setTimeout(() => window.print(), 300);
+                                  const safeClient = (project.clients?.name || 'cliente').replace(/[^a-zA-Z0-9]/g, '_');
+                                  setShareModalConfig({
+                                    isOpen: true,
+                                    title: `Propuesta #${project.proposal_number || ''} - ${project.title}`,
+                                    subtitle: `Cliente: ${project.clients?.name || 'N/A'} • $${formatCurrency(project.budget_usd)}`,
+                                    fileName: `Propuesta_${project.proposal_number || 'draft'}_${safeClient}.pdf`,
+                                    pdfUrl: `/api/proyectos/${project.id}/pdf`
+                                  });
                                 }}
                               >
-                                <Printer size={14} />
+                                <Share2 size={14} />
                               </button>
                             </div>
                           )}
@@ -899,42 +953,99 @@ export default function ProyectosPage() {
       {/* Estilos específicos para impresión */}
       <style dangerouslySetInnerHTML={{ __html: `
         @media print {
+          * {
+            overflow: visible !important;
+            flex-shrink: unset !important;
+          }
           body { 
             background: white !important; 
             color: #111 !important; 
             font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif !important;
+            margin: 0 !important;
+            padding: 0 !important;
           }
-          .hide-on-print, aside, nav, button, header { display: none !important; }
+          .hide-on-print, aside, nav, button, header, .bottom-nav, .mobile-header { 
+            display: none !important; 
+          }
           .app-container, .main-content { 
+            display: block !important;
             padding: 0 !important; 
             margin: 0 !important; 
             max-width: 100% !important;
             width: 100% !important;
+            height: auto !important;
+            max-height: none !important;
+            overflow: visible !important;
           }
-          .print-modal { 
+          .modal-overlay, .modal-overlay.print-modal { 
             position: static !important; 
-            background: transparent !important; 
             display: block !important;
+            background: transparent !important; 
+            backdrop-filter: none !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            height: auto !important;
+            max-height: none !important;
+            overflow: visible !important;
+            top: auto !important;
+            left: auto !important;
+            right: auto !important;
+            bottom: auto !important;
+            z-index: auto !important;
           }
-          .print-content { 
+          .modal-content, .print-content { 
+            display: block !important;
+            flex-direction: unset !important;
             box-shadow: none !important; 
             border: none !important; 
+            border-radius: 0 !important;
             width: 100% !important; 
             max-width: none !important; 
+            height: auto !important;
             max-height: none !important; 
+            min-height: 0 !important;
             padding: 0 !important; 
             margin: 0 !important;
+            overflow: visible !important;
+            background: white !important;
           }
           .print-area { 
+            display: block !important;
+            flex: unset !important;
             overflow: visible !important; 
             background: white !important; 
             padding: 0 !important; 
+            margin: 0 !important;
+            height: auto !important;
+            max-height: none !important;
+          }
+          .proposal-body, .proposal-body > * {
+            display: block !important;
           }
           @page {
-            margin: 2cm;
+            margin: 1.5cm;
+            size: portrait;
           }
         }
       `}} />
+
+      {/* Modal Universal para Compartir y Descargar Propuesta en PDF */}
+      {shareModalConfig && (
+        <ReportShareModal
+          isOpen={shareModalConfig.isOpen}
+          onClose={() => setShareModalConfig(null)}
+          title={shareModalConfig.title}
+          subtitle={shareModalConfig.subtitle}
+          fileName={shareModalConfig.fileName}
+          pdfUrl={shareModalConfig.pdfUrl}
+          clientPhone={shareModalConfig.clientPhone}
+          onPrint={() => {
+            if (selectedProject) {
+              window.print();
+            }
+          }}
+        />
+      )}
     </>
   );
 }
