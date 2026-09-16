@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import React, { useState } from 'react';
 import { 
@@ -261,7 +261,14 @@ export default function MobileReceivablesView({
                       <span style={{ fontSize: '0.78rem', color: '#94a3b8', fontStyle: 'italic' }}>No se han registrado abonos</span>
                     ) : (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
-                        {p.project_payments.map((pay: any) => (
+                        {[...p.project_payments]
+                          .sort((a: any, b: any) => {
+                            const dateA = new Date(a.date || a.created_at).getTime();
+                            const dateB = new Date(b.date || b.created_at).getTime();
+                            if (dateB !== dateA) return dateB - dateA;
+                            return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
+                          })
+                          .map((pay: any) => (
                           <div key={pay.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'rgba(255, 255, 255, 0.03)', padding: '0.5rem 0.75rem', borderRadius: '8px', fontSize: '0.78rem' }}>
                             <div>
                               <span style={{ color: '#f8fafc', fontWeight: 600, display: 'block' }}>{pay.description || 'Cobro'}</span>

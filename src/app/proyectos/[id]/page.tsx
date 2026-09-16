@@ -74,6 +74,7 @@ interface Payment {
   date: string;
   reference: string;
   description: string;
+  created_at?: string;
 }
 
 interface Cost {
@@ -262,7 +263,7 @@ export default function ProjectDashboard() {
         legacyCommitRes
       ] = await Promise.all([
         supabase.from('projects').select('*, clients(*)').eq('id', projectId).single(),
-        supabase.from('project_payments').select('*').eq('project_id', projectId).order('date', { ascending: false }),
+        supabase.from('project_payments').select('*').eq('project_id', projectId).order('date', { ascending: false, nullsFirst: false }).order('created_at', { ascending: false }),
         supabase.from('project_costs').select('*').eq('project_id', projectId).order('date', { ascending: false, nullsFirst: false }).order('created_at', { ascending: false }),
         supabase.from('project_extras').select('*').eq('project_id', projectId).order('created_at', { ascending: true }),
         supabase.from('partner_advances').select('*').eq('project_id', projectId).order('date', { ascending: false }),
@@ -389,7 +390,13 @@ export default function ProjectDashboard() {
           // Fallback silencioso si global_settings no contiene la clave
         }
       }
-      setPayments(paymentsRes.data || []);
+      const sortedPayments = (paymentsRes.data || []).sort((a: any, b: any) => {
+        const dateA = new Date(a.date || a.created_at).getTime();
+        const dateB = new Date(b.date || b.created_at).getTime();
+        if (dateB !== dateA) return dateB - dateA;
+        return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
+      });
+      setPayments(sortedPayments);
       const sortedCosts = (costsRes.data || []).sort((a: any, b: any) => {
         const dateA = new Date(a.date || a.created_at).getTime();
         const dateB = new Date(b.date || b.created_at).getTime();

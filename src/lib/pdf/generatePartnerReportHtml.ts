@@ -224,9 +224,14 @@ export function generatePartnerReportHtml(data: PartnerReportData): string {
           </tr>
         </thead>
         <tbody>
-          ${printPayments.map(p => `
+          ${[...printPayments].sort((a: any, b: any) => {
+            const dateA = new Date(a.date || a.payment_date || a.created_at).getTime();
+            const dateB = new Date(b.date || b.payment_date || b.created_at).getTime();
+            if (dateB !== dateA) return dateB - dateA;
+            return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
+          }).map(p => `
             <tr>
-              <td style="border: 1px solid #ccc; padding: 0.5rem;">${p.date || 'N/A'}</td>
+              <td style="border: 1px solid #ccc; padding: 0.5rem;">${p.date || p.payment_date || 'N/A'}</td>
               <td style="border: 1px solid #ccc; padding: 0.5rem;">${p.description || ''} ${p.reference ? '(Ref: ' + p.reference + ')' : ''}</td>
               <td style="border: 1px solid #ccc; padding: 0.5rem;">${p.proposal_number ? '#' + p.proposal_number + ' - ' : ''}${p.project_title}</td>
               <td style="border: 1px solid #ccc; padding: 0.5rem; text-align: right;">$${formatCurrency(p.amount_usd)}</td>

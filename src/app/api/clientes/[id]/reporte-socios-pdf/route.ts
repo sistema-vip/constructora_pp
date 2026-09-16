@@ -54,8 +54,14 @@ export async function GET(
       ? allProjects.filter(p => p.id === projectId)
       : (activeProjects.length > 0 ? activeProjects : allProjects);
 
-    // Cálculos idénticos a src/app/clientes/[id]/page.tsx
-    const printPayments = printProjects.flatMap(p => (p.project_payments || []).map((x: any) => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })));
+    const printPayments = printProjects
+      .flatMap(p => (p.project_payments || []).map((x: any) => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })))
+      .sort((a: any, b: any) => {
+        const dateA = new Date(a.date || a.created_at).getTime();
+        const dateB = new Date(b.date || b.created_at).getTime();
+        if (dateB !== dateA) return dateB - dateA;
+        return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
+      });
     const printCosts = printProjects
       .flatMap(p => (p.project_costs || []).map((x: any) => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })))
       .sort((a: any, b: any) => {

@@ -407,7 +407,14 @@ export default function CuentasPorCobrarPage() {
                                         </tr>
                                       </thead>
                                       <tbody>
-                                        {project.project_payments.map((p: any) => (
+                                        {[...project.project_payments]
+                                          .sort((a: any, b: any) => {
+                                            const dateA = new Date(a.date || a.created_at).getTime();
+                                            const dateB = new Date(b.date || b.created_at).getTime();
+                                            if (dateB !== dateA) return dateB - dateA;
+                                            return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
+                                          })
+                                          .map((p: any) => (
                                           <tr key={p.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
                                             <td style={{ padding: '0.5rem' }}>{p.date || new Date(p.created_at).toISOString().split('T')[0]}</td>
                                             <td style={{ padding: '0.5rem' }}>{p.description || '-'}</td>

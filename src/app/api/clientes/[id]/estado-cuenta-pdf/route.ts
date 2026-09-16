@@ -62,7 +62,12 @@ export async function GET(
 
     const printPayments = printProjects.flatMap(p => 
       (p.project_payments || []).map((x: any) => ({ ...x, project_title: p.title, proposal_number: p.proposal_number }))
-    ).sort((a: any, b: any) => new Date(b.payment_date || b.created_at).getTime() - new Date(a.payment_date || a.created_at).getTime());
+    ).sort((a: any, b: any) => {
+      const dateA = new Date(a.date || a.created_at).getTime();
+      const dateB = new Date(b.date || b.created_at).getTime();
+      if (dateB !== dateA) return dateB - dateA;
+      return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
+    });
 
     const printExtras = printProjects.flatMap(p => 
       (p.project_extras || []).map((x: any) => ({ ...x, project_title: p.title, proposal_number: p.proposal_number }))

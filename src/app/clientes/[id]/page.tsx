@@ -1187,7 +1187,14 @@ export default function ClienteDashboard() {
   const pendingProposals = projects.filter(p => p.status === 'proposal' && (!p.project_payments || p.project_payments.length === 0));
   const historyProjects = projects.filter(p => !!p.archived_at || p.status === 'completed' || p.status === 'cancelled');
 
-  const allPayments = projects.flatMap(p => (p.project_payments || []).map(x => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })));
+  const allPayments = projects
+    .flatMap(p => (p.project_payments || []).map(x => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })))
+    .sort((a, b) => {
+      const dateA = new Date(a.date || a.created_at).getTime();
+      const dateB = new Date(b.date || b.created_at).getTime();
+      if (dateB !== dateA) return dateB - dateA;
+      return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
+    });
   const allCosts = financialProjects
     .flatMap(p => (p.project_costs || []).map(x => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })))
     .sort((a, b) => {
@@ -1240,7 +1247,14 @@ export default function ClienteDashboard() {
   const printProjects = selectedProjectIds.size > 0
     ? projects.filter(p => selectedProjectIds.has(p.id))
     : financialProjects;
-  const printPayments = printProjects.flatMap(p => (p.project_payments || []).map((x: any) => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })));
+  const printPayments = printProjects
+    .flatMap(p => (p.project_payments || []).map((x: any) => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })))
+    .sort((a: any, b: any) => {
+      const dateA = new Date(a.date || a.created_at).getTime();
+      const dateB = new Date(b.date || b.created_at).getTime();
+      if (dateB !== dateA) return dateB - dateA;
+      return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
+    });
   const printCosts = printProjects
     .flatMap(p => (p.project_costs || []).map((x: any) => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })))
     .sort((a: any, b: any) => {

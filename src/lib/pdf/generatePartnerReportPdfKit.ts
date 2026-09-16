@@ -268,7 +268,14 @@ export function generatePartnerReportPdfKit(data: PartnerReportData): Promise<Bu
         ];
         drawTableHeader(payCols);
 
-        data.printPayments.forEach(pmt => {
+        const sortedPayments = [...data.printPayments].sort((a: any, b: any) => {
+          const dateA = new Date(a.date || a.payment_date || a.created_at).getTime();
+          const dateB = new Date(b.date || b.payment_date || b.created_at).getTime();
+          if (dateB !== dateA) return dateB - dateA;
+          return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
+        });
+
+        sortedPayments.forEach(pmt => {
           ensureSpace(16);
           const rowY = doc.y;
           doc.rect(doc.page.margins.left, rowY, pageWidth, 15).fillAndStroke('#FFFFFF', '#E2E8F0');
@@ -279,7 +286,7 @@ export function generatePartnerReportPdfKit(data: PartnerReportData): Promise<Bu
             .fontSize(7)
             .font('Helvetica')
             .fillColor(grayColor)
-            .text(pmt.payment_date || pmt.created_at?.split('T')[0] || '', curX + 4, rowY + 4, { width: payCols[0].width - 8 });
+            .text(pmt.date || pmt.payment_date || pmt.created_at?.split('T')[0] || '', curX + 4, rowY + 4, { width: payCols[0].width - 8 });
           curX += payCols[0].width;
 
           doc
