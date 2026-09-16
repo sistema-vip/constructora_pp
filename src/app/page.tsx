@@ -18,8 +18,13 @@ import { handleMoneyInput, parseCurrency, formatOnBlur } from '@/lib/formatters'
 import TelegramPendingPanel from '@/components/TelegramPendingPanel';
 import RecentActivityFeed from '@/components/RecentActivityFeed';
 import { Activity } from 'lucide-react';
+import MobileDashboard from '@/components/mobile/MobileDashboard';
+import { useIsMobile } from '@/hooks/useIsMobile';
+import { useUser } from '@/lib/UserContext';
 
 export default function Home() {
+  const isMobile = useIsMobile();
+  const { user } = useUser();
   const [stats, setStats] = useState({
     clientsCount: 0,
     activeProjectsCount: 0,
@@ -28,6 +33,7 @@ export default function Home() {
   });
   const [recentProjects, setRecentProjects] = useState<any[]>([]);
   const [activeProjectsList, setActiveProjectsList] = useState<any[]>([]);
+  const [clientsList, setClientsList] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Modals state
@@ -84,11 +90,18 @@ export default function Home() {
 
       const { data: activeList } = await supabase
         .from('projects')
-        .select('id, title, proposal_number, clients(name)')
+        .select('id, title, proposal_number, client_id, clients(id, name)')
         .eq('status', 'in_progress')
         .order('created_at', { ascending: false });
         
       setActiveProjectsList(activeList || []);
+
+      const { data: allClients } = await supabase
+        .from('clients')
+        .select('id, name')
+        .order('name');
+
+      setClientsList(allClients || []);
       
       if (activeList && activeList.length > 0) {
         setExpenseForm(prev => ({ ...prev, project_id: activeList[0].id }));
@@ -157,6 +170,30 @@ export default function Home() {
     } else {
       alert(`Error: ${error.message}`);
     }
+  }
+
+  // Si está en dispositivo móvil o en la App Android (Infinix, etc.)
+  if (isMobile) {
+    return (
+      <MobileDashboard
+        stats={stats}
+        recentProjects={recentProjects}
+        activeProjectsList={activeProjectsList}
+        loading={loading}
+        onRefresh={fetchDashboardData}
+        handleAddClient={handleAddClient}
+        handleAddExpense={handleAddExpense}
+        handleAddPayment={handleAddPayment}
+        newClient={newClient}
+        setNewClient={setNewClient}
+        expenseForm={expenseForm}
+        setExpenseForm={setExpenseForm}
+        paymentForm={paymentForm}
+        setPaymentForm={setPaymentForm}
+        clientsList={clientsList}
+        userName={user?.user_metadata?.name || user?.email?.split('@')[0] || 'Henry'}
+      />
+    );
   }
 
   return (

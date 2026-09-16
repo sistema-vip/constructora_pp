@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase-admin';
 import { generatePartnerReportHtml, PartnerReportData } from '@/lib/pdf/generatePartnerReportHtml';
-import { generatePartnerReportPdfBuffer } from '@/lib/pdf/generatePartnerReportPuppeteer';
+import { generatePartnerReportPdfKit } from '@/lib/pdf/generatePartnerReportPdfKit';
 
 export const dynamic = 'force-dynamic';
 
@@ -42,7 +42,12 @@ export async function GET(
     }
 
     const allProjects = projects || [];
-    const activeProjects = allProjects.filter(p => p.status === 'in_progress' || p.status === 'completed');
+    const activeProjects = allProjects.filter(p => 
+      p.status === 'in_progress' || 
+      p.status === 'completed' || 
+      (p.project_payments && p.project_payments.length > 0) || 
+      (p.project_extras && p.project_extras.length > 0)
+    );
 
     // Filtrar por proyecto si se especificó
     const printProjects = projectId
@@ -51,11 +56,52 @@ export async function GET(
 
     // Cálculos idénticos a src/app/clientes/[id]/page.tsx
     const printPayments = printProjects.flatMap(p => (p.project_payments || []).map((x: any) => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })));
-    const printCosts = printProjects.flatMap(p => (p.project_costs || []).map((x: any) => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })));
+    const printCosts = printProjects
+      .flatMap(p => (p.project_costs || []).map((x: any) => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })))
+      .sort((a: any, b: any) => {
+        const dateA = new Date(a.date || a.created_at).getTime();
+        const dateB = new Date(b.date || b.created_at).getTime();
+        if (dateB !== dateA) return dateB - dateA;
+        return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
+      });
     const printExtras = printProjects.flatMap(p => (p.project_extras || []).map((x: any) => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })));
     
-    const printCommitments = printProjects.flatMap(p => 
+    // 3. Obtener cuentas por pagar directamente de la tabla payable_accounts para proyectos seleccionados
+    const printProjectIds = printProjects.map(p => p.id);
+    let directPayables: any[] = [];
+    if (printProjectIds.length > 0) {
+      const { data: paData } = await supabaseAdmin
+        .from('payable_accounts')
+        .select('*, payable_payments(amount_usd), project:projects(title, proposal_number)')
+        .in('project_id', printProjectIds);
+      directPayables = paData || [];
+    }
+
+    const seenCommitmentIds = new Set(
+      directPayables.map((a: any) => a.commitment_id).filter(Boolean)
+    );
+
+    const accountsCommitments: any[] = directPayables.map((a: any) => {
+      const isPaidOrCancelled = a.status === 'paid' || a.status === 'cancelled';
+      const paid = a.payable_payments?.reduce((s: any, pm: any) => s + Number(pm.amount_usd || 0), 0) || 0;
+      const total = Number(a.total_amount_usd || 0);
+      const balance = isPaidOrCancelled || paid >= total - 0.01 ? 0 : Math.max(0, total - paid);
+      return {
+        id: a.id,
+        date: a.created_at,
+        provider: a.name,
+        description: a.description || 'Cuenta por pagar',
+        project_title: a.project?.title || 'General',
+        proposal_number: a.project?.proposal_number,
+        total_amount: total,
+        paid_amount: paid,
+        balance
+      };
+    });
+
+    const legacyCommitments = printProjects.flatMap(p => 
       (p.project_commitments || []).map((x: any) => {
+        if (seenCommitmentIds.has(x.id)) return null;
         const status = x.payable_accounts?.[0]?.status;
         const isPaidOrCancelled = status === 'paid' || status === 'cancelled';
         const paid = x.payable_accounts?.[0]?.payable_payments?.reduce((s: any, pm: any) => s + Number(pm.amount_usd), 0) || 0;
@@ -69,8 +115,10 @@ export async function GET(
           paid_amount: paid,
           balance
         };
-      })
-    ).filter((c: any) => c.balance > 0.01);
+      }).filter(Boolean)
+    );
+
+    const printCommitments = [...accountsCommitments, ...legacyCommitments].filter((c: any) => c.balance > 0.01);
 
     const printAdvances = printProjects.flatMap(p => (p.partner_advances || []).map((x: any) => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })));
     
@@ -108,27 +156,29 @@ export async function GET(
       losbersAdvances
     };
 
-    if (format === 'pdf') {
-      const pdfBuffer = await generatePartnerReportPdfBuffer(reportData);
-      const safeClientName = (client.name || 'cliente').replace(/[^a-zA-Z0-9]/g, '_');
-      const fileName = `Reporte_Socios_${safeClientName}.pdf`;
-
-      return new Response(pdfBuffer as any, {
+    if (format === 'html') {
+      const html = generatePartnerReportHtml(reportData);
+      return new Response(html, {
         status: 200,
         headers: {
-          'Content-Type': 'application/pdf',
-          'Content-Disposition': `inline; filename="${fileName}"`,
-          'Content-Length': pdfBuffer.length.toString()
+          'Content-Type': 'text/html; charset=utf-8',
         }
       });
     }
 
-    const html = generatePartnerReportHtml(reportData);
+    const pdfBuffer = await generatePartnerReportPdfKit(reportData);
+    const safeClientName = (client.name || 'cliente').replace(/[^a-zA-Z0-9]/g, '_');
+    const fileName = `Reporte_Socios_${safeClientName}.pdf`;
+    const isDownload = searchParams.get('download') === '1';
+    const disposition = isDownload ? 'attachment' : 'inline';
 
-    return new Response(html, {
+    return new Response(pdfBuffer as any, {
       status: 200,
       headers: {
-        'Content-Type': 'text/html; charset=utf-8',
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': `${disposition}; filename="${fileName}"`,
+        'Content-Length': pdfBuffer.length.toString(),
+        'Cache-Control': 'no-cache, no-store, must-revalidate'
       }
     });
   } catch (err: any) {

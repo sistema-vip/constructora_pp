@@ -38,7 +38,7 @@ export function generateProposalPdfBuffer(data: ProposalData): Promise<Buffer> {
       const copperColor = '#B87333';
       const darkColor = '#1A1A1A';
       const grayColor = '#555555';
-      const lightBorder = '#E0E0E0';
+      const lightBorder = '#D0D0D0';
       const pageWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
 
       // 1. HEADER (Logo + Proposal Number & Date)
@@ -137,16 +137,16 @@ export function generateProposalPdfBuffer(data: ProposalData): Promise<Buffer> {
         const rowHeight = 16;
         const bannerHeight = 26 + (totalItems * rowHeight) + 24;
 
-        // Background card
+        // Background card in corporate warm cream and copper border
         doc
           .roundedRect(doc.page.margins.left, bannerStartY, pageWidth, bannerHeight, 4)
-          .fillAndStroke('#F8FAFC', '#CBD5E1');
+          .fillAndStroke('#FBF7F2', copperColor);
 
         // Header
         doc
           .fontSize(9.5)
           .font('Helvetica-Bold')
-          .fillColor('#0284C7')
+          .fillColor(copperColor)
           .text(
             `CONSOLIDACIÓN DE PRESUPUESTOS UNIFICADOS (${totalItems} CONCEPTOS)`,
             doc.page.margins.left + 10,
@@ -171,7 +171,7 @@ export function generateProposalPdfBuffer(data: ProposalData): Promise<Buffer> {
         doc
           .fontSize(9)
           .font('Helvetica-Bold')
-          .fillColor('#0F172A')
+          .fillColor(darkColor)
           .text(
             `$${baseBudget.toLocaleString('es-VE', { minimumFractionDigits: 2 })} USD`,
             doc.page.width - doc.page.margins.right - 120,
@@ -186,7 +186,7 @@ export function generateProposalPdfBuffer(data: ProposalData): Promise<Buffer> {
           doc
             .fontSize(9)
             .font('Helvetica')
-            .fillColor('#0369A1')
+            .fillColor(darkColor)
             .text(
               `• Proyecto Unificado (${add.proposal_number ? '#' + add.proposal_number : 'Adicional'}): ${add.title}`,
               doc.page.margins.left + 12,
@@ -197,7 +197,7 @@ export function generateProposalPdfBuffer(data: ProposalData): Promise<Buffer> {
           doc
             .fontSize(9)
             .font('Helvetica-Bold')
-            .fillColor('#0369A1')
+            .fillColor(copperColor)
             .text(
               `+ $${add.budget_usd.toLocaleString('es-VE', { minimumFractionDigits: 2 })} USD`,
               doc.page.width - doc.page.margins.right - 120,
@@ -210,7 +210,7 @@ export function generateProposalPdfBuffer(data: ProposalData): Promise<Buffer> {
 
         // Divider line in banner
         doc
-          .strokeColor('#94A3B8')
+          .strokeColor(copperColor)
           .lineWidth(0.5)
           .moveTo(doc.page.margins.left + 10, curRowY + 2)
           .lineTo(doc.page.width - doc.page.margins.right - 10, curRowY + 2)
@@ -308,13 +308,13 @@ export function generateProposalPdfBuffer(data: ProposalData): Promise<Buffer> {
             const unifY = doc.y;
             doc
               .rect(doc.page.margins.left, unifY, pageWidth, 22)
-              .fillAndStroke('#E0F2FE', '#0284C7');
+              .fillAndStroke('#FBF7F2', copperColor);
 
             const cleanTitle = rawLine.replace(/[\-=\[\]]/g, '').trim();
             doc
               .fontSize(9.5)
               .font('Helvetica-Bold')
-              .fillColor('#0369A1')
+              .fillColor(copperColor)
               .text(`🔗 ${cleanTitle}`, doc.page.margins.left + 10, unifY + 5, {
                 width: pageWidth - 20,
                 align: 'center'

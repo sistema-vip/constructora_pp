@@ -11,6 +11,8 @@ import {
   ChevronDown, ChevronRight, AlertCircle, X, Eye, Printer, FileText
 } from 'lucide-react';
 import Image from 'next/image';
+import { useIsMobile } from '@/hooks/useIsMobile';
+import MobilePayablesView from '@/components/mobile/MobilePayablesView';
 
 interface PayablePayment {
   id: string;
@@ -44,6 +46,7 @@ interface PayableAccount {
 }
 
 export default function CuentasPorPagarPage() {
+  const isMobile = useIsMobile();
   const [accounts, setAccounts] = useState<PayableAccount[]>([]);
   const [projects, setProjects] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -345,6 +348,154 @@ export default function CuentasPorPagarPage() {
   const totalCommitted = activePendingAccounts.reduce((acc, a) => acc + a.total, 0);
   const totalPaidActive = activePendingAccounts.reduce((acc, a) => acc + a.paid, 0);
   const pendingBalance = activePendingAccounts.reduce((acc, a) => acc + a.balance, 0);
+
+  if (isMobile) {
+    return (
+      <>
+        <MobilePayablesView
+          accounts={accountsWithBalance}
+          loading={loading}
+          onOpenPaymentModal={(account, mode) => {
+            setSelectedAccountForPayment(account);
+            setPaymentMode(mode);
+            const prev = account.payable_payments?.reduce((s: number, p: any) => s + Number(p.amount_usd || 0), 0) || 0;
+            const bal = Math.max(0, Number(account.total_amount_usd || 0) - prev);
+            setPaymentForm({
+              payable_account_id: account.id,
+              amount_usd: mode === 'total' ? formatCurrency(bal) : '',
+              description: mode === 'total' ? `Liquidación: ${account.name}` : `Abono: ${account.name}`,
+              reference: '',
+              date: new Date().toISOString().split('T')[0]
+            });
+            setShowPaymentModal(true);
+          }}
+          onNewAccount={() => {
+            setEditingAccountId(null);
+            setAccountForm({ name: '', type: 'obrero', description: '', total_amount_usd: '', project_id: '', contact_info: '', status: 'active' });
+            setShowAccountModal(true);
+          }}
+          canEdit={!isViewer}
+        />
+
+        {/* Modal de Pago / Abono para móvil */}
+        {showPaymentModal && selectedAccountForPayment && (
+          <div className="modal-overlay">
+            <div className="card modal-content" style={{ borderRadius: '20px', padding: '1.5rem', width: '92%', maxWidth: '450px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+                <h3 style={{ margin: 0, fontSize: '1.15rem', color: '#f8fafc', fontWeight: 700 }}>
+                  {paymentMode === 'total' ? 'Liquidar Cuenta' : 'Registrar Abono'}
+                </h3>
+                <button onClick={() => { setShowPaymentModal(false); setSelectedAccountForPayment(null); }} style={{ background: 'rgba(255,255,255,0.08)', border: 'none', borderRadius: '50%', width: '32px', height: '32px', color: '#94a3b8', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  ✕
+                </button>
+              </div>
+
+              {/* Toggle Abono vs Liquidar */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.4rem', backgroundColor: 'rgba(255,255,255,0.05)', padding: '4px', borderRadius: '10px', marginBottom: '1rem' }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPaymentMode('abono');
+                    setPaymentForm(prev => ({ ...prev, amount_usd: '' }));
+                  }}
+                  style={{
+                    padding: '0.5rem',
+                    border: 'none',
+                    borderRadius: '8px',
+                    fontSize: '0.8rem',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    backgroundColor: paymentMode === 'abono' ? 'var(--primary-color)' : 'transparent',
+                    color: paymentMode === 'abono' ? '#000' : '#94a3b8'
+                  }}
+                >
+                  Abono Parcial
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPaymentMode('total');
+                    const prev = selectedAccountForPayment.payable_payments?.reduce((s: number, p: any) => s + Number(p.amount_usd || 0), 0) || 0;
+                    const bal = Math.max(0, Number(selectedAccountForPayment.total_amount_usd || 0) - prev);
+                    setPaymentForm(prev => ({ ...prev, amount_usd: formatCurrency(bal) }));
+                  }}
+                  style={{
+                    padding: '0.5rem',
+                    border: 'none',
+                    borderRadius: '8px',
+                    fontSize: '0.8rem',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    backgroundColor: paymentMode === 'total' ? '#10b981' : 'transparent',
+                    color: paymentMode === 'total' ? '#000' : '#94a3b8'
+                  }}
+                >
+                  Liquidar Total
+                </button>
+              </div>
+
+              <div style={{ backgroundColor: 'rgba(0,0,0,0.25)', padding: '0.75rem', borderRadius: '10px', marginBottom: '1rem', fontSize: '0.85rem' }}>
+                <span style={{ color: '#94a3b8' }}>Proveedor: </span>
+                <strong style={{ color: '#f8fafc' }}>{selectedAccountForPayment.name}</strong>
+              </div>
+
+              <form onSubmit={handleSavePayment} style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.78rem', color: '#94a3b8', marginBottom: '0.3rem', fontWeight: 600 }}>Monto a Pagar (USD) *</label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    required
+                    value={paymentForm.amount_usd}
+                    onChange={e => setPaymentForm({ ...paymentForm, amount_usd: handleMoneyInput(e.target.value) })}
+                    onBlur={e => setPaymentForm({ ...paymentForm, amount_usd: formatOnBlur(e.target.value) })}
+                    className="input-field"
+                    placeholder="$ 0.00"
+                    style={{ height: '48px', fontSize: '1.2rem', color: '#ef4444', fontWeight: 700 }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.78rem', color: '#94a3b8', marginBottom: '0.3rem', fontWeight: 600 }}>Referencia / Método</label>
+                  <input
+                    type="text"
+                    value={paymentForm.reference}
+                    onChange={e => setPaymentForm({ ...paymentForm, reference: e.target.value })}
+                    className="input-field"
+                    placeholder="Ej. Transferencia / Efectivo"
+                    style={{ height: '46px' }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.78rem', color: '#94a3b8', marginBottom: '0.3rem', fontWeight: 600 }}>Concepto</label>
+                  <input
+                    type="text"
+                    value={paymentForm.description}
+                    onChange={e => setPaymentForm({ ...paymentForm, description: e.target.value })}
+                    className="input-field"
+                    placeholder="Ej. Pago semana 1"
+                    style={{ height: '46px' }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.78rem', color: '#94a3b8', marginBottom: '0.3rem', fontWeight: 600 }}>Fecha</label>
+                  <input
+                    type="date"
+                    value={paymentForm.date}
+                    onChange={e => setPaymentForm({ ...paymentForm, date: e.target.value })}
+                    className="input-field"
+                    style={{ height: '46px' }}
+                  />
+                </div>
+                <button type="submit" className="btn-primary" style={{ width: '100%', height: '48px', justifyContent: 'center', marginTop: '0.5rem', fontWeight: 700, backgroundColor: '#ef4444', color: '#fff' }}>
+                  Confirmar Pago
+                </button>
+              </form>
+            </div>
+          </div>
+        )}
+      </>
+    );
+  }
 
   return (
     <div className="animate-fade-in">

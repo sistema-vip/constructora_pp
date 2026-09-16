@@ -29,13 +29,15 @@ import {
   Ban,
   BarChart3,
   Save,
-  CheckCircle2
+  CheckCircle2,
+  Share2
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency, handleMoneyInput, parseCurrency, formatOnBlur } from '@/lib/formatters';
 import { useUser } from '@/lib/UserContext';
 import TelegramPendingPanel from '@/components/TelegramPendingPanel';
 import ProjectTracking from '@/components/ProjectTracking';
+import ReportShareModal from '@/components/ReportShareModal';
 import Image from 'next/image';
 import { autoPopulateTrackingTasks } from '@/lib/projectTaskHelper';
 import { parseProjectRelation, ProjectRelationInfo } from '@/lib/projectRelationsHelper';
@@ -49,6 +51,7 @@ interface Project {
   start_date: string;
   end_date: string;
   proposal_number?: number;
+  client_id?: string;
   clients?: {
     id?: string;
     name: string;
@@ -82,6 +85,7 @@ interface Cost {
   total_usd: number;
   provider?: string;
   date?: string;
+  created_at?: string;
 }
 
 interface ProjectExtra {
@@ -152,9 +156,18 @@ export default function ProjectDashboard() {
   const [notesSaved, setNotesSaved] = useState(false);
 
   // Estado para impresión y detalles de cuentas por pagar
-  const [activePrintJob, setActivePrintJob] = useState<'none' | 'project-report' | 'client-statement' | 'payable-voucher'>('none');
+  const [activePrintJob, setActivePrintJob] = useState<'none' | 'project-report' | 'client-statement' | 'payable-voucher' | 'extras-report'>('none');
   const [printPayableData, setPrintPayableData] = useState<any>(null);
   const [selectedPayableForDetails, setSelectedPayableForDetails] = useState<any>(null);
+  const [shareModalConfig, setShareModalConfig] = useState<{
+    isOpen: boolean;
+    title: string;
+    subtitle?: string;
+    fileName: string;
+    pdfUrl: string;
+    clientPhone?: string;
+    clientEmail?: string;
+  } | null>(null);
 
   // Permisos
   const { role } = useUser();
@@ -250,7 +263,7 @@ export default function ProjectDashboard() {
       ] = await Promise.all([
         supabase.from('projects').select('*, clients(*)').eq('id', projectId).single(),
         supabase.from('project_payments').select('*').eq('project_id', projectId).order('date', { ascending: false }),
-        supabase.from('project_costs').select('*').eq('project_id', projectId).order('created_at', { ascending: false }),
+        supabase.from('project_costs').select('*').eq('project_id', projectId).order('date', { ascending: false, nullsFirst: false }).order('created_at', { ascending: false }),
         supabase.from('project_extras').select('*').eq('project_id', projectId).order('created_at', { ascending: true }),
         supabase.from('partner_advances').select('*').eq('project_id', projectId).order('date', { ascending: false }),
         supabase.from('payable_accounts').select('*, payable_payments(id, amount_usd, description, reference, date)').eq('project_id', projectId).order('created_at', { ascending: false }),
@@ -377,7 +390,13 @@ export default function ProjectDashboard() {
         }
       }
       setPayments(paymentsRes.data || []);
-      setCosts(costsRes.data || []);
+      const sortedCosts = (costsRes.data || []).sort((a: any, b: any) => {
+        const dateA = new Date(a.date || a.created_at).getTime();
+        const dateB = new Date(b.date || b.created_at).getTime();
+        if (dateB !== dateA) return dateB - dateA;
+        return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
+      });
+      setCosts(sortedCosts);
       setExtras(extrasRes.data || []);
       setAdvances(advancesRes.data || []);
       setPayables(unifiedPayables);
@@ -901,6 +920,16 @@ export default function ProjectDashboard() {
     }, 500);
   }
 
+  function handlePrintExtrasReport() {
+    setIsPrintingReport(true);
+    setActivePrintJob('extras-report');
+    setTimeout(() => {
+      window.print();
+      setIsPrintingReport(false);
+      setActivePrintJob('none');
+    }, 500);
+  }
+
   function handlePrintPayable(p: any) {
     setPrintPayableData(p);
     setActivePrintJob('payable-voucher');
@@ -1041,8 +1070,8 @@ export default function ProjectDashboard() {
               </span>
             )}
             {projectRelation?.isAdditional && projectRelation.parentProject && (
-              <span className="badge" style={{ background: 'rgba(234, 88, 12, 0.2)', color: '#fb923c', border: '1px solid rgba(234, 88, 12, 0.4)', fontSize: '0.75rem', fontWeight: 600 }}>
-                🔗 Adicional de {projectRelation.parentProject.proposal_number ? `#${projectRelation.parentProject.proposal_number}` : 'Obra Principal'}
+              <span className="badge" style={{ background: 'rgba(14, 165, 233, 0.18)', color: '#38bdf8', border: '1px solid rgba(14, 165, 233, 0.4)', fontSize: '0.75rem', fontWeight: 600 }}>
+                🔗 Relación de Adicionales (Obra {projectRelation.parentProject.proposal_number ? `#${projectRelation.parentProject.proposal_number}` : 'Principal'})
               </span>
             )}
             {!projectRelation?.isAdditional && projectRelation?.additionals && projectRelation.additionals.length > 0 && (
@@ -1057,27 +1086,68 @@ export default function ProjectDashboard() {
         <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
           <button
             className="btn-secondary"
-            onClick={() => router.push(`/proyectos?print=${project.id}`)}
-            title="Imprimir Propuesta Original"
+            onClick={() => {
+              const safeClientName = (project.clients?.name || 'cliente').replace(/[^a-zA-Z0-9]/g, '_');
+              setShareModalConfig({
+                isOpen: true,
+                title: `Propuesta #${project.proposal_number || ''} - ${project.title}`,
+                subtitle: `Cliente: ${project.clients?.name || 'N/A'} • Presupuesto: $${formatCurrency(project.budget_usd)}`,
+                fileName: `Propuesta_${project.proposal_number || 'draft'}_${safeClientName}.pdf`,
+                pdfUrl: `/api/proyectos/${project.id}/pdf`
+              });
+            }}
+            title="Descargar o Compartir Propuesta en PDF"
             style={{ padding: '0.65rem 1.1rem', display: 'flex', gap: '0.4rem', alignItems: 'center', background: 'var(--surface-color)', border: '1px solid var(--border-color)', fontSize: '0.85rem' }}
           >
-            <Printer size={16} /> Propuesta Original
+            <Share2 size={16} /> Propuesta PDF
           </button>
           <button
             className="btn-primary"
-            onClick={handlePrintClientStatement}
-            title="Imprimir Estado de Cuenta Oficial para el Cliente"
+            onClick={() => {
+              const targetClientId = project.client_id || project.clients?.id;
+              if (targetClientId) {
+                const safeClientName = (project.clients?.name || 'cliente').replace(/[^a-zA-Z0-9]/g, '_');
+                setShareModalConfig({
+                  isOpen: true,
+                  title: `Estado de Cuenta - ${project.title}`,
+                  subtitle: `Cliente: ${project.clients?.name || 'N/A'} • Obra #${project.proposal_number || ''}`,
+                  fileName: `Estado_de_Cuenta_${project.proposal_number || ''}_${safeClientName}.pdf`,
+                  pdfUrl: `/api/clientes/${targetClientId}/estado-cuenta-pdf?project_id=${project.id}`,
+                  clientPhone: project.clients?.phone || undefined,
+                  clientEmail: project.clients?.email || undefined
+                });
+              } else {
+                handlePrintClientStatement();
+              }
+            }}
+            title="Descargar o Compartir Estado de Cuenta para el Cliente"
             style={{ padding: '0.65rem 1.2rem', display: 'flex', gap: '0.4rem', alignItems: 'center', fontSize: '0.85rem', fontWeight: 600, boxShadow: '0 4px 12px rgba(245,158,11,0.2)' }}
           >
-            <FileText size={16} /> Imprimir Estado de Cuenta
+            <Share2 size={16} /> Estado de Cuenta
           </button>
           <button
             className="btn-secondary"
-            onClick={handlePrintReport}
-            title="Imprimir Reporte Financiero Interno de Socios"
+            onClick={() => {
+              const targetClientId = project.client_id || project.clients?.id;
+              if (targetClientId) {
+                const safeClientName = (project.clients?.name || 'cliente').replace(/[^a-zA-Z0-9]/g, '_');
+                setShareModalConfig({
+                  isOpen: true,
+                  title: `Reporte de Socios - ${project.title}`,
+                  subtitle: `Uso interno de socios • Obra #${project.proposal_number || ''}`,
+                  fileName: `Reporte_Socios_${project.proposal_number || ''}_${safeClientName}.pdf`,
+                  pdfUrl: `/api/clientes/${targetClientId}/reporte-socios-pdf?project_id=${project.id}`,
+                  clientPhone: project.clients?.phone || undefined,
+                  clientEmail: project.clients?.email || undefined
+                });
+              } else {
+                handlePrintReport();
+              }
+            }}
+            title="Descargar o Compartir Reporte Financiero de Socios"
             style={{ padding: '0.65rem 1.1rem', display: 'flex', gap: '0.4rem', alignItems: 'center', background: 'rgba(139, 92, 246, 0.1)', borderColor: 'rgba(139, 92, 246, 0.3)', color: '#c4b5fd', fontSize: '0.85rem', fontWeight: 600 }}
           >
-            <BarChart3 size={16} /> Reporte para Socios
+            <BarChart3 size={16} /> Reporte Socios
           </button>
           {project.status === 'in_progress' && (
             <>
@@ -1161,7 +1231,7 @@ export default function ProjectDashboard() {
                 <DollarIcon size={15} /> Registrar Gasto
               </button>
               <button className="btn-secondary" onClick={() => setShowExtraModal(true)} style={{ height: '38px', padding: '0 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', borderColor: 'var(--accent-blue)', color: 'var(--accent-blue)' }}>
-                <Plus size={15} /> Servicio Adicional
+                <Plus size={15} /> Relación de Adicionales
               </button>
               <button className="btn-secondary" onClick={() => { setEditingPayable(null); setPayableForm({ description: '', provider: '', category: 'materials', type: 'proveedor', quantity: 1, unit_price_usd: '', total_amount_usd: '', date: new Date().toISOString().split('T')[0] }); setShowPayableModal(true); }} style={{ height: '38px', padding: '0 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', borderColor: 'rgba(245,158,11,0.5)', color: 'var(--primary-color)' }}>
                 <ClipboardList size={15} /> Cuenta por Pagar
@@ -1341,7 +1411,7 @@ export default function ProjectDashboard() {
             className={`btn-secondary ${activeTab === 'adicionales' ? 'btn-primary' : ''}`}
             style={{ padding: '0.5rem 1rem', background: activeTab === 'adicionales' ? 'var(--accent-blue)' : 'transparent', border: 'none', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '0.4rem' }}
             onClick={() => setActiveTab('adicionales')}
-          ><PlusCircle size={15} /> Adicionales</button>
+          ><PlusCircle size={15} /> Relación de Adicionales ({extras.length})</button>
           {(project?.status === 'in_progress' || project?.status === 'completed') && (
             <button
               className={`btn-secondary ${activeTab === 'seguimiento' ? 'btn-primary' : ''}`}
@@ -1400,6 +1470,7 @@ export default function ProjectDashboard() {
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                    <th style={{ textAlign: 'left', padding: '1rem' }}>FECHA</th>
                     <th style={{ textAlign: 'left', padding: '1rem' }}>DESCRIPCIÓN</th>
                     <th style={{ textAlign: 'left', padding: '1rem' }}>PROVEEDOR</th>
                     <th style={{ textAlign: 'left', padding: '1rem' }}>CATEGORÍA</th>
@@ -1410,6 +1481,7 @@ export default function ProjectDashboard() {
                 <tbody>
                   {costs.map(c => (
                     <tr key={c.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                      <td style={{ padding: '1rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{c.date || (c.created_at ? c.created_at.split('T')[0] : 'N/A')}</td>
                       <td style={{ padding: '1rem' }}>{c.description}<br/><span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{c.quantity} x ${Number(c.unit_price_usd).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></td>
                       <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>{c.provider || 'N/A'}</td>
                       <td style={{ padding: '1rem' }}>{c.category === 'materials' ? 'Materiales' : c.category === 'labor' ? 'Mano de Obra' : c.category === 'equipment' ? 'Equipos' : c.category === 'permits' ? 'Permisos' : 'Otros'}</td>
@@ -1644,29 +1716,49 @@ export default function ProjectDashboard() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
                 <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1.15rem' }}>
-                  <PlusCircle size={20} color="var(--accent-blue)" /> Trabajos Adicionales
+                  <PlusCircle size={20} color="var(--accent-blue)" /> Relación de Trabajos Adicionales
                 </h3>
                 <span style={{ background: 'rgba(59,130,246,0.15)', color: 'var(--accent-blue)', padding: '0.15rem 0.55rem', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 700 }}>
                   {extras.length}
                 </span>
               </div>
-              {!isViewer && (
-                <button
-                  className="btn-secondary"
-                  onClick={() => setShowExtraModal(true)}
-                  style={{
-                    padding: '0.5rem 1rem',
-                    fontSize: '0.85rem',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '0.4rem',
-                    borderColor: 'var(--accent-blue)',
-                    color: 'var(--accent-blue)'
-                  }}
-                >
-                  <Plus size={15} /> + Trabajo Adicional
-                </button>
-              )}
+              <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center' }}>
+                {extras.length > 0 && (
+                  <button
+                    className="btn-secondary"
+                    onClick={handlePrintExtrasReport}
+                    style={{
+                      padding: '0.5rem 1rem',
+                      fontSize: '0.85rem',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.4rem',
+                      borderColor: 'rgba(255,255,255,0.2)',
+                      color: 'white'
+                    }}
+                    title="Imprimir Hoja de Relación de Adicionales para el Cliente"
+                  >
+                    <Printer size={15} /> Imprimir Relación
+                  </button>
+                )}
+                {!isViewer && (
+                  <button
+                    className="btn-secondary"
+                    onClick={() => setShowExtraModal(true)}
+                    style={{
+                      padding: '0.5rem 1rem',
+                      fontSize: '0.85rem',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.4rem',
+                      borderColor: 'var(--accent-blue)',
+                      color: 'var(--accent-blue)'
+                    }}
+                  >
+                    <Plus size={15} /> + Trabajo Adicional
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* SECCIÓN DE PRESUPUESTOS / PROYECTOS UNIFICADOS */}
@@ -2183,19 +2275,25 @@ export default function ProjectDashboard() {
 
       {showExtraModal && (
          <div className="modal-overlay">
-         <div className="card modal-content animate-fade" style={{ maxWidth: '400px', width: '90%' }}>
-           <h2 style={{ marginBottom: '1.5rem', color: 'white' }}>Registrar Trabajo Adicional</h2>
+         <div className="card modal-content animate-fade" style={{ maxWidth: '440px', width: '90%' }}>
+           <h2 style={{ marginBottom: '0.4rem', color: 'white', display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1.2rem' }}>
+             <PlusCircle size={22} color="var(--accent-blue)" /> Registrar Trabajo Adicional
+           </h2>
+           <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1.25rem' }}>
+             Se incorporará a la Relación de Adicionales y sumará al saldo por cobrar de la obra.
+           </p>
            <form onSubmit={handleAddExtra} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
              <div>
-               <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Descripción del Adicional</label>
-               <input type="text" required placeholder="Ej. Instalación de lámparas extras" className="input-field" value={extraForm.description} onChange={e => setExtraForm({...extraForm, description: e.target.value})} />
+               <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.85rem' }}>Descripción del Trabajo Adicional</label>
+               <input type="text" required placeholder="Ej. Instalación de toma 220V en cocina" className="input-field" value={extraForm.description} onChange={e => setExtraForm({...extraForm, description: e.target.value})} />
              </div>
              <div>
-                <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Monto Extra a Cobrar (USD)</label>
+                <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.85rem' }}>Monto a Cobrar al Cliente (USD)</label>
                 <input 
                   type="text" 
                   required 
                   className="input-field" 
+                  placeholder="$ 0.00"
                   value={extraForm.amount_usd} 
                   onChange={e => setExtraForm({...extraForm, amount_usd: handleMoneyInput(e.target.value)})} 
                   onBlur={e => setExtraForm({...extraForm, amount_usd: formatOnBlur(e.target.value)})}
@@ -2824,7 +2922,7 @@ export default function ProjectDashboard() {
             <tbody>
               {costs.map(c => (
                 <tr key={c.id}>
-                  <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{c.date || 'N/A'}</td>
+                  <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{c.date || (c.created_at ? c.created_at.split('T')[0] : 'N/A')}</td>
                   <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{c.provider || 'N/A'}</td>
                   <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{c.description}</td>
                   <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'center' }}>{c.quantity}</td>
@@ -3019,6 +3117,137 @@ export default function ProjectDashboard() {
         );
       })()}
 
+      {/* RELACIÓN DE TRABAJOS ADICIONALES (FORMATO FORMAL IMPRIMIBLE / CLIENTE) */}
+      {activePrintJob === 'extras-report' && (
+        <div className="show-only-on-print" style={{ display: 'none', color: 'black', background: 'white', padding: '2rem', width: '100%', maxWidth: '850px', margin: '0 auto', fontFamily: 'Arial, sans-serif' }}>
+          {/* Encabezado con Logo */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #000', paddingBottom: '1rem', marginBottom: '1.5rem' }}>
+            <Image src="/logo_3d.png" alt="Logo" width={170} height={70} style={{ objectFit: 'contain' }} />
+            <div style={{ textAlign: 'right' }}>
+              <h2 style={{ margin: 0, fontSize: '19px', color: '#000', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                RELACIÓN DE TRABAJOS ADICIONALES
+              </h2>
+              <p style={{ margin: '0.2rem 0 0 0', fontSize: '11px', color: '#0284c7', fontWeight: 700 }}>
+                CONTROL DE ADICIONALES DE OBRA
+              </p>
+              <p style={{ margin: 0, fontSize: '12px', color: '#555' }}>
+                Fecha de Emisión: {new Date().toLocaleDateString('es-VE')}
+              </p>
+              <p style={{ margin: 0, fontSize: '12px', color: '#555' }}>
+                Propuesta Base: #{project.proposal_number || 'N/A'}
+              </p>
+            </div>
+          </div>
+
+          {/* Datos de la Obra y Cliente */}
+          <div style={{ marginBottom: '1.5rem', padding: '1rem', background: '#f8f9fa', border: '1px solid #ddd', borderRadius: '6px' }}>
+            <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '15px', color: '#0f172a' }}>OBRA: {project.title}</h3>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', fontSize: '12px' }}>
+              <div><strong>Cliente:</strong> {project.clients?.name}</div>
+              {project.clients?.company_name && <div><strong>Empresa:</strong> {project.clients.company_name}</div>}
+              <div><strong>Estado de la Obra:</strong> {project.status === 'in_progress' ? 'EN EJECUCIÓN' : project.status === 'completed' ? 'CULMINADA' : 'PROPUESTA'}</div>
+              <div><strong>Presupuesto Base Original:</strong> ${formatCurrency(projectRelation?.originalBudgetUsd || baseBudget)} USD</div>
+            </div>
+          </div>
+
+          {/* Tabla de Partidas Adicionales */}
+          <h3 style={{ fontSize: '14px', fontWeight: 700, borderBottom: '1.5px solid #000', paddingBottom: '0.4rem', marginBottom: '0.8rem', textTransform: 'uppercase' }}>
+            DETALLE DE TRABAJOS Y PARTIDAS ADICIONALES
+          </h3>
+          <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '1.5rem', fontSize: '12px' }}>
+            <thead>
+              <tr style={{ background: '#f1f5f9' }}>
+                <th style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'center', width: '40px' }}>#</th>
+                <th style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'left' }}>DESCRIPCIÓN DEL TRABAJO ADICIONAL</th>
+                <th style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'center', width: '100px' }}>FECHA</th>
+                <th style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'right', width: '130px' }}>MONTO (USD)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {extras.length === 0 ? (
+                <tr>
+                  <td colSpan={4} style={{ border: '1px solid #cbd5e1', padding: '1.5rem', textAlign: 'center', color: '#64748b' }}>
+                    No hay trabajos adicionales registrados para esta obra.
+                  </td>
+                </tr>
+              ) : (
+                extras.map((e: any, idx: number) => (
+                  <tr key={e.id}>
+                    <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'center', fontWeight: 600 }}>{idx + 1}</td>
+                    <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem' }}>
+                      <strong>{e.description}</strong>
+                    </td>
+                    <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'center', color: '#64748b' }}>
+                      {e.created_at ? new Date(e.created_at).toLocaleDateString('es-VE') : '-'}
+                    </td>
+                    <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'right', fontWeight: 700, color: '#0284c7' }}>
+                      ${formatCurrency(e.amount_usd)}
+                    </td>
+                  </tr>
+                ))
+              )}
+              <tr style={{ background: '#f8fafc', fontWeight: 'bold' }}>
+                <td colSpan={3} style={{ border: '1px solid #cbd5e1', padding: '0.7rem', textAlign: 'right', fontSize: '13px' }}>
+                  TOTAL RELACIÓN DE TRABAJOS ADICIONALES:
+                </td>
+                <td style={{ border: '1px solid #cbd5e1', padding: '0.7rem', textAlign: 'right', fontSize: '14px', color: '#0284c7' }}>
+                  ${formatCurrency(totalExtra)}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+
+          {/* Consolidación Financiera de la Obra */}
+          <div style={{ marginBottom: '2rem', padding: '1rem', border: '1.5px solid #0284c7', borderRadius: '6px', background: '#f0f9ff' }}>
+            <h4 style={{ margin: '0 0 0.6rem 0', fontSize: '13px', color: '#0369a1', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+              RESUMEN FINANCIERO CONSOLIDADO DE LA OBRA
+            </h4>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.8rem', fontSize: '12px' }}>
+              <div style={{ background: 'white', padding: '0.6rem 0.8rem', borderRadius: '4px', border: '1px solid #bae6fd' }}>
+                <span style={{ color: '#64748b', fontSize: '11px', display: 'block' }}>Contrato Base Inicial:</span>
+                <strong style={{ fontSize: '14px', color: '#0f172a' }}>${formatCurrency(projectRelation?.originalBudgetUsd || baseBudget)} USD</strong>
+              </div>
+              <div style={{ background: 'white', padding: '0.6rem 0.8rem', borderRadius: '4px', border: '1px solid #bae6fd' }}>
+                <span style={{ color: '#0284c7', fontSize: '11px', display: 'block' }}>+ Trabajos Adicionales:</span>
+                <strong style={{ fontSize: '14px', color: '#0284c7' }}>+${formatCurrency(totalExtra)} USD</strong>
+              </div>
+              <div style={{ background: '#0284c7', padding: '0.6rem 0.8rem', borderRadius: '4px', color: 'white' }}>
+                <span style={{ fontSize: '11px', display: 'block', opacity: 0.9 }}>Total Valor de la Obra:</span>
+                <strong style={{ fontSize: '15px' }}>${formatCurrency(totalBudget)} USD</strong>
+              </div>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '0.8rem', paddingTop: '0.6rem', borderTop: '1px dashed #bae6fd', fontSize: '12px' }}>
+              <span>Total Pagos y Abonos Recibidos: <strong>${formatCurrency(totalPaid)} USD</strong></span>
+              <span style={{ color: balanceDue > 0 ? '#c2410c' : '#166534', fontWeight: 700 }}>
+                Saldo Pendiente por Cobrar: ${formatCurrency(balanceDue)} USD
+              </span>
+            </div>
+          </div>
+
+          <p style={{ fontSize: '11px', color: '#64748b', fontStyle: 'italic', marginBottom: '2.5rem' }}>
+            Nota: Los trabajos descritos en la presente relación han sido verificados e incorporados formalmente al avance y estado financiero de la obra.
+          </p>
+
+          {/* Firmas de Conformidad */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4rem', marginTop: '2rem' }}>
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ borderBottom: '1px solid #000', marginBottom: '0.5rem', width: '80%', margin: '0 auto 0.5rem auto' }}></div>
+              <div style={{ fontSize: '12px', fontWeight: 'bold' }}>P&P Construye, C.A.</div>
+              <div style={{ fontSize: '10px', color: '#555' }}>Supervisor de Obra / Dirección Técnica</div>
+            </div>
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ borderBottom: '1px solid #000', marginBottom: '0.5rem', width: '80%', margin: '0 auto 0.5rem auto' }}></div>
+              <div style={{ fontSize: '12px', fontWeight: 'bold' }}>{project.clients?.name || 'Cliente'}</div>
+              <div style={{ fontSize: '10px', color: '#555' }}>Firma Conforme de Aprobación</div>
+            </div>
+          </div>
+
+          <div style={{ marginTop: '3rem', textAlign: 'center', fontSize: '10px', color: '#94a3b8' }}>
+            <p style={{ margin: 0 }}>Documento emitido por el Sistema Administrativo P&P Construye</p>
+          </div>
+        </div>
+      )}
+
       <style dangerouslySetInnerHTML={{ __html: `
         .show-only-on-print, .print-only { display: none; }
         @media print {
@@ -3185,6 +3414,29 @@ export default function ProjectDashboard() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Modal Universal para Compartir y Descargar Reportes en PDF */}
+      {shareModalConfig && (
+        <ReportShareModal
+          isOpen={shareModalConfig.isOpen}
+          onClose={() => setShareModalConfig(null)}
+          title={shareModalConfig.title}
+          subtitle={shareModalConfig.subtitle}
+          fileName={shareModalConfig.fileName}
+          pdfUrl={shareModalConfig.pdfUrl}
+          clientPhone={project?.clients?.phone || undefined}
+          clientEmail={project?.clients?.email || undefined}
+          onPrint={() => {
+            if (shareModalConfig.title.includes('Estado de Cuenta')) {
+              handlePrintClientStatement();
+            } else if (shareModalConfig.title.includes('Socios')) {
+              handlePrintReport();
+            } else {
+              window.print();
+            }
+          }}
+        />
       )}
     </>
   );

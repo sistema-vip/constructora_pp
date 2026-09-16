@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useParams, useRouter } from 'next/navigation';
 import { 
   ArrowLeft, 
@@ -42,12 +43,14 @@ import {
   Ban,
   AlertTriangle,
   BarChart3,
-  GitMerge
+  GitMerge,
+  Share2
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency, handleMoneyInput, parseCurrency, formatOnBlur } from '@/lib/formatters';
 import NewProposalModal from '@/components/NewProposalModal';
 import TelegramPendingPanel from '@/components/TelegramPendingPanel';
+import ReportShareModal from '@/components/ReportShareModal';
 import { useUser } from '@/lib/UserContext';
 import { useAdminAction } from '@/lib/useAdminAction';
 import { parseProjectRelation, executeProjectUnification } from '@/lib/projectRelationsHelper';
@@ -280,6 +283,9 @@ export default function ClienteDashboard() {
   const [showCostModal, setShowCostModal] = useState(false);
   const [showExtraModal, setShowExtraModal] = useState(false);
   const [showCommitmentModal, setShowCommitmentModal] = useState(false);
+  const [showNewRelationModal, setShowNewRelationModal] = useState(false);
+  const [creatingRelation, setCreatingRelation] = useState(false);
+  const [newRelationForm, setNewRelationForm] = useState({ title: '', parent_project_id: '', initial_item_desc: '', initial_item_amount: '' });
 
   // Forms state
   const [paymentForm, setPaymentForm] = useState({ project_id: '', amount_usd: '', description: '', reference: '', date: new Date().toISOString().split('T')[0] });
@@ -327,10 +333,50 @@ export default function ClienteDashboard() {
   const [showPrintModal, setShowPrintModal] = useState(false);
   const [printMode, setPrintMode] = useState<'client-statement' | 'partner-report'>('client-statement');
   const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(new Set());
+  const [shareModalConfig, setShareModalConfig] = useState<{
+    isOpen: boolean;
+    title: string;
+    subtitle?: string;
+    fileName: string;
+    pdfUrl: string;
+    clientPhone?: string;
+    clientEmail?: string;
+  } | null>(null);
+
+  const handleOpenClientStatementModal = () => {
+    const safeClientName = (client?.name || 'cliente').replace(/[^a-zA-Z0-9]/g, '_');
+    setShareModalConfig({
+      isOpen: true,
+      title: `Estado de Cuenta - ${client?.name || 'Cliente'}`,
+      subtitle: `${activeProjects.length} proyecto${activeProjects.length !== 1 ? 's' : ''} incluido${activeProjects.length !== 1 ? 's' : ''}`,
+      fileName: `Estado_de_Cuenta_${safeClientName}.pdf`,
+      pdfUrl: `/api/clientes/${clientId}/estado-cuenta-pdf`,
+      clientPhone: client?.phone || undefined,
+      clientEmail: client?.email || undefined
+    });
+  };
+
+  const handleOpenPartnerReportModal = () => {
+    const safeClientName = (client?.name || 'cliente').replace(/[^a-zA-Z0-9]/g, '_');
+    setShareModalConfig({
+      isOpen: true,
+      title: `Reporte de Socios - ${client?.name || 'Cliente'}`,
+      subtitle: `Uso interno de socios • ${activeProjects.length} proyecto${activeProjects.length !== 1 ? 's' : ''}`,
+      fileName: `Reporte_Socios_${safeClientName}.pdf`,
+      pdfUrl: `/api/clientes/${clientId}/reporte-socios-pdf`,
+      clientPhone: client?.phone || undefined,
+      clientEmail: client?.email || undefined
+    });
+  };
 
   const openPrintSelection = (mode: 'client-statement' | 'partner-report') => {
     setPrintMode(mode);
-    const active = projects.filter(p => p.status === 'in_progress' || p.status === 'completed');
+    const active = projects.filter(p => 
+      p.status === 'in_progress' || 
+      p.status === 'completed' || 
+      (p.project_payments && p.project_payments.length > 0) ||
+      (p.project_extras && p.project_extras.length > 0)
+    );
     setSelectedProjectIds(new Set(active.map(p => p.id)));
     setShowPrintModal(true);
   };
@@ -834,6 +880,45 @@ export default function ClienteDashboard() {
     } else alert(`Error: ${error.message}`);
   }
 
+  async function handleCreateNewRelation(e: React.FormEvent) {
+    e.preventDefault();
+    if (!newRelationForm.title.trim()) return alert('Ingrese un título para la relación.');
+    setCreatingRelation(true);
+    try {
+      const { data: newProj, error: pErr } = await supabase
+        .from('projects')
+        .insert([{
+          client_id: clientId,
+          parent_project_id: newRelationForm.parent_project_id || null,
+          is_additional: true,
+          title: newRelationForm.title.trim(),
+          budget_usd: 0,
+          status: 'in_progress',
+          description: `RELACIÓN DE TRABAJOS ADICIONALES - ${client?.name || ''}`
+        }])
+        .select()
+        .single();
+
+      if (pErr) throw pErr;
+
+      if (newRelationForm.initial_item_desc && newRelationForm.initial_item_amount) {
+        await supabase.from('project_extras').insert([{
+          project_id: newProj.id,
+          description: newRelationForm.initial_item_desc.trim(),
+          amount_usd: parseCurrency(newRelationForm.initial_item_amount)
+        }]);
+      }
+
+      setShowNewRelationModal(false);
+      setNewRelationForm({ title: '', parent_project_id: '', initial_item_desc: '', initial_item_amount: '' });
+      fetchClientData();
+    } catch (err: any) {
+      alert(`Error creando relación de adicionales: ${err.message}`);
+    } finally {
+      setCreatingRelation(false);
+    }
+  }
+
   async function handleAddCommitment(e: React.FormEvent) {
     e.preventDefault();
     if (!commitmentForm.project_id) return alert('Seleccione un proyecto origen.');
@@ -1087,37 +1172,61 @@ export default function ClienteDashboard() {
   }
 
   // Cálculos Financieros
-  const activeProjects = projects.filter(p => (p.status === 'in_progress' || p.status === 'completed') && !p.archived_at);
-  const archivedProjects = projects.filter(p => !!p.archived_at || p.status === 'cancelled' || (p.status === 'completed' && !!p.archived_at)); // Wait, if completed and not archived, where does it go?
-  // Let's refine the filters:
-  // Active: in_progress or completed (if not archived)
-  // Proposals: proposal
-  // History: cancelled or archived (even if completed)
+  const activeProjects = projects.filter(p => (p.status === 'in_progress' || p.status === 'completed' || (p.project_payments && p.project_payments.length > 0)) && !p.archived_at);
+  const archivedProjects = projects.filter(p => !!p.archived_at || p.status === 'cancelled');
   
-  // Revised Filters:
-  const financialProjects = projects.filter(p => p.status === 'in_progress' || p.status === 'completed');
-  const currentProjects = projects.filter(p => !p.archived_at && p.status === 'in_progress');
-  const pendingProposals = projects.filter(p => p.status === 'proposal');
+  // Proyectos con relevancia financiera (en curso, completados, con pagos o con adicionales)
+  const financialProjects = projects.filter(p => 
+    p.status === 'in_progress' || 
+    p.status === 'completed' || 
+    (p.project_payments && p.project_payments.length > 0) ||
+    (p.project_extras && p.project_extras.length > 0)
+  );
+
+  const currentProjects = projects.filter(p => !p.archived_at && (p.status === 'in_progress' || p.status === 'completed'));
+  const pendingProposals = projects.filter(p => p.status === 'proposal' && (!p.project_payments || p.project_payments.length === 0));
   const historyProjects = projects.filter(p => !!p.archived_at || p.status === 'completed' || p.status === 'cancelled');
 
-  const allPayments = financialProjects.flatMap(p => p.project_payments.map(x => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })));
-  const allCosts = financialProjects.flatMap(p => p.project_costs.map(x => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })));
-  const allExtras = financialProjects.flatMap(p => p.project_extras.map(x => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })));
-  const allCommitments = projects.flatMap(p => p.project_commitments?.map(x => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })) || []);
-  const allAdvances = financialProjects.flatMap(p => p.partner_advances.map(x => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })));
+  const allPayments = projects.flatMap(p => (p.project_payments || []).map(x => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })));
+  const allCosts = financialProjects
+    .flatMap(p => (p.project_costs || []).map(x => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })))
+    .sort((a, b) => {
+      const dateA = new Date(a.date || a.created_at).getTime();
+      const dateB = new Date(b.date || b.created_at).getTime();
+      if (dateB !== dateA) return dateB - dateA;
+      return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
+    });
+  const allExtras = projects.flatMap(p => (p.project_extras || []).map(x => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })));
+  const allCommitments = projects.flatMap(p => (p.project_commitments || []).map(x => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })));
+  const allAdvances = financialProjects.flatMap(p => (p.partner_advances || []).map(x => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })));
 
   const totalContracted = financialProjects.reduce((sum, p) => sum + Number(p.budget_usd), 0) + allExtras.reduce((sum, e) => sum + Number(e.amount_usd), 0);
   const totalPaid = allPayments.reduce((sum, p) => sum + Number(p.amount_usd), 0);
   const totalCostsValue = allCosts.reduce((sum, c) => sum + (Number(c.quantity) * Number(c.unit_price_usd)), 0);
-  const totalCommitted = allCommitments.reduce((sum, c) => {
+  // Cuentas por Pagar unificadas (payable_accounts + compromisos legacy no enlazados)
+  const seenCommitmentIds = new Set(
+    clientPayableAccounts.map((a: any) => a.commitment_id).filter(Boolean)
+  );
+
+  const pendingPayablesFromAccounts = clientPayableAccounts.reduce((sum: number, a: any) => {
+    if (a.status === 'paid' || a.status === 'cancelled') return sum;
+    const paid = (a.payable_payments || []).reduce((s: number, p: any) => s + Number(p.amount_usd || 0), 0);
+    const total = Number(a.total_amount_usd || 0);
+    if (paid >= total - 0.01) return sum;
+    return sum + Math.max(0, total - paid);
+  }, 0);
+
+  const pendingPayablesFromCommitments = allCommitments.reduce((sum: number, c: any) => {
+    if (seenCommitmentIds.has(c.id)) return sum;
     const status = c.payable_accounts?.[0]?.status;
     if (status === 'paid' || status === 'cancelled') return sum;
     const paid = c.payable_accounts?.[0]?.payable_payments?.reduce((s: any, p: any) => s + Number(p.amount_usd), 0) || 0;
-    const total = Number(c.amount_usd || (c.quantity * c.unit_price_usd));
+    const total = Number(c.amount_usd || (c.quantity * c.unit_price_usd) || 0);
     if (paid >= total - 0.01) return sum;
-    const balance = total - paid;
-    return sum + Math.max(0, balance);
+    return sum + Math.max(0, total - paid);
   }, 0);
+
+  const totalCommitted = pendingPayablesFromAccounts + pendingPayablesFromCommitments;
   const totalAdvances = allAdvances.reduce((sum, a) => sum + Number(a.amount_usd), 0);
 
   const balanceDue = totalContracted - totalPaid;
@@ -1129,13 +1238,43 @@ export default function ClienteDashboard() {
 
   // Variables de impresión filtradas por selección del usuario
   const printProjects = selectedProjectIds.size > 0
-    ? currentProjects.filter(p => selectedProjectIds.has(p.id))
-    : currentProjects;
-  const printPayments = printProjects.flatMap(p => p.project_payments.map((x: any) => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })));
-  const printCosts = printProjects.flatMap(p => p.project_costs.map((x: any) => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })));
-  const printExtras = printProjects.flatMap(p => p.project_extras.map((x: any) => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })));
-  const printCommitments = printProjects.flatMap(p => 
+    ? projects.filter(p => selectedProjectIds.has(p.id))
+    : financialProjects;
+  const printPayments = printProjects.flatMap(p => (p.project_payments || []).map((x: any) => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })));
+  const printCosts = printProjects
+    .flatMap(p => (p.project_costs || []).map((x: any) => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })))
+    .sort((a: any, b: any) => {
+      const dateA = new Date(a.date || a.created_at).getTime();
+      const dateB = new Date(b.date || b.created_at).getTime();
+      if (dateB !== dateA) return dateB - dateA;
+      return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
+    });
+  const printExtras = printProjects.flatMap(p => (p.project_extras || []).map((x: any) => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })));
+  const printProjectIds = new Set(printProjects.map(p => p.id));
+  const printDirectPayables = clientPayableAccounts.filter(a => !a.project_id || printProjectIds.has(a.project_id));
+  const printSeenCommitmentIds = new Set(printDirectPayables.map((a: any) => a.commitment_id).filter(Boolean));
+
+  const printAccountsCommitments = printDirectPayables.map((a: any) => {
+    const isPaidOrCancelled = a.status === 'paid' || a.status === 'cancelled';
+    const paid = (a.payable_payments || []).reduce((s: any, pm: any) => s + Number(pm.amount_usd || 0), 0);
+    const total = Number(a.total_amount_usd || 0);
+    const balance = isPaidOrCancelled || paid >= total - 0.01 ? 0 : Math.max(0, total - paid);
+    return {
+      id: a.id,
+      date: a.created_at,
+      provider: a.name,
+      description: a.description || 'Cuenta por pagar',
+      project_title: a.project?.title || 'General',
+      proposal_number: a.project?.proposal_number,
+      total_amount: total,
+      paid_amount: paid,
+      balance
+    };
+  });
+
+  const printLegacyCommitments = printProjects.flatMap(p => 
     (p.project_commitments || []).map((x: any) => {
+      if (printSeenCommitmentIds.has(x.id)) return null;
       const status = x.payable_accounts?.[0]?.status;
       const isPaidOrCancelled = status === 'paid' || status === 'cancelled';
       const paid = x.payable_accounts?.[0]?.payable_payments?.reduce((s: any, pm: any) => s + Number(pm.amount_usd), 0) || 0;
@@ -1149,8 +1288,10 @@ export default function ClienteDashboard() {
         paid_amount: paid,
         balance
       };
-    })
-  ).filter((c: any) => c.balance > 0.01);
+    }).filter(Boolean)
+  );
+
+  const printCommitments = [...printAccountsCommitments, ...printLegacyCommitments].filter((c: any) => c.balance > 0.01);
   const printAdvances = printProjects.flatMap(p => p.partner_advances.map((x: any) => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })));
   const printTotalContracted = printProjects.reduce((s: number, p: any) => s + Number(p.budget_usd), 0) + printExtras.reduce((s: number, e: any) => s + Number(e.amount_usd), 0);
   const printTotalPaid = printPayments.reduce((s: number, p: any) => s + Number(p.amount_usd), 0);
@@ -1192,18 +1333,30 @@ export default function ClienteDashboard() {
           <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
             <button
               className="btn-secondary"
-              onClick={() => openPrintSelection('client-statement')}
+              onClick={handleOpenClientStatementModal}
               style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.65rem 1.1rem', fontSize: '0.85rem' }}
+              title="Visualizar, descargar o compartir estado de cuenta"
             >
               <FileText size={16} /> Estado de Cuenta
             </button>
             <button
               className="btn-secondary"
-              onClick={() => openPrintSelection('partner-report')}
+              onClick={handleOpenPartnerReportModal}
               style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.65rem 1.1rem', background: 'rgba(139, 92, 246, 0.1)', borderColor: 'rgba(139, 92, 246, 0.3)', color: '#c4b5fd', fontSize: '0.85rem', fontWeight: 600 }}
+              title="Visualizar, descargar o compartir reporte confidencial de socios"
             >
               <BarChart3 size={16} /> Reporte Socios
             </button>
+            {activeProjects.length > 1 && (
+              <button
+                className="btn-secondary"
+                onClick={() => openPrintSelection('client-statement')}
+                style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.65rem 0.9rem', fontSize: '0.8rem', color: 'var(--text-muted)' }}
+                title="Seleccionar qué proyectos incluir en el reporte o imprimir"
+              >
+                <Printer size={15} /> Filtrar Proyectos
+              </button>
+            )}
             {projects.length >= 2 && !isViewer && (
               <button
                 className="btn-secondary"
@@ -1236,8 +1389,20 @@ export default function ClienteDashboard() {
                 <button className="btn-secondary" onClick={() => setShowCostModal(true)} style={{ height: '38px', padding: '0 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', borderColor: 'var(--danger)', color: 'var(--danger)' }}>
                   <DollarIcon size={15} /> Registrar Gasto
                 </button>
-                <button className="btn-secondary" onClick={() => setShowExtraModal(true)} style={{ height: '38px', padding: '0 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', borderColor: 'var(--accent-blue)', color: 'var(--accent-blue)' }}>
-                  <Plus size={15} /> Servicio Adicional
+                <button
+                  className="btn-secondary"
+                  onClick={() => {
+                    setNewRelationForm({
+                      title: 'Relación de Adicionales',
+                      parent_project_id: '',
+                      initial_item_desc: '',
+                      initial_item_amount: ''
+                    });
+                    setShowNewRelationModal(true);
+                  }}
+                  style={{ height: '38px', padding: '0 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', borderColor: 'var(--accent-blue)', color: 'var(--accent-blue)' }}
+                >
+                  <Plus size={15} /> + Relación de Adicionales
                 </button>
                 <button className="btn-secondary" onClick={() => setShowCommitmentModal(true)} style={{ height: '38px', padding: '0 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', borderColor: 'rgba(245,158,11,0.5)', color: 'var(--primary-color)' }}>
                   <ClipboardList size={15} /> Cuenta por Pagar
@@ -1374,7 +1539,7 @@ export default function ClienteDashboard() {
               style={{ padding: '0.5rem 1rem', background: activeTab === 'adicionales' ? 'var(--primary-color)' : 'transparent', border: 'none', whiteSpace: 'nowrap' }}
               onClick={() => setActiveTab('adicionales')}
             >
-              Adicionales
+              Relación de Adicionales ({allExtras.length})
             </button>
             <button 
               className={`btn-secondary ${activeTab === 'cuentas_pagar' ? 'btn-primary' : ''}`}
@@ -1547,6 +1712,17 @@ export default function ClienteDashboard() {
                                     Propuesta #{project.proposal_number}
                                   </span>
                                 )}
+                                {((project as any).is_additional || (project as any).parent_project_id) && (
+                                  <span style={{ background: 'rgba(14, 165, 233, 0.15)', color: '#38bdf8', padding: '0.1rem 0.4rem', borderRadius: '4px', border: '1px solid rgba(14, 165, 233, 0.3)', fontWeight: 600 }}>
+                                    📋 Relación de Adicionales
+                                  </span>
+                                )}
+                                <span className={`badge ${
+                                  project.status === 'in_progress' ? 'badge-success' :
+                                  project.status === 'completed' ? 'badge-active' : ''
+                                }`} style={{ fontSize: '0.72rem', padding: '0.1rem 0.45rem' }}>
+                                  {project.status === 'in_progress' ? 'En Ejecución' : 'Completado'}
+                                </span>
                                 <span>📅 {new Date(project.created_at).toLocaleDateString()}</span>
                               </div>
                             </td>
@@ -1830,6 +2006,7 @@ export default function ClienteDashboard() {
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                      <th style={{ textAlign: 'left', padding: '1rem' }}>FECHA</th>
                       <th style={{ textAlign: 'left', padding: '1rem' }}>DESCRIPCIÓN</th>
                       <th style={{ textAlign: 'left', padding: '1rem' }}>PROVEEDOR</th>
                       <th style={{ textAlign: 'left', padding: '1rem' }}>CATEGORÍA</th>
@@ -1841,6 +2018,7 @@ export default function ClienteDashboard() {
                   <tbody>
                     {allCosts.map(c => (
                       <tr key={c.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                        <td style={{ padding: '1rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{c.date || (c.created_at ? c.created_at.split('T')[0] : 'N/A')}</td>
                         <td style={{ padding: '1rem' }}>{c.description} <br/><span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{c.quantity} x ${formatCurrency(c.unit_price_usd)}</span></td>
                         <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>{c.provider || 'N/A'}</td>
                         <td style={{ padding: '1rem' }}>{c.category === 'materials' ? 'Materiales' : c.category === 'labor' ? 'Mano de Obra' : c.category === 'equipment' ? 'Equipos' : c.category === 'permits' ? 'Permisos' : 'Otros'}</td>
@@ -1876,15 +2054,59 @@ export default function ClienteDashboard() {
           )}
 
           {activeTab === 'adicionales' && (
-            <div>
+            <div className="animate-fade" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', marginBottom: '0.5rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                  <h3 style={{ margin: 0, fontSize: '1.1rem', color: 'white' }}>Relación de Trabajos Adicionales</h3>
+                  <span style={{ background: 'rgba(59,130,246,0.15)', color: 'var(--accent-blue)', padding: '0.15rem 0.55rem', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 700 }}>
+                    {allExtras.length}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                  {allExtras.length > 0 && (
+                    <button
+                      className="btn-secondary"
+                      onClick={() => openPrintSelection('client-statement')}
+                      style={{ padding: '0.45rem 0.9rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', borderColor: 'rgba(255,255,255,0.2)', color: 'white' }}
+                      title="Imprimir Estado de Cuenta con Relación de Adicionales"
+                    >
+                      <Printer size={15} /> Imprimir Estado de Cuenta
+                    </button>
+                  )}
+                  {!isViewer && (
+                    <>
+                      <button
+                        className="btn-primary"
+                        onClick={() => {
+                          setNewRelationForm({ title: 'Relación de Adicionales', parent_project_id: '', initial_item_desc: '', initial_item_amount: '' });
+                          setShowNewRelationModal(true);
+                        }}
+                        style={{ padding: '0.45rem 0.9rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', background: 'linear-gradient(135deg, #0284c7 0%, #0369a1 100%)', borderColor: '#0284c7' }}
+                      >
+                        <Plus size={15} /> + Nueva Relación de Adicionales
+                      </button>
+                      <button
+                        className="btn-secondary"
+                        onClick={() => setShowExtraModal(true)}
+                        style={{ padding: '0.45rem 0.9rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', borderColor: 'var(--accent-blue)', color: 'var(--accent-blue)' }}
+                      >
+                        <PlusCircle size={15} /> + Registrar Ítem
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+
               {allExtras.length === 0 ? (
-                <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>No hay trabajos adicionales registrados.</div>
+                <div style={{ padding: '2.5rem 1rem', textAlign: 'center', color: 'var(--text-muted)', background: 'rgba(0,0,0,0.2)', borderRadius: '8px' }}>
+                  No hay trabajos adicionales registrados para este cliente.
+                </div>
               ) : (
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                      <th style={{ textAlign: 'left', padding: '1rem' }}>DESCRIPCIÓN</th>
-                      <th style={{ textAlign: 'left', padding: '1rem' }}>PROYECTO ORIGEN</th>
+                      <th style={{ textAlign: 'left', padding: '1rem' }}>DESCRIPCIÓN DEL TRABAJO ADICIONAL</th>
+                      <th style={{ textAlign: 'left', padding: '1rem' }}>OBRA / PROYECTO ASOCIADO</th>
                       <th style={{ textAlign: 'right', padding: '1rem' }}>MONTO EXTRA (USD)</th>
                       <th style={{ textAlign: 'right', padding: '1rem' }}></th>
                     </tr>
@@ -1892,9 +2114,9 @@ export default function ClienteDashboard() {
                   <tbody>
                     {allExtras.map(e => (
                       <tr key={e.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                        <td style={{ padding: '1rem' }}>{e.description}</td>
+                        <td style={{ padding: '1rem', fontWeight: 500 }}>{e.description}</td>
                         <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>{e.proposal_number ? `#${e.proposal_number} - ` : ''}{e.project_title}</td>
-                        <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold', color: 'var(--primary-color)' }}>+ ${formatCurrency(e.amount_usd)}</td>
+                        <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold', color: 'var(--accent-blue)' }}>+ ${formatCurrency(e.amount_usd)}</td>
                         <td style={{ padding: '1rem', textAlign: 'right', display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
                           {!isViewer && !isActionDisabledForSales(e.project_id) && (
                             <>
@@ -2242,11 +2464,16 @@ export default function ClienteDashboard() {
 
       {showExtraModal && (
         <div className="modal-overlay hide-on-print">
-          <div className="card modal-content animate-fade" style={{ maxWidth: '400px', width: '90%' }}>
-            <h2 style={{ marginBottom: '1.5rem', color: 'white' }}>Registrar Trabajo Adicional</h2>
+          <div className="card modal-content animate-fade" style={{ maxWidth: '440px', width: '90%' }}>
+            <h2 style={{ marginBottom: '0.4rem', color: 'white', display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1.2rem' }}>
+              <PlusCircle size={22} color="var(--accent-blue)" /> Registrar Trabajo Adicional
+            </h2>
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1.25rem' }}>
+              Se incorporará a la Relación de Adicionales de la obra seleccionada.
+            </p>
             <form onSubmit={handleAddExtra} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               <div>
-                <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Proyecto Origen</label>
+                <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.85rem' }}>Obra / Proyecto Asociado</label>
                 <select className="input-field" required value={extraForm.project_id} onChange={e => setExtraForm({...extraForm, project_id: e.target.value})}>
                   {activeProjects.map(p => (
                     <option key={p.id} value={p.id}>{p.proposal_number ? `#${p.proposal_number} - ` : ''}{p.title}</option>
@@ -2254,16 +2481,84 @@ export default function ClienteDashboard() {
                 </select>
               </div>
               <div>
-                <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Descripción del Adicional</label>
-                <input type="text" required placeholder="Ej. Instalación de lámparas extras" className="input-field" value={extraForm.description} onChange={e => setExtraForm({...extraForm, description: e.target.value})} />
+                <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.85rem' }}>Descripción del Trabajo Adicional</label>
+                <input type="text" required placeholder="Ej. Instalación de toma 220V en cocina" className="input-field" value={extraForm.description} onChange={e => setExtraForm({...extraForm, description: e.target.value})} />
               </div>
               <div>
-                <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem' }}>Monto Extra a Cobrar (USD)</label>
-                <input type="text" required className="input-field" value={extraForm.amount_usd} onChange={e => setExtraForm({...extraForm, amount_usd: handleMoneyInput(e.target.value)})} onBlur={e => setExtraForm({...extraForm, amount_usd: formatOnBlur(e.target.value)})} />
+                <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.85rem' }}>Monto a Cobrar al Cliente (USD)</label>
+                <input type="text" required placeholder="$ 0.00" className="input-field" value={extraForm.amount_usd} onChange={e => setExtraForm({...extraForm, amount_usd: handleMoneyInput(e.target.value)})} onBlur={e => setExtraForm({...extraForm, amount_usd: formatOnBlur(e.target.value)})} />
               </div>
               <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
                 <button type="button" className="btn-secondary" style={{ flex: 1 }} onClick={() => setShowExtraModal(false)}>Cancelar</button>
                 <button type="submit" className="btn-primary" style={{ flex: 1, justifyContent: 'center' }}>Guardar Adicional</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: NUEVA RELACIÓN DE ADICIONALES INDEPENDIENTE */}
+      {showNewRelationModal && (
+        <div className="modal-overlay hide-on-print">
+          <div className="card modal-content animate-fade" style={{ maxWidth: '480px', width: '90%' }}>
+            <h2 style={{ marginBottom: '0.4rem', color: 'white', display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1.25rem' }}>
+              <PlusCircle size={22} color="#38bdf8" /> Nueva Relación de Adicionales
+            </h2>
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1.25rem' }}>
+              Crea un presupuesto/relación independiente de trabajos adicionales que no modificará el contrato base.
+            </p>
+            <form onSubmit={handleCreateNewRelation} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div>
+                <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.85rem' }}>Título de la Relación de Adicionales</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ej. Relación de Adicionales: Pintura y Adecuaciones"
+                  className="input-field"
+                  value={newRelationForm.title}
+                  onChange={e => setNewRelationForm({ ...newRelationForm, title: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="text-muted" style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.85rem' }}>Obra Principal de Referencia (Opcional)</label>
+                <select
+                  className="input-field"
+                  value={newRelationForm.parent_project_id}
+                  onChange={e => setNewRelationForm({ ...newRelationForm, parent_project_id: e.target.value })}
+                >
+                  <option value="">-- General (Sin vincular a una obra específica) --</option>
+                  {activeProjects.filter((p: any) => !p.is_additional).map((p: any) => (
+                    <option key={p.id} value={p.id}>{p.proposal_number ? `#${p.proposal_number} - ` : ''}{p.title}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div style={{ background: 'rgba(255,255,255,0.03)', padding: '0.8rem', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.06)' }}>
+                <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#38bdf8', marginBottom: '0.5rem' }}>Primera Partida / Trabajo Adicional (Opcional):</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                  <input
+                    type="text"
+                    placeholder="Descripción (ej. Demolición de mesón y remates)"
+                    className="input-field"
+                    value={newRelationForm.initial_item_desc}
+                    onChange={e => setNewRelationForm({ ...newRelationForm, initial_item_desc: e.target.value })}
+                  />
+                  <input
+                    type="text"
+                    placeholder="Monto USD ($ 0.00)"
+                    className="input-field"
+                    value={newRelationForm.initial_item_amount}
+                    onChange={e => setNewRelationForm({ ...newRelationForm, initial_item_amount: handleMoneyInput(e.target.value) })}
+                    onBlur={e => setNewRelationForm({ ...newRelationForm, initial_item_amount: formatOnBlur(e.target.value) })}
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
+                <button type="button" className="btn-secondary" style={{ flex: 1 }} onClick={() => setShowNewRelationModal(false)}>Cancelar</button>
+                <button type="submit" className="btn-primary" disabled={creatingRelation} style={{ flex: 1, justifyContent: 'center', background: '#0284c7', borderColor: '#0284c7' }}>
+                  {creatingRelation ? 'Creando...' : 'Crear Relación'}
+                </button>
               </div>
             </form>
           </div>
@@ -2319,9 +2614,9 @@ export default function ClienteDashboard() {
       )}
 
       {/* Modal de selección de proyectos para imprimir */}
-      {showPrintModal && (
-        <div className="modal-overlay" style={{ zIndex: 3000 }}>
-          <div className="card modal-content animate-fade" style={{ maxWidth: '600px', width: '95%', maxHeight: '90vh', overflowY: 'auto' }}>
+      {showPrintModal && typeof document !== 'undefined' && createPortal(
+        <div className="modal-overlay" style={{ zIndex: 3000 }} onClick={() => setShowPrintModal(false)}>
+          <div className="card modal-content animate-fade" style={{ maxWidth: '600px', width: '95%', maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.2rem' }}>
               <h2 style={{ margin: 0, color: 'white', display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1.1rem' }}>
                 <Printer size={18} /> {printMode === 'client-statement' ? 'Imprimir Estado de Cuenta' : 'Imprimir Reporte de Socios'}
@@ -2495,31 +2790,81 @@ export default function ClienteDashboard() {
             {/* Botones */}
             <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
               <button className="btn-secondary" style={{ flex: 1 }} onClick={() => setShowPrintModal(false)}>Cancelar</button>
-              {printMode === 'partner-report' && (
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  style={{ flex: 1, justifyContent: 'center', display: 'flex', alignItems: 'center', gap: '0.5rem', borderColor: 'rgba(139, 92, 246, 0.4)', color: '#c4b5fd' }}
-                  onClick={() => {
-                    const firstId = Array.from(selectedProjectIds)[0];
-                    const url = `/api/clientes/${clientId}/reporte-socios-pdf${firstId && selectedProjectIds.size === 1 ? `?project_id=${firstId}&format=pdf` : '?format=pdf'}`;
-                    window.open(url, '_blank');
-                  }}
-                >
-                  <FileText size={15} /> Descargar PDF
-                </button>
-              )}
+              
               <button
+                type="button"
                 className="btn-primary"
-                style={{ flex: 2, justifyContent: 'center', display: 'flex', alignItems: 'center', gap: '0.5rem', opacity: selectedProjectIds.size === 0 ? 0.5 : 1, cursor: selectedProjectIds.size === 0 ? 'not-allowed' : 'pointer' }}
+                style={{
+                  flex: 2,
+                  justifyContent: 'center',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.5rem',
+                  opacity: selectedProjectIds.size === 0 ? 0.5 : 1,
+                  cursor: selectedProjectIds.size === 0 ? 'not-allowed' : 'pointer',
+                  background: 'linear-gradient(135deg, #25D366 0%, #128C7E 100%)',
+                  border: 'none',
+                  color: '#fff',
+                  boxShadow: '0 4px 12px rgba(37, 211, 102, 0.25)',
+                  fontWeight: 700
+                }}
+                disabled={selectedProjectIds.size === 0}
+                onClick={() => {
+                  const firstId = Array.from(selectedProjectIds)[0];
+                  const pIdsParam = Array.from(selectedProjectIds).join(',');
+                  const safeClientName = (client?.name || 'cliente').replace(/[^a-zA-Z0-9]/g, '_');
+                  
+                  if (printMode === 'client-statement') {
+                    setShareModalConfig({
+                      isOpen: true,
+                      title: `Estado de Cuenta - ${client?.name || 'Cliente'}`,
+                      subtitle: `${selectedProjectIds.size} proyecto${selectedProjectIds.size !== 1 ? 's' : ''} incluido${selectedProjectIds.size !== 1 ? 's' : ''}`,
+                      fileName: `Estado_de_Cuenta_${safeClientName}.pdf`,
+                      pdfUrl: `/api/clientes/${clientId}/estado-cuenta-pdf?projects=${pIdsParam}`
+                    });
+                  } else {
+                    setShareModalConfig({
+                      isOpen: true,
+                      title: `Reporte de Socios - ${client?.name || 'Cliente'}`,
+                      subtitle: `Uso interno exclusivo • ${selectedProjectIds.size} proyecto${selectedProjectIds.size !== 1 ? 's' : ''}`,
+                      fileName: `Reporte_Socios_${safeClientName}.pdf`,
+                      pdfUrl: `/api/clientes/${clientId}/reporte-socios-pdf${firstId && selectedProjectIds.size === 1 ? `?project_id=${firstId}` : ''}`
+                    });
+                  }
+                  setShowPrintModal(false);
+                }}
+              >
+                <Share2 size={16} /> Descargar / Compartir PDF
+              </button>
+
+              <button
+                type="button"
+                className="btn-secondary"
+                style={{ flex: 1.2, justifyContent: 'center', display: 'flex', alignItems: 'center', gap: '0.5rem', opacity: selectedProjectIds.size === 0 ? 0.5 : 1, cursor: selectedProjectIds.size === 0 ? 'not-allowed' : 'pointer' }}
                 disabled={selectedProjectIds.size === 0}
                 onClick={() => { setShowPrintModal(false); setTimeout(() => window.print(), 100); }}
               >
-                <Printer size={15} /> Imprimir ({selectedProjectIds.size} proyecto{selectedProjectIds.size !== 1 ? 's' : ''})
+                <Printer size={15} /> Imprimir
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Modal de Compartir y Descargar Reportes */}
+      {shareModalConfig && (
+        <ReportShareModal
+          isOpen={shareModalConfig.isOpen}
+          onClose={() => setShareModalConfig(null)}
+          title={shareModalConfig.title}
+          subtitle={shareModalConfig.subtitle}
+          fileName={shareModalConfig.fileName}
+          pdfUrl={shareModalConfig.pdfUrl}
+          clientPhone={client?.phone || undefined}
+          clientEmail={client?.email || undefined}
+          onPrint={() => window.print()}
+        />
       )}
 
       </div> {/* End hide-on-print */}
@@ -2584,81 +2929,94 @@ export default function ClienteDashboard() {
               </tbody>
             </table>
 
-            {/* 1. Detalle de Proyectos y Presupuestos */}
-            <h3 style={{ fontSize: '14px', fontWeight: 700, borderBottom: '1.5px solid #000', paddingBottom: '0.4rem', marginBottom: '0.8rem', textTransform: 'uppercase' }}>1. PROYECTOS Y PRESUPUESTOS</h3>
-            <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '1.8rem', fontSize: '12px' }}>
-              <thead>
-                <tr style={{ background: '#f1f5f9' }}>
-                  <th style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'left' }}>PROYECTO</th>
-                  <th style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'center' }}>FECHA</th>
-                  <th style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'right' }}>PRESUPUESTO BASE</th>
-                  <th style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'right' }}>ADICIONALES</th>
-                  <th style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'right' }}>TOTAL PROYECTO</th>
-                </tr>
-              </thead>
-              <tbody>
-                {printProjects.map((p: any) => {
-                  const pExtras = p.project_extras?.reduce((acc: number, e: any) => acc + Number(e.amount_usd), 0) || 0;
-                  const rel = parseProjectRelation(p, printProjects);
-                  const pTotal = Number(p.budget_usd) + pExtras;
-                  return (
-                    <tr key={p.id} style={{ background: rel.isAdditional ? '#fff7ed' : 'transparent' }}>
-                      <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem' }}>
-                        {rel.isOriginalWithAdditionals && (
-                          <div style={{ display: 'inline-block', fontSize: '10px', fontWeight: 700, background: '#e0f2fe', color: '#0369a1', padding: '2px 6px', borderRadius: '4px', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px', border: '1px solid #bae6fd' }}>
-                            🔗 Proyectos Unificados ({1 + rel.additionals.length})
-                          </div>
-                        )}
-                        <div style={{ fontWeight: 600 }}>
-                          {p.proposal_number ? `#${p.proposal_number} - ` : ''}{p.title}
-                        </div>
-                        {rel.isAdditional && rel.parentProject && (
-                          <div style={{ fontSize: '11px', color: '#c2410c', fontWeight: 600, marginTop: '3px' }}>
-                            ↳ Obra Adicional vinculada al Proyecto #{rel.parentProject.proposal_number || 'S/N'} ({rel.parentProject.title})
-                          </div>
-                        )}
-                        {!rel.isAdditional && rel.additionals.length > 0 && (
-                          <div style={{ marginTop: '6px', padding: '6px 8px', background: '#f8fafc', borderLeft: '3px solid #0284c7', borderRadius: '2px', fontSize: '11px' }}>
-                            <div style={{ fontWeight: 700, color: '#0f172a', marginBottom: '4px', textTransform: 'uppercase', fontSize: '10px' }}>
-                              Desglose de Conceptos Originales Unificados:
-                            </div>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px', color: '#334155' }}>
-                              <span>• <strong>Proyecto Principal ({p.proposal_number ? `#${p.proposal_number}` : 'Base'}):</strong> {p.title}</span>
-                              <strong style={{ whiteSpace: 'nowrap', marginLeft: '8px' }}>${formatCurrency(rel.originalBudgetUsd)} USD</strong>
-                            </div>
-                            {rel.additionals.map((a: any, aIdx: number) => (
-                              <div key={a.id || aIdx} style={{ display: 'flex', justifyContent: 'space-between', marginTop: '2px', color: '#0369a1' }}>
-                                <span>• <strong>Proyecto Unificado ({a.proposal_number ? `#${a.proposal_number}` : 'Adicional'}):</strong> {a.title}</span>
-                                <strong style={{ whiteSpace: 'nowrap', marginLeft: '8px' }}>${formatCurrency(a.budget_usd)} USD</strong>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </td>
-                      <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'center' }}>{new Date(p.created_at).toLocaleDateString('es-VE')}</td>
-                      <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'right' }}>
-                        ${formatCurrency(rel.originalBudgetUsd || p.budget_usd)}
-                      </td>
-                      <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'right', color: (rel.totalAdditionalsBudget > 0 || pExtras > 0) ? '#0284c7' : 'inherit' }}>
-                        ${formatCurrency(pExtras + (rel.isOriginalWithAdditionals ? rel.totalAdditionalsBudget : 0))}
-                      </td>
-                      <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'right', fontWeight: 'bold' }}>${formatCurrency(pTotal)}</td>
+            {/* 1. Detalle de Proyectos y Presupuestos Contratados */}
+            {printProjects.length > 0 && (
+              <>
+                <h3 style={{ fontSize: '14px', fontWeight: 700, borderBottom: '1.5px solid #000', paddingBottom: '0.4rem', marginBottom: '0.8rem', textTransform: 'uppercase' }}>
+                  1. PROYECTOS Y PRESUPUESTOS CONTRATADOS ({printProjects.length})
+                </h3>
+                <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '1.8rem', fontSize: '12px' }}>
+                  <thead>
+                    <tr style={{ background: '#f1f5f9' }}>
+                      <th style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'left' }}>PROYECTO / CONTRATO</th>
+                      <th style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'center', width: '90px' }}>ESTADO</th>
+                      <th style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'center', width: '85px' }}>FECHA</th>
+                      <th style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'right', width: '120px' }}>PRESUPUESTO BASE</th>
+                      <th style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'right', width: '110px' }}>ADICIONALES</th>
+                      <th style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'right', width: '125px' }}>TOTAL CONTRATADO</th>
                     </tr>
-                  );
-                })}
-                <tr style={{ background: '#f8fafc', fontWeight: 'bold' }}>
-                  <td colSpan={2} style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'right' }}>TOTALES:</td>
-                  <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'right' }}>${formatCurrency(printProjects.reduce((s: number, p: any) => s + Number(p.budget_usd), 0))}</td>
-                  <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'right' }}>${formatCurrency(printExtras.reduce((s: number, e: any) => s + Number(e.amount_usd), 0))}</td>
-                  <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'right' }}>${formatCurrency(printTotalContracted)}</td>
-                </tr>
-              </tbody>
-            </table>
+                  </thead>
+                  <tbody>
+                    {printProjects.map((p: any) => {
+                      const pExtras = p.project_extras?.reduce((acc: number, e: any) => acc + Number(e.amount_usd), 0) || 0;
+                      const rel = parseProjectRelation(p, printProjects);
+                      const pTotal = Number(p.budget_usd) + pExtras;
+                      const statusText = p.status === 'completed' ? 'Completado' : p.status === 'in_progress' ? 'En Ejecución' : 'Aprobado';
+                      return (
+                        <tr key={p.id} style={{ background: rel.isAdditional ? '#fff7ed' : 'transparent' }}>
+                          <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem' }}>
+                            {rel.isOriginalWithAdditionals && (
+                              <div style={{ display: 'inline-block', fontSize: '10px', fontWeight: 700, background: '#e0f2fe', color: '#0369a1', padding: '2px 6px', borderRadius: '4px', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px', border: '1px solid #bae6fd' }}>
+                                🔗 Proyectos Unificados ({1 + rel.additionals.length})
+                              </div>
+                            )}
+                            <div style={{ fontWeight: 600 }}>
+                              {p.proposal_number ? `#${p.proposal_number} - ` : ''}{p.title}
+                            </div>
+                            {rel.isAdditional && rel.parentProject && (
+                              <div style={{ fontSize: '11px', color: '#c2410c', fontWeight: 600, marginTop: '3px' }}>
+                                ↳ Obra Adicional vinculada al Proyecto #{rel.parentProject.proposal_number || 'S/N'} ({rel.parentProject.title})
+                              </div>
+                            )}
+                            {!rel.isAdditional && rel.additionals.length > 0 && (
+                              <div style={{ marginTop: '6px', padding: '6px 8px', background: '#f8fafc', borderLeft: '3px solid #0284c7', borderRadius: '2px', fontSize: '11px' }}>
+                                <div style={{ fontWeight: 700, color: '#0f172a', marginBottom: '4px', textTransform: 'uppercase', fontSize: '10px' }}>
+                                  Desglose de Conceptos Originales Unificados:
+                                </div>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px', color: '#334155' }}>
+                                  <span>• <strong>Proyecto Principal ({p.proposal_number ? `#${p.proposal_number}` : 'Base'}):</strong> {p.title}</span>
+                                  <strong style={{ whiteSpace: 'nowrap', marginLeft: '8px' }}>${formatCurrency(rel.originalBudgetUsd)} USD</strong>
+                                </div>
+                                {rel.additionals.map((a: any, aIdx: number) => (
+                                  <div key={a.id || aIdx} style={{ display: 'flex', justifyContent: 'space-between', marginTop: '2px', color: '#0369a1' }}>
+                                    <span>• <strong>Proyecto Unificado ({a.proposal_number ? `#${a.proposal_number}` : 'Adicional'}):</strong> {a.title}</span>
+                                    <strong style={{ whiteSpace: 'nowrap', marginLeft: '8px' }}>${formatCurrency(a.budget_usd)} USD</strong>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </td>
+                          <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'center', fontSize: '11px', fontWeight: 600, color: p.status === 'completed' ? '#15803d' : '#0369a1' }}>
+                            {statusText}
+                          </td>
+                          <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'center' }}>{new Date(p.created_at).toLocaleDateString('es-VE')}</td>
+                          <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'right' }}>
+                            ${formatCurrency(rel.originalBudgetUsd || p.budget_usd)}
+                          </td>
+                          <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'right', color: (rel.totalAdditionalsBudget > 0 || pExtras > 0) ? '#0284c7' : 'inherit' }}>
+                            ${formatCurrency(pExtras + (rel.isOriginalWithAdditionals ? rel.totalAdditionalsBudget : 0))}
+                          </td>
+                          <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'right', fontWeight: 'bold' }}>${formatCurrency(pTotal)}</td>
+                        </tr>
+                      );
+                    })}
+                    <tr style={{ background: '#f8fafc', fontWeight: 'bold' }}>
+                      <td colSpan={3} style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'right' }}>TOTALES CONTRATADOS:</td>
+                      <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'right' }}>${formatCurrency(printProjects.reduce((s: number, p: any) => s + Number(p.budget_usd), 0))}</td>
+                      <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'right', color: '#0284c7' }}>${formatCurrency(printExtras.reduce((s: number, e: any) => s + Number(e.amount_usd), 0))}</td>
+                      <td style={{ border: '1px solid #cbd5e1', padding: '0.6rem', textAlign: 'right', fontSize: '13px' }}>${formatCurrency(printTotalContracted)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </>
+            )}
 
             {/* 2. Detalle de Adicionales si existen */}
             {printExtras.length > 0 && (
               <>
-                <h3 style={{ fontSize: '14px', fontWeight: 700, borderBottom: '1.5px solid #000', paddingBottom: '0.4rem', marginBottom: '0.8rem', textTransform: 'uppercase' }}>2. DETALLE DE TRABAJOS ADICIONALES</h3>
+                <h3 style={{ fontSize: '14px', fontWeight: 700, borderBottom: '1.5px solid #000', paddingBottom: '0.4rem', marginBottom: '0.8rem', textTransform: 'uppercase' }}>
+                  2. DETALLE DE TRABAJOS ADICIONALES ({printExtras.length})
+                </h3>
                 <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '1.8rem', fontSize: '12px' }}>
                   <thead>
                     <tr style={{ background: '#f1f5f9' }}>
@@ -2685,7 +3043,9 @@ export default function ClienteDashboard() {
             )}
 
             {/* 3. Historial de Pagos Recibidos */}
-            <h3 style={{ fontSize: '14px', fontWeight: 700, borderBottom: '1.5px solid #000', paddingBottom: '0.4rem', marginBottom: '0.8rem', textTransform: 'uppercase' }}>{printExtras.length > 0 ? '3.' : '2.'} HISTORIAL DE PAGOS Y ABONOS RECIBIDOS</h3>
+            <h3 style={{ fontSize: '14px', fontWeight: 700, borderBottom: '1.5px solid #000', paddingBottom: '0.4rem', marginBottom: '0.8rem', textTransform: 'uppercase' }}>
+              {printExtras.length > 0 ? '3.' : '2.'} HISTORIAL DE PAGOS Y ABONOS RECIBIDOS ({printPayments.length})
+            </h3>
             {printPayments.length === 0 ? (
               <p style={{ fontSize: '12px', color: '#64748b', marginBottom: '1.8rem', fontStyle: 'italic' }}>No se registran pagos o abonos recibidos hasta la fecha.</p>
             ) : (
@@ -2860,73 +3220,8 @@ export default function ClienteDashboard() {
               </tbody>
             </table>
 
-            {/* Detalle de Proyectos */}
-            <h3 style={{ fontSize: '16px', borderBottom: '1px solid #ccc', paddingBottom: '0.5rem', marginBottom: '1rem' }}>1. PROYECTOS Y PRESUPUESTOS</h3>
-            <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '2rem', fontSize: '12px' }}>
-              <thead>
-                <tr style={{ background: '#f1f1f1' }}>
-                  <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'left' }}>PROYECTO</th>
-                  <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'center' }}>FECHA</th>
-                  <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>PRESUPUESTO BASE</th>
-                  <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>ADICIONALES</th>
-                  <th style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>TOTAL PROYECTO</th>
-                </tr>
-              </thead>
-              <tbody>
-                {printProjects.map((p: any) => {
-                  const pExtras = p.project_extras?.reduce((acc: number, e: any) => acc + Number(e.amount_usd), 0) || 0;
-                  const rel = parseProjectRelation(p, printProjects);
-                  const pTotal = Number(p.budget_usd) + pExtras;
-                  return (
-                    <tr key={p.id} style={{ background: rel.isAdditional ? '#fff7ed' : 'transparent' }}>
-                      <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>
-                        {rel.isOriginalWithAdditionals && (
-                          <div style={{ display: 'inline-block', fontSize: '10px', fontWeight: 700, background: '#e0f2fe', color: '#0369a1', padding: '2px 6px', borderRadius: '4px', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px', border: '1px solid #bae6fd' }}>
-                            🔗 Proyectos Unificados ({1 + rel.additionals.length})
-                          </div>
-                        )}
-                        <div><strong>{p.proposal_number ? `#${p.proposal_number} - ` : ''}{p.title}</strong></div>
-                        {rel.isAdditional && rel.parentProject && (
-                          <div style={{ fontSize: '11px', color: '#c2410c', fontWeight: 600, marginTop: '3px' }}>
-                            ↳ Adicional vinculado a #{rel.parentProject.proposal_number || 'S/N'} ({rel.parentProject.title})
-                          </div>
-                        )}
-                        {!rel.isAdditional && rel.additionals.length > 0 && (
-                          <div style={{ marginTop: '6px', padding: '6px 8px', background: '#f8fafc', borderLeft: '3px solid #0284c7', borderRadius: '2px', fontSize: '11px' }}>
-                            <div style={{ fontWeight: 700, color: '#0f172a', marginBottom: '4px', textTransform: 'uppercase', fontSize: '10px' }}>
-                              Desglose de Conceptos Originales Unificados:
-                            </div>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px', color: '#334155' }}>
-                              <span>• <strong>Proyecto Principal ({p.proposal_number ? `#${p.proposal_number}` : 'Base'}):</strong> {p.title}</span>
-                              <strong style={{ whiteSpace: 'nowrap', marginLeft: '8px' }}>${formatCurrency(rel.originalBudgetUsd)} USD</strong>
-                            </div>
-                            {rel.additionals.map((a: any, aIdx: number) => (
-                              <div key={a.id || aIdx} style={{ display: 'flex', justifyContent: 'space-between', marginTop: '2px', color: '#0369a1' }}>
-                                <span>• <strong>Proyecto Unificado ({a.proposal_number ? `#${a.proposal_number}` : 'Adicional'}):</strong> {a.title}</span>
-                                <strong style={{ whiteSpace: 'nowrap', marginLeft: '8px' }}>${formatCurrency(a.budget_usd)} USD</strong>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </td>
-                      <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'center' }}>{new Date(p.created_at).toLocaleDateString('es-VE')}</td>
-                      <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>${formatCurrency(rel.originalBudgetUsd || p.budget_usd)}</td>
-                      <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>${formatCurrency(pExtras + (rel.isOriginalWithAdditionals ? rel.totalAdditionalsBudget : 0))}</td>
-                      <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right', fontWeight: 'bold' }}>${formatCurrency(pTotal)}</td>
-                    </tr>
-                  );
-                })}
-                <tr style={{ background: '#f8f9fa', fontWeight: 'bold' }}>
-                  <td colSpan={2} style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>TOTALES GLOBALES:</td>
-                  <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>${formatCurrency(printProjects.reduce((s: number, p: any) => s + Number(p.budget_usd), 0))}</td>
-                  <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>${formatCurrency(printExtras.reduce((s: number, e: any) => s + Number(e.amount_usd), 0))}</td>
-                  <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'right' }}>${formatCurrency(printTotalContracted)}</td>
-                </tr>
-              </tbody>
-            </table>
-
             {/* Detalle de Pagos */}
-            <h3 style={{ fontSize: '16px', borderBottom: '1px solid #ccc', paddingBottom: '0.5rem', marginBottom: '1rem' }}>2. HISTORIAL DE PAGOS RECIBIDOS</h3>
+            <h3 style={{ fontSize: '16px', borderBottom: '1px solid #ccc', paddingBottom: '0.5rem', marginBottom: '1rem' }}>1. HISTORIAL DE PAGOS RECIBIDOS</h3>
             {printPayments.length === 0 ? (
                <p style={{ fontSize: '12px', color: '#555', marginBottom: '2rem' }}>No hay pagos registrados.</p>
             ) : (
@@ -2957,7 +3252,7 @@ export default function ClienteDashboard() {
             )}
 
             {/* Detalle de Gastos */}
-            <h3 style={{ fontSize: '16px', borderBottom: '1px solid #ccc', paddingBottom: '0.5rem', marginBottom: '1rem' }}>3. RELACIÓN DE GASTOS EJECUTADOS</h3>
+            <h3 style={{ fontSize: '16px', borderBottom: '1px solid #ccc', paddingBottom: '0.5rem', marginBottom: '1rem' }}>2. RELACIÓN DE GASTOS EJECUTADOS</h3>
             {printCosts.length === 0 ? (
                <p style={{ fontSize: '12px', color: '#555', marginBottom: '2rem' }}>No hay gastos registrados.</p>
             ) : (
@@ -2975,7 +3270,7 @@ export default function ClienteDashboard() {
                 <tbody>
                   {printCosts.map((c: any) => (
                     <tr key={c.id}>
-                      <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{c.date || new Date(c.created_at).toISOString().split('T')[0]}</td>
+                      <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{c.date || (c.created_at ? c.created_at.split('T')[0] : 'N/A')}</td>
                       <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{c.provider || 'N/A'}</td>
                       <td style={{ border: '1px solid #ccc', padding: '0.5rem' }}>{c.description}</td>
                       <td style={{ border: '1px solid #ccc', padding: '0.5rem', textAlign: 'center' }}>{c.quantity}</td>
@@ -2992,7 +3287,7 @@ export default function ClienteDashboard() {
             )}
 
             {/* Detalle de Cuentas por Pagar */}
-            <h3 style={{ fontSize: '16px', borderBottom: '1px solid #ccc', paddingBottom: '0.5rem', marginBottom: '1rem' }}>4. CUENTAS POR PAGAR (PENDIENTES)</h3>
+            <h3 style={{ fontSize: '16px', borderBottom: '1px solid #ccc', paddingBottom: '0.5rem', marginBottom: '1rem' }}>3. CUENTAS POR PAGAR (PENDIENTES)</h3>
             {printCommitments.length === 0 ? (
                <p style={{ fontSize: '12px', color: '#555', marginBottom: '2rem' }}>No hay cuentas por pagar pendientes por liquidar.</p>
             ) : (
@@ -3029,7 +3324,7 @@ export default function ClienteDashboard() {
             )}
 
             {/* Detalle de Retiros */}
-            <h3 style={{ fontSize: '16px', borderBottom: '1px solid #ccc', paddingBottom: '0.5rem', marginBottom: '1rem' }}>5. RETIRO DE SOCIOS</h3>
+            <h3 style={{ fontSize: '16px', borderBottom: '1px solid #ccc', paddingBottom: '0.5rem', marginBottom: '1rem' }}>4. RETIRO DE SOCIOS</h3>
             {printAdvances.length === 0 ? (
                <p style={{ fontSize: '12px', color: '#555', marginBottom: '2rem' }}>No hay retiros registrados.</p>
             ) : (

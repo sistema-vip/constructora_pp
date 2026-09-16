@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { Lock, Mail, User, ShieldAlert, Send, CheckCircle2, Clock } from 'lucide-react';
 import Image from 'next/image';
+import PWAInstallPrompt from '@/components/PWAInstallPrompt';
 
 type PageMode = 'login' | 'request-access' | 'request-sent';
 
@@ -235,7 +236,9 @@ export default function LoginPage() {
               </button>
             </form>
 
-            <div style={{ textAlign: 'center', marginTop: '2rem' }}>
+            <PWAInstallPrompt variant="login" />
+
+            <div style={{ textAlign: 'center', marginTop: '1.5rem' }}>
               <button
                 type="button"
                 style={{

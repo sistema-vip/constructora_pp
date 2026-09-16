@@ -30,7 +30,17 @@ body {
   color: var(--text-main);
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
   min-height: 100vh;
+  min-height: 100dvh;
   overflow-x: hidden;
+  /* Safe areas for notch / navigation bar */
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+  /* Native app touch feel */
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  touch-action: manipulation;
 }
 
 /* Scrollbar Custom */
@@ -52,6 +62,7 @@ body {
 .app-container {
   display: flex;
   min-height: 100vh;
+  min-height: 100dvh;
 }
 
 .sidebar {
@@ -172,7 +183,7 @@ h2 { font-size: 1.5rem; font-weight: 700; color: var(--primary-color); }
 /* Animations */
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: translateY(0); }
+  to { opacity: 1; transform: none; }
 }
 
 .animate-fade {
@@ -238,3 +249,171 @@ h2 { font-size: 1.5rem; font-weight: 700; color: var(--primary-color); }
     display: none !important;
   }
 }
+
+/* =============================================
+   MOBILE / NATIVE APP RESPONSIVE STYLES
+   Applies on screens < 768px (phones)
+   Desktop layout is completely unchanged
+   ============================================= */
+
+/* Mobile Header */
+.mobile-header {
+  display: none;
+}
+
+/* Bottom Navigation */
+.bottom-nav {
+  display: none;
+}
+
+@media (max-width: 767px) {
+  /* Hide desktop sidebar on mobile */
+  .sidebar {
+    display: none !important;
+  }
+
+  /* Remove desktop left margin — use full screen */
+  .main-content {
+    margin-left: 0 !important;
+    padding: 1rem !important;
+    max-width: 100% !important;
+    /* Reserve space for bottom nav */
+    padding-bottom: calc(72px + env(safe-area-inset-bottom)) !important;
+  }
+
+  /* Compact typography */
+  h1 { font-size: 1.4rem !important; }
+  h2 { font-size: 1.2rem !important; }
+
+  /* Full-width cards on mobile */
+  .card, .glass-card {
+    border-radius: 12px;
+  }
+
+  /* Larger touch targets for buttons */
+  .btn-primary, .btn-secondary {
+    min-height: 44px;
+    padding: 0.8rem 1.2rem;
+    font-size: 0.9rem;
+    border-radius: 10px;
+  }
+
+  /* Larger touch targets for nav links */
+  .nav-link {
+    min-height: 44px;
+  }
+
+  /* Input fields - bigger on mobile */
+  .input-field {
+    min-height: 44px;
+    font-size: 16px; /* Prevents iOS zoom on focus */
+  }
+
+  /* Tables scroll horizontally */
+  table {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Remove card hover transform on touch */
+  .card:hover {
+    transform: none;
+  }
+
+  /* Mobile Header */
+  .mobile-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.75rem 1rem;
+    background: var(--surface-color);
+    border-bottom: 1px solid var(--border-color);
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    margin: -1rem -1rem 1rem -1rem;
+  }
+
+  .mobile-header-title {
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--primary-color);
+    letter-spacing: 0.03em;
+  }
+
+  /* Bottom Navigation */
+  .bottom-nav {
+    display: flex;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 64px;
+    background: var(--surface-color);
+    border-top: 1px solid var(--border-color);
+    z-index: 200;
+    padding-bottom: env(safe-area-inset-bottom);
+    align-items: stretch;
+  }
+
+  .bottom-nav-item {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    color: var(--text-muted);
+    text-decoration: none;
+    font-size: 0.6rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    transition: color 0.2s;
+    min-height: 44px;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .bottom-nav-item.active {
+    color: var(--primary-color);
+  }
+
+  .bottom-nav-item svg {
+    width: 22px;
+    height: 22px;
+  }
+
+  /* Disable card hover on mobile */
+  @media (hover: none) {
+    .card:hover {
+      transform: none;
+      box-shadow: none;
+    }
+    .btn-primary:hover {
+      transform: none;
+    }
+  }
+}
+
+/* Animations for Mobile Bottom Sheets & Native Modals */
+@keyframes slideUpSheet {
+  from {
+    transform: translateY(100%);
+    opacity: 0.8;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes fadeInOverlay {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+

@@ -47,7 +47,32 @@ next-env.d.ts
 .wwebjs_cache/
 baileys_auth_info/
 
-# Credentials & outputs
 credentials.json
 token.json
 output/
+scratch/
+baileys_auth_info/
+*.apk
+*.dex
+*.bin
+*.arsc
+*.pdf
+t1.txt
+t2.txt
+android/
+build_temp_apk/
+build_temp_apk2/
+META-INF/
+kotlin/
+org/
+res/
+assets/
+DebugProbesKt.bin
+AndroidManifest.xml
+query.js
+send_pdf.js
+scripts/quick_db.js
+scripts/send_apk.js
+scripts/generate_zully_report_pdf.ts
+
+

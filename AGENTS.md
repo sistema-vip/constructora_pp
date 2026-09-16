@@ -13,11 +13,21 @@
    - **"En Drive:"** o **"Archivos locales:"** -> Operar sobre archivos en el disco duro o carpetas de Drive locales.
    - **"En WhatsApp / Telegram:"** -> Accionar los servicios de mensajería locales.
    - **"Solo consulta / Investiga:"** -> Proveer respuestas o buscar info sin tocar código.
-7. **DELEGACIÓN POR DEFECTO (CERO ESPERA)**: Tú (el agente principal) actúas como el Director/Coordinador. Para **CUALQUIER** tarea operativa que te pida el usuario (ej. "registra un gasto", "crea un archivo", "modifica la base de datos"), **NO DEBES ejecutarla tú mismo paso a paso en el chat principal**. 
-   - En tu **primer turno**, invoca de inmediato a un subagente (con `invoke_subagent`) pasándole las instrucciones.
+7. **DELEGACIÓN POR DEFECTO (CERO ESPERA)**: Tú (el agente principal) actúas como el Director/Coordinador. Para **CUALQUIER** tarea operativa que te pida el usuario (ej. "registra un gasto", "crea un archivo", "modifica la base de datos", "registra un pago"):
+   - En tu **primer turno**, invoca de inmediato a un subagente (con `invoke_subagent`, indicando `Model: "flash"` para máxima velocidad de respuesta y menor latencia) pasándole la instrucción exacta y el comando directo a ejecutar.
    - Responde instantáneamente al usuario confirmando que la tarea fue asignada.
-   - El objetivo es que NUNCA pongas al usuario en cola de espera; tu chat principal debe quedar libre en cuestión de segundos para atender otra solicitud, mientras el subagente hace el trabajo pesado en segundo plano.
-8. **AUTONOMÍA TOTAL DE SUBAGENTES (CERO MODALES NI SOLICITUDES DE APROBACIÓN)**: Los subagentes tienen ESTRICTAMENTE PROHIBIDO lanzar diálogos, modales o solicitudes de confirmación interactiva en pantalla (como `RequestFeedback: true` o herramientas de preguntas interactivas) para tareas operativas normales (código, base de datos, consultas, correcciones). El usuario opera frecuentemente desde el móvil donde estas ventanas son difíciles de ver y bloquean el flujo. Todo el trabajo técnico y operativo se ejecuta con total autonomía de principio a fin. Únicamente si surgiera una acción de seguridad crítica (claves, vulneración de bloqueos, transferencias monetarias o datos sensibles), el subagente reportará de inmediato por mensaje interno al Agente Principal para que este lo gestione con el usuario. El Agente Principal supervisa constantemente el progreso de los subagentes.
+   - El objetivo es que NUNCA pongas al usuario en cola de espera; tu chat principal queda libre en segundos para atender la siguiente solicitud mientras el subagente ejecuta en paralelo.
+8. **VELOCIDAD EXTREMA Y CERO RODEOS EN SUBAGENTES (ATAJOS DIRECTOS)**:
+   - Los subagentes NO deben perder tiempo explorando carpetas ni haciendo búsquedas a ciegas de tablas o esquemas en `src/`.
+   - Para operaciones comunes de Base de Datos (gastos, cobros de clientes, compromisos, consulta de estados de proyectos), los subagentes deben usar DIRECTAMENTE el CLI de alta velocidad:
+     * **Buscar Proyecto:** `node scripts/quick_db.js find-project --query "<nombre o cliente>"`
+     * **Registrar Gasto:** `node scripts/quick_db.js record-cost --project "<obra o id>" --amount <monto> --provider "<proveedor>" --description "<concepto>"`
+     * **Registrar Cobro/Pago:** `node scripts/quick_db.js record-payment --project "<obra o id>" --amount <monto> --reference "<ref>" --description "<concepto>"`
+     * **Registrar Compromiso (CxP):** `node scripts/quick_db.js record-commitment --project "<obra o id>" --amount <monto> --provider "<proveedor>" --description "<concepto>"`
+     * **Consultar Balance de Obra:** `node scripts/quick_db.js project-status --project "<obra o id>"`
+   - Con este CLI, la tarea se completa en **1 solo comando y menos de 2 segundos**.
+   - Tras ejecutar el comando, el subagente notifica inmediatamente al Agente Principal vía `send_message` con el resultado y finaliza.
+9. **AUTONOMÍA TOTAL DE SUBAGENTES (CERO MODALES NI PREGUNTAS BLOQUEANTES)**: Los subagentes tienen ESTRICTAMENTE PROHIBIDO lanzar diálogos interactivos (`ask_question`), modales o solicitudes de confirmación en pantalla (`RequestFeedback: true`). El trabajo operativo se resuelve de principio a fin de forma 100% autónoma. Solo en caso de riesgo de seguridad crítica (exposición de claves, transferencias bancarias reales, etc.) reportarán internamente al Agente Principal.
 
 <!-- BEGIN:nextjs-agent-rules -->
 # This is NOT the Next.js you know

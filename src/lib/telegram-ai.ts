@@ -18,6 +18,7 @@ import {
   listLearnedSkills,
   deleteLearnedSkill
 } from './agent-learning';
+import { getPepeSystemKnowledge } from './pepe/systemKnowledge';
 
 const apiKey = process.env.GEMINI_API_KEY || '';
 const genAI = apiKey ? new GoogleGenerativeAI(apiKey) : null;
@@ -176,11 +177,12 @@ export async function processTelegramAgentMessage(
     return { replyText: '❌ Error: GEMINI_API_KEY no configurada en el servidor.' };
   }
 
-  // Cargar historial, actividad y habilidades aprendidas en paralelo
-  const [history, activity, learnedSkillsText] = await Promise.all([
+  // Cargar historial, actividad, habilidades aprendidas y conocimiento global en paralelo
+  const [history, activity, learnedSkillsText, systemKnowledge] = await Promise.all([
     chatHistory ? Promise.resolve(chatHistory) : (telegramChatId ? getTelegramChatHistory(telegramChatId, 8) : Promise.resolve([])),
     recentActivity ? Promise.resolve(recentActivity) : getRecentSystemActivity(8),
-    getLearnedSkillsContext(15)
+    getLearnedSkillsContext(15),
+    getPepeSystemKnowledge().catch(() => '')
   ]);
 
   const clienteName = context.map(c => `${c.name}: ${c.projects.map(p => p.title + ' [' + p.id + ']').join(', ')}`).join(' | ');
@@ -240,6 +242,12 @@ TU ÚNICA TAREA EN ESTE MENSAJE:
   const prompt = `
 Eres Pepe, el copiloto y asistente administrativo inteligente de P&P CONSTRUYE con permisos de Super Administrador.
 Tu misión es actuar como un asistente de construcción humano: inteligente, metódico, guiado paso a paso y con cero alucinaciones.
+
+── REGLAS DE IDENTIFICACIÓN Y ALIAS ──
+- "Suli", "Sulim", "Zully" o "TH-25" corresponden a la clienta ZULLY MARRERO.
+
+── ESTADO FINANCIERO Y BALANCES GLOBALES EN TIEMPO REAL ──
+${systemKnowledge}
 
 ── MAPA Y CAPACIDADES DEL SISTEMA WEB (P&P CONSTRUYE) ──
 Tienes visibilidad total y capacidad de consulta/registro sobre todos los módulos de la constructora:
@@ -662,16 +670,19 @@ Mensaje del usuario:
       // Filtrado inteligente por cliente si se especifica
       let filtered = list;
       if (params.client_name) {
-        const clientSearch = params.client_name.toLowerCase().trim();
+        let clientSearch = params.client_name.toLowerCase().trim();
+        if (clientSearch.includes('suli') || clientSearch.includes('sulim') || clientSearch.includes('zully')) {
+          clientSearch = 'marrero';
+        }
         const matched = list.filter((p: any) => p.client_name?.toLowerCase().includes(clientSearch));
         if (matched.length > 0) {
           filtered = matched;
         }
       }
 
-      // Filtrado por estado si se pide (en ejecución o aprobados)
+      // Filtrado por estado si se pide (en ejecución, activos o aprobados)
       const rawLower = (rawMessage || '').toLowerCase();
-      if (rawLower.includes('ejecucion') || rawLower.includes('ejecución') || rawLower.includes('aprobado')) {
+      if (rawLower.includes('ejecucion') || rawLower.includes('ejecución') || rawLower.includes('aprobado') || rawLower.includes('activo') || rawLower.includes('activos')) {
         const inProgress = filtered.filter((p: any) => p.status === 'in_progress');
         if (inProgress.length > 0) {
           filtered = inProgress;
@@ -757,11 +768,16 @@ Mensaje del usuario:
 
       let projectInfo = '';
       if (params.projectId) {
-        for (const c of context) {
-          const p = c.projects.find(proj => proj.id === params.projectId);
-          if (p) {
-            projectInfo = `\n🏗️ *Obra:* ${p.title} (${c.name})`;
-            break;
+        try {
+          const kpis = await getSystemKpis(params.projectId);
+          projectInfo = `\n🏗️ *Obra:* ${kpis.title} (${kpis.client_name})\n📉 *Total Gastado en Obra:* $${Number(kpis.total_spent_usd).toFixed(2)}`;
+        } catch {
+          for (const c of context) {
+            const p = c.projects.find(proj => proj.id === params.projectId);
+            if (p) {
+              projectInfo = `\n🏗️ *Obra:* ${p.title} (${c.name})`;
+              break;
+            }
           }
         }
       }
@@ -806,10 +822,32 @@ Mensaje del usuario:
         currency: params.currency || 'USD',
         description: params.description || 'Abono recibido',
         project_id: params.projectId,
+        reference: params.payment_reference || 'Transferencia/Efectivo',
         mode: 'direct'
       });
+
+      let projectInfo = '';
+      if (params.projectId) {
+        try {
+          const kpis = await getSystemKpis(params.projectId);
+          projectInfo = `\n🏗️ *Obra:* ${kpis.title} (${kpis.client_name})\n📌 *Saldo Restante por Cobrar:* $${Number(kpis.remaining_balance_usd).toFixed(2)}\n💎 *Total Cobrado:* $${Number(kpis.total_collected_usd).toFixed(2)}`;
+        } catch {
+          for (const c of context) {
+            const p = c.projects.find(proj => proj.id === params.projectId);
+            if (p) {
+              projectInfo = `\n🏗️ *Obra:* ${p.title} (${c.name})`;
+              break;
+            }
+          }
+        }
+      }
+
+      const formattedAmount = (params.currency || 'USD') === 'VES'
+        ? 'Bs ' + Number(params.amount).toLocaleString('es-VE')
+        : '$' + Number(params.amount).toFixed(2);
+
       return {
-        replyText: `✅ *Cobro/Abono Asentado en Obra*\n💰 *Monto Recibido:* $${Number(params.amount).toFixed(2)}\n📝 *Concepto:* ${params.description || 'Abono de Cliente'}`,
+        replyText: `✅ *Cobro/Abono Asentado en Obra*${projectInfo}\n💰 *Monto Recibido:* ${formattedAmount}\n📝 *Concepto:* ${params.description || 'Abono de Cliente'}${params.payment_reference ? '\n🔖 *Referencia:* ' + params.payment_reference : ''}`,
         actionTaken: 'create_client_payment',
         recordId: res.recordId
       };

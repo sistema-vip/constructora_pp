@@ -10,6 +10,8 @@ import {
   ChevronDown, ChevronRight, Briefcase
 } from 'lucide-react';
 import Link from 'next/link';
+import { useIsMobile } from '@/hooks/useIsMobile';
+import MobileReceivablesView from '@/components/mobile/MobileReceivablesView';
 
 interface ProjectPayment {
   id: string;
@@ -40,6 +42,7 @@ interface ReceivableProject {
 }
 
 export default function CuentasPorCobrarPage() {
+  const isMobile = useIsMobile();
   const [projects, setProjects] = useState<ReceivableProject[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
@@ -143,6 +146,64 @@ export default function CuentasPorCobrarPage() {
   const saldadosProjects = projectsWithBalance.filter(p => p.balance <= 0);
 
   const displayedProjects = activeTab === 'pendientes' ? pendientesProjects : saldadosProjects;
+
+  if (isMobile) {
+    return (
+      <>
+        <MobileReceivablesView
+          projects={projects}
+          loading={loading}
+          onNewPayment={(projectId) => {
+            if (projectId) setPaymentForm(prev => ({ ...prev, project_id: projectId }));
+            setShowPaymentModal(true);
+          }}
+          canEdit={!isViewer}
+        />
+        {showPaymentModal && (
+          <div className="modal-overlay">
+            <div className="modal-content card" style={{ borderRadius: '20px', padding: '1.5rem', width: '92%', maxWidth: '450px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+                <h3 style={{ margin: 0, fontSize: '1.15rem', color: '#f8fafc', fontWeight: 700 }}>Registrar Cobro</h3>
+                <button onClick={() => setShowPaymentModal(false)} style={{ background: 'rgba(255,255,255,0.08)', border: 'none', borderRadius: '50%', width: '32px', height: '32px', color: '#94a3b8', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  ✕
+                </button>
+              </div>
+              <form onSubmit={handleSavePayment} style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.78rem', color: '#94a3b8', marginBottom: '0.3rem', fontWeight: 600 }}>Proyecto / Obra *</label>
+                  <select required value={paymentForm.project_id} onChange={e => setPaymentForm({ ...paymentForm, project_id: e.target.value })} className="input-field" style={{ height: '46px' }}>
+                    <option value="">Selecciona el proyecto...</option>
+                    {projects.map(p => (
+                      <option key={p.id} value={p.id}>#{p.proposal_number || ''} {p.title} ({p.clients?.name})</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.78rem', color: '#94a3b8', marginBottom: '0.3rem', fontWeight: 600 }}>Monto Cobrado (USD) *</label>
+                  <input type="text" inputMode="decimal" required value={paymentForm.amount_usd} onChange={e => setPaymentForm({ ...paymentForm, amount_usd: handleMoneyInput(e.target.value) })} onBlur={e => setPaymentForm({ ...paymentForm, amount_usd: formatOnBlur(e.target.value) })} className="input-field" placeholder="$ 0.00" style={{ height: '48px', fontSize: '1.2rem', color: '#10b981', fontWeight: 700 }} />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.78rem', color: '#94a3b8', marginBottom: '0.3rem', fontWeight: 600 }}>Referencia / Banco</label>
+                  <input type="text" value={paymentForm.reference} onChange={e => setPaymentForm({ ...paymentForm, reference: e.target.value })} className="input-field" placeholder="Ej. Zelle #5821 / Efectivo" style={{ height: '46px' }} />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.78rem', color: '#94a3b8', marginBottom: '0.3rem', fontWeight: 600 }}>Concepto</label>
+                  <input type="text" value={paymentForm.description} onChange={e => setPaymentForm({ ...paymentForm, description: e.target.value })} className="input-field" placeholder="Ej. Anticipo o Abono" style={{ height: '46px' }} />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.78rem', color: '#94a3b8', marginBottom: '0.3rem', fontWeight: 600 }}>Fecha</label>
+                  <input type="date" value={paymentForm.date} onChange={e => setPaymentForm({ ...paymentForm, date: e.target.value })} className="input-field" style={{ height: '46px' }} />
+                </div>
+                <button type="submit" className="btn-primary" style={{ width: '100%', height: '48px', justifyContent: 'center', marginTop: '0.5rem', fontWeight: 700, backgroundColor: '#10b981', color: '#000' }}>
+                  Guardar Cobro
+                </button>
+              </form>
+            </div>
+          </div>
+        )}
+      </>
+    );
+  }
 
   return (
     <div className="animate-fade-in">

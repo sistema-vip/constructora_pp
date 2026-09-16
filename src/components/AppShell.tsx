@@ -10,6 +10,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import NewProposalModal from '@/components/NewProposalModal';
 import FloatingAssistant from '@/components/FloatingAssistant';
+import PWAInstallPrompt from '@/components/PWAInstallPrompt';
 import { UserProvider, useUser } from '@/lib/UserContext';
 import { supabase } from '@/lib/supabase';
 
@@ -56,7 +57,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="app-container">
-      {/* SIDEBAR */}
+      {/* SIDEBAR — only visible on desktop (hidden via CSS on mobile) */}
       <aside className="sidebar hide-on-print">
         <div style={{ marginBottom: '2rem', paddingBottom: '1.5rem', borderBottom: '1px solid var(--border-color)' }}>
           <Image src="/logo_3d.png" alt="P&P CONSTRUYE" width={160} height={80} style={{ objectFit: 'contain', filter: 'brightness(1.1)' }} priority />
@@ -91,10 +92,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           )}
         </nav>
 
-        <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: '0.5rem', borderTop: '1px solid var(--border-color)', paddingTop: '1.5rem' }}>
-
+        <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: '0.75rem', borderTop: '1px solid var(--border-color)', paddingTop: '1.25rem' }}>
           
-          <div style={{ padding: '0.8rem 1rem', background: 'rgba(255,255,255,0.03)', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.5rem' }}>
+          <PWAInstallPrompt variant="button" />
+          
+          <div style={{ padding: '0.8rem 1rem', background: 'rgba(255,255,255,0.03)', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
              <div style={{ width: 32, height: 32, borderRadius: '50%', background: 'var(--primary-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', color: 'black', fontSize: '0.8rem' }}>
                {user?.user_metadata?.name?.charAt(0) || user?.email?.charAt(0).toUpperCase()}
              </div>
@@ -116,16 +118,87 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
       {/* MAIN CONTENT */}
       <main className="main-content">
+        {/* MOBILE HEADER — only visible on mobile via CSS */}
         {pathname !== '/login' && (
-          <header className="hide-on-print" style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', marginBottom: '2.5rem' }}>
-             {/* Header vacío o para futuros elementos globales */}
+          <div className="mobile-header hide-on-print">
+            <span className="mobile-header-title">P&amp;P CONSTRUYE</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+              <button
+                type="button"
+                onClick={() => {
+                  if (typeof window !== 'undefined' && (window as any).__openPepeChat) {
+                    (window as any).__openPepeChat();
+                  }
+                }}
+                style={{
+                  background: 'rgba(245, 158, 11, 0.15)',
+                  border: '1px solid rgba(245, 158, 11, 0.35)',
+                  borderRadius: '20px',
+                  padding: '0.3rem 0.65rem',
+                  color: '#fbbf24',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.4rem',
+                  fontSize: '0.78rem',
+                  fontWeight: 600,
+                  cursor: 'pointer'
+                }}
+              >
+                <img src="/pepe_avatar.png" alt="Pepe" style={{ width: 18, height: 18, borderRadius: '50%', objectFit: 'cover' }} />
+                <span>Pepe IA</span>
+              </button>
+              <button
+                onClick={handleLogout}
+                style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.8rem' }}
+                title="Cerrar Sesión"
+              >
+                <LogOut size={16} />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {pathname !== '/login' && (
+          <header className="hide-on-print" style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', marginBottom: '1.5rem', gap: '1rem' }}>
+            <div style={{ maxWidth: '240px' }}>
+              <PWAInstallPrompt variant="button" />
+            </div>
           </header>
         )}
 
         {children}
       </main>
 
-      {/* Floating Global AI Assistant - Solo para Admins */}
+      {/* BOTTOM NAVIGATION — only visible on mobile via CSS */}
+      {pathname !== '/login' && (
+        <nav className="bottom-nav hide-on-print">
+          <Link href="/" className={`bottom-nav-item ${pathname === '/' ? 'active' : ''}`}>
+            <LayoutDashboard size={22} />
+            <span>Inicio</span>
+          </Link>
+          <Link href="/proyectos" className={`bottom-nav-item ${pathname.startsWith('/proyectos') ? 'active' : ''}`}>
+            <HardHat size={22} />
+            <span>Obras</span>
+          </Link>
+          <Link href="/clientes" className={`bottom-nav-item ${pathname.startsWith('/clientes') ? 'active' : ''}`}>
+            <Users size={22} />
+            <span>Clientes</span>
+          </Link>
+          <Link href="/cuentas-por-cobrar" className={`bottom-nav-item ${pathname.startsWith('/cuentas-por-cobrar') ? 'active' : ''}`}>
+            <TrendingUp size={22} />
+            <span>Cobrar</span>
+          </Link>
+          <Link href="/cuentas-por-pagar" className={`bottom-nav-item ${pathname.startsWith('/cuentas-por-pagar') ? 'active' : ''}`}>
+            <Wallet size={22} />
+            <span>Pagar</span>
+          </Link>
+        </nav>
+      )}
+
+      {/* Floating PWA Install Banner */}
+      <PWAInstallPrompt variant="banner" />
+
+      {/* Floating Global AI Assistant */}
       {role !== null && role !== 'viewer' && (
         <FloatingAssistant onProposalSaved={() => {
           if (typeof window !== 'undefined') {

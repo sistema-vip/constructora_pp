@@ -24,9 +24,12 @@ import { v4 as uuidv4 } from 'uuid';
 import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
 import { useAdminAction } from '@/lib/useAdminAction';
+import { useIsMobile } from '@/hooks/useIsMobile';
+import MobileClientsView from '@/components/mobile/MobileClientsView';
 
 export default function ClientesPage() {
   const router = useRouter();
+  const isMobile = useIsMobile();
   const { canCreate, canEdit, canDelete } = useAdminAction();
   const [searchTerm, setSearchTerm] = useState('');
   const [clients, setClients] = useState<any[]>([]);
@@ -277,6 +280,56 @@ export default function ClientesPage() {
     c.phone?.toLowerCase().includes(searchTerm.toLowerCase()) ||
     c.email?.toLowerCase().includes(searchTerm.toLowerCase())
   );
+
+  if (isMobile) {
+    return (
+      <>
+        <MobileClientsView
+          clients={clients}
+          loading={loading}
+          onNewClient={() => setShowModal(true)}
+          canCreate={canCreate}
+        />
+        {showModal && (
+          <div className="modal-overlay">
+            <div className="modal-content card" style={{ borderRadius: '20px', padding: '1.5rem', width: '92%', maxWidth: '450px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+                <h3 style={{ margin: 0, fontSize: '1.15rem', color: '#f8fafc', fontWeight: 700 }}>Nuevo Cliente</h3>
+                <button onClick={() => setShowModal(false)} style={{ background: 'rgba(255,255,255,0.08)', border: 'none', borderRadius: '50%', width: '32px', height: '32px', color: '#94a3b8', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <X size={18} />
+                </button>
+              </div>
+              <form onSubmit={handleAddClient} style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.78rem', color: '#94a3b8', marginBottom: '0.3rem', fontWeight: 600 }}>Nombre Completo *</label>
+                  <input type="text" required value={newClient.name} onChange={e => setNewClient({ ...newClient, name: e.target.value })} className="input-field" placeholder="Ej. Juan Pérez" style={{ height: '46px' }} />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.78rem', color: '#94a3b8', marginBottom: '0.3rem', fontWeight: 600 }}>Empresa / Razón Social</label>
+                  <input type="text" value={newClient.company_name} onChange={e => setNewClient({ ...newClient, company_name: e.target.value })} className="input-field" placeholder="Ej. Inversiones JP" style={{ height: '46px' }} />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.78rem', color: '#94a3b8', marginBottom: '0.3rem', fontWeight: 600 }}>Teléfono WhatsApp *</label>
+                  <input type="text" required value={newClient.phone} onChange={e => setNewClient({ ...newClient, phone: e.target.value })} className="input-field" placeholder="Ej. 04121234567" style={{ height: '46px' }} />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.78rem', color: '#94a3b8', marginBottom: '0.3rem', fontWeight: 600 }}>Email</label>
+                  <input type="email" value={newClient.email} onChange={e => setNewClient({ ...newClient, email: e.target.value })} className="input-field" placeholder="correo@ejemplo.com" style={{ height: '46px' }} />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.78rem', color: '#94a3b8', marginBottom: '0.3rem', fontWeight: 600 }}>Dirección</label>
+                  <input type="text" value={newClient.address} onChange={e => setNewClient({ ...newClient, address: e.target.value })} className="input-field" placeholder="Dirección de obra o fiscal" style={{ height: '46px' }} />
+                </div>
+                <button type="submit" className="btn-primary" style={{ width: '100%', height: '48px', justifyContent: 'center', marginTop: '0.5rem', fontWeight: 700 }}>
+                  Guardar Cliente
+                </button>
+              </form>
+            </div>
+          </div>
+        )}
+      </>
+    );
+  }
 
   return (
     <div className="animate-fade">

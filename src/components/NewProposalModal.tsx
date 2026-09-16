@@ -8,6 +8,7 @@ import { handleMoneyInput, formatOnBlur, formatCurrency, parseCurrency } from '@
 import { useAdminAction } from '@/lib/useAdminAction';
 import ProposalPrintLayout from '@/components/ProposalPrintLayout';
 import { autoPopulateTrackingTasks } from '@/lib/projectTaskHelper';
+import { useIsMobile } from '@/hooks/useIsMobile';
 
 interface Client { id: string; name: string; company_name?: string; }
 interface Props { isOpen: boolean; onClose: () => void; onSaved?: () => void; onOpenAI?: () => void; initialClientId?: string; existingProposal?: any; }
@@ -15,8 +16,8 @@ type Mode = 'manual' | 'ai';
 type Step = 'chat' | 'preview' | 'done';
 
 const INITIAL_FORM_CHAT_MSG: ChatMessage = { role: 'model', text: '¡Hola! Soy Pepe. Escribe los detalles del proyecto y yo rellenaré el formulario por ti. También puedes modificar los campos a la izquierda manualmente.' };
-const TEMPLATE_TODO_COSTO = 'La presente propuesta técnica y económica ha sido estructurada bajo la modalidad "A Todo Costo". Esta condición establece que el monto total presupuestado contempla el suministro integral de la totalidad de los materiales requeridos para la ejecución (tales como mantos, láminas de fibrocemento, cemento, pintura, etc.), así como los costos de fletes, maquinarias, herramientas menores, consumibles y la disposición de mano de obra altamente calificada. Nuestro compromiso es entregar el proyecto 100% terminado, operativo y con los más altos estándares de calidad, relevando al cliente de cualquier gestión de procura o gastos operativos adicionales.';
-const TEMPLATE_MANO_OBRA = 'La presente propuesta técnica y económica ha sido estructurada bajo la modalidad de "Solo Mano de Obra". Bajo esta condición, P&P CONSTRUYE se encarga exclusivamente de la disposición de mano de obra altamente calificada y las herramientas necesarias para la ejecución del proyecto. El suministro integral de todos los materiales requeridos (tales como lajas, cemento, adhesivos, etc.), así como los costos de fletes de materiales, son responsabilidad directa del cliente.';
+const TEMPLATE_TODO_COSTO = 'La presente propuesta técnica y económica ha sido estructurada bajo la modalidad "A Todo Costo". Esta condición establece que el monto total presupuestado contempla el suministro integral de todos los materiales e insumos requeridos para la ejecución, así como los costos de fletes, maquinarias, herramientas menores, consumibles y la disposición de mano de obra altamente calificada. Nuestro compromiso es entregar el proyecto 100% terminado, operativo y con los más altos estándares de calidad, relevando al cliente de cualquier gestión de compras, procura o gastos operativos adicionales.';
+const TEMPLATE_MANO_OBRA = 'La presente propuesta técnica y económica ha sido estructurada bajo la modalidad de "Solo Mano de Obra". Bajo esta condición, P&P CONSTRUYE se encarga exclusivamente de la disposición de mano de obra altamente calificada y las herramientas necesarias para la ejecución del proyecto. El suministro integral de todos los materiales e insumos requeridos, así como los costos de fletes de los mismos, son responsabilidad directa del cliente.';
 const TEMPLATE_MATERIALES = 'La presente propuesta técnica y económica ha sido estructurada bajo la modalidad de "Solo Materiales" (Suministro de Materiales). Bajo esta condición, P&P CONSTRUYE se encarga exclusivamente de la procura, suministro y entrega en obra de la totalidad de los materiales especificados en la propuesta técnica. La contratación, supervisión y pago de la mano de obra para la ejecución, así como las herramientas y equipos necesarios para la instalación de los mismos, son responsabilidad directa y exclusiva del cliente.';
 
 function getTodayDateStr(): string {
@@ -40,6 +41,27 @@ export function formatDisplayDate(dateStr?: string): string {
     }
   }
   return dateStr;
+}
+
+function renderFormattedMessage(text: string, isUser: boolean) {
+  if (!text) return '';
+  const parts = text.split(/(\*\*.*?\*\*)/g);
+  return parts.map((part, index) => {
+    if (part.startsWith('**') && part.endsWith('**')) {
+      return (
+        <strong 
+          key={index} 
+          style={{ 
+            fontWeight: 700, 
+            color: isUser ? '#000' : '#fbbf24' 
+          }}
+        >
+          {part.slice(2, -2)}
+        </strong>
+      );
+    }
+    return part;
+  });
 }
 
 const INIT_FORM = { 
@@ -109,6 +131,8 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
     ));
   };
 
+  const isMobile = useIsMobile();
+  const [mobileTab, setMobileTab] = useState<'form' | 'chat'>('form');
   const [mode, setMode] = useState<Mode>('manual');
   const [step, setStep] = useState<Step>('chat');
   const [selectedModality, setSelectedModality] = useState<ModalityType>('todo-costo');
@@ -430,7 +454,7 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
     <div className="proposal-modal-wrapper" style={{ position: 'fixed', inset: 0, zIndex: 1000, background: '#0c0e12', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       
       {/* ── HEADER ── */}
-      <div className="hide-on-print" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1.25rem 2rem', borderBottom: '1px solid var(--border-color)', flexShrink: 0 }}>
+      <div className="hide-on-print" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: isMobile ? '0.85rem 1rem' : '1.25rem 2rem', borderBottom: '1px solid var(--border-color)', flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '.75rem' }}>
           <div style={{ background: 'linear-gradient(135deg,rgba(245,158,11,.2),rgba(56,189,248,.2))', padding: '.55rem', borderRadius: '10px' }}>
             <FileText size={18} style={{ color: 'var(--primary-color)' }} />
@@ -514,12 +538,61 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
           </div>
         )}
 
+        {/* MOBILE TAB BAR (Only visible on mobile) */}
+        {isMobile && step !== 'done' && mode === 'manual' && step === 'chat' && (
+          <div style={{ display: 'flex', borderBottom: '1px solid var(--border-color)', background: 'rgba(0,0,0,0.35)', padding: '0.4rem 0.75rem', gap: '0.5rem', flexShrink: 0 }}>
+            <button
+              type="button"
+              onClick={() => setMobileTab('form')}
+              style={{
+                flex: 1,
+                padding: '0.65rem',
+                borderRadius: '12px',
+                border: 'none',
+                background: mobileTab === 'form' ? 'rgba(245,158,11,0.2)' : 'transparent',
+                color: mobileTab === 'form' ? '#fbbf24' : 'var(--text-muted)',
+                fontWeight: mobileTab === 'form' ? 700 : 500,
+                fontSize: '0.86rem',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '0.45rem',
+                cursor: 'pointer'
+              }}
+            >
+              <FileText size={16} /> Formulario
+            </button>
+            <button
+              type="button"
+              onClick={() => setMobileTab('chat')}
+              style={{
+                flex: 1,
+                padding: '0.65rem',
+                borderRadius: '12px',
+                border: 'none',
+                background: mobileTab === 'chat' ? 'rgba(245,158,11,0.2)' : 'transparent',
+                color: mobileTab === 'chat' ? '#fbbf24' : 'var(--text-muted)',
+                fontWeight: mobileTab === 'chat' ? 700 : 500,
+                fontSize: '0.86rem',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '0.45rem',
+                cursor: 'pointer'
+              }}
+            >
+              <MessageSquare size={16} /> Chat con Pepe
+            </button>
+          </div>
+        )}
+
         {/* MANUAL / AI SPLIT PANE */}
         {step !== 'done' && mode === 'manual' && step === 'chat' && (
-          <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+          <div style={{ flex: 1, display: 'flex', flexDirection: isMobile ? 'column' : 'row', overflow: 'hidden' }}>
             
             {/* LEFT PANE: Form */}
-            <div className="hide-on-print" style={{ flex: 1.2, overflowY: 'auto', padding: '2rem', borderRight: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+            {(!isMobile || mobileTab === 'form') && (
+              <div className="hide-on-print" style={{ flex: isMobile ? 1 : 1.2, width: '100%', overflowY: 'auto', padding: isMobile ? '1.25rem 1rem' : '2rem', borderRight: isMobile ? 'none' : '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '2rem' }}>
               
               {/* Sección 1: Información General */}
               <div>
@@ -765,32 +838,57 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
                 </div>
               </div>
             </div>
+            )}
 
             {/* RIGHT PANE: Chat */}
-            <div style={{ flex: 0.8, display: 'flex', flexDirection: 'column', background: 'rgba(0,0,0,0.2)' }}>
-              
-              <div className="hide-on-print" style={{ padding: '1rem', borderBottom: '1px solid var(--border-color)', background: 'rgba(255,255,255,0.02)', textAlign: 'center', color: 'var(--primary-color)', fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}>
-                <MessageSquare size={16} /> Chat con Pepe
-              </div>
+            {(!isMobile || mobileTab === 'chat') && (
+              <div style={{ flex: isMobile ? 1 : 0.8, width: '100%', display: 'flex', flexDirection: 'column', background: 'rgba(0,0,0,0.2)' }}>
+                
+                <div className="hide-on-print" style={{ padding: '0.85rem 1rem', borderBottom: '1px solid var(--border-color)', background: 'rgba(255,255,255,0.02)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--primary-color)', fontWeight: 600, fontSize: '0.92rem' }}>
+                    <MessageSquare size={16} /> Chat con Pepe
+                  </div>
+                  {isMobile && (
+                    <button
+                      type="button"
+                      onClick={() => setMobileTab('form')}
+                      style={{
+                        background: 'rgba(245,158,11,0.15)',
+                        border: '1px solid rgba(245,158,11,0.3)',
+                        borderRadius: '16px',
+                        padding: '0.3rem 0.75rem',
+                        color: '#fbbf24',
+                        fontSize: '0.76rem',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.3rem'
+                      }}
+                    >
+                      <FileText size={13} /> Ir al Formulario
+                    </button>
+                  )}
+                </div>
 
-              {/* Tab Content: Chat */}
+                {/* Tab Content: Chat */}
                 <div className="hide-on-print" style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-                  <div style={{ flex: 1, overflowY: 'auto', padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                  <div style={{ flex: 1, overflowY: 'auto', padding: isMobile ? '1rem 0.85rem' : '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                     {messages.map((msg, i) => (
-                      <div key={i} style={{ display: 'flex', justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start' }}>
+                      <div key={i} style={{ display: 'flex', justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start', width: '100%' }}>
                         {msg.role === 'model' && (
-                          <div style={{ width: 28, height: 28, borderRadius: '50%', overflow: 'hidden', flexShrink: 0, marginRight: '.5rem', marginTop: '.15rem', border: '1px solid var(--primary-color)' }}>
+                          <div style={{ width: 30, height: 30, borderRadius: '50%', overflow: 'hidden', flexShrink: 0, marginRight: '.55rem', marginTop: '.15rem', border: '1px solid var(--primary-color)' }}>
                             <img src="/pepe_avatar.png" alt="Pepe" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                           </div>
                         )}
-                        <div style={{ maxWidth: '85%', padding: '.75rem 1rem', borderRadius: msg.role === 'user' ? '16px 16px 4px 16px' : '16px 16px 16px 4px', background: msg.role === 'user' ? 'linear-gradient(135deg,var(--primary-color),#d97706)' : 'rgba(255,255,255,.05)', border: msg.role === 'model' ? '1px solid rgba(255,255,255,.1)' : 'none', color: msg.role === 'user' ? '#000' : 'var(--text-primary)', fontSize: '.85rem', lineHeight: 1.6, whiteSpace: 'pre-wrap', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}>
-                          {msg.text}
+                        <div style={{ maxWidth: isMobile ? '86%' : '85%', padding: isMobile ? '0.75rem 1rem' : '.75rem 1rem', borderRadius: msg.role === 'user' ? '16px 16px 4px 16px' : '16px 16px 16px 4px', background: msg.role === 'user' ? 'linear-gradient(135deg,var(--primary-color),#d97706)' : 'rgba(255,255,255,.05)', border: msg.role === 'model' ? '1px solid rgba(255,255,255,.1)' : 'none', color: msg.role === 'user' ? '#000' : 'var(--text-primary)', fontSize: isMobile ? '0.91rem' : '.85rem', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflowWrap: 'break-word', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}>
+                          {renderFormattedMessage(msg.text, msg.role === 'user')}
                         </div>
                       </div>
                     ))}
                     {loading && (
                       <div style={{ display: 'flex', alignItems: 'center', gap: '.5rem' }}>
-                        <div style={{ width: 28, height: 28, borderRadius: '50%', overflow: 'hidden', flexShrink: 0, border: '1px solid var(--primary-color)' }}>
+                        <div style={{ width: 30, height: 30, borderRadius: '50%', overflow: 'hidden', flexShrink: 0, border: '1px solid var(--primary-color)' }}>
                           <img src="/pepe_avatar.png" alt="Pepe" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                         </div>
                         <div style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', borderRadius: '16px 16px 16px 4px', padding: '.75rem 1rem', display: 'flex', gap: '.4rem', alignItems: 'center' }}>
@@ -801,10 +899,10 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
                     <div ref={chatEndRef} />
                   </div>
                   
-                  <div style={{ padding: '1.25rem', borderTop: '1px solid var(--border-color)', background: 'rgba(0,0,0,.15)', display: 'flex', gap: '0.75rem', alignItems: 'flex-end' }}>
+                  <div style={{ padding: isMobile ? '0.75rem 0.85rem' : '1.25rem', borderTop: '1px solid var(--border-color)', background: 'rgba(0,0,0,.15)', display: 'flex', gap: '0.75rem', alignItems: 'flex-end' }}>
                     <textarea
                       className="input-field"
-                      style={{ flex: 1, minHeight: 45, maxHeight: 120, resize: 'none', fontSize: '.9rem', padding: '0.6rem 1rem', borderRadius: '20px' }}
+                      style={{ flex: 1, minHeight: 45, maxHeight: 120, resize: 'none', fontSize: isMobile ? '0.94rem' : '.9rem', padding: '0.6rem 1rem', borderRadius: '20px' }}
                       placeholder="Pídele a Pepe que rellene algo..."
                       value={input}
                       onChange={e => setInput(e.target.value)}
@@ -817,14 +915,15 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
                   </div>
                 </div>
 
-            </div>
+              </div>
+            )}
           </div>
         )}
       </div>
 
       {/* ── FOOTER ── */}
       {step !== 'done' && (
-        <div className="hide-on-print" style={{ padding: '1rem 2rem', borderTop: '1px solid var(--border-color)', display: 'flex', gap: '1rem', justifyContent: 'flex-end', background: 'rgba(0,0,0,.2)', flexShrink: 0 }}>
+        <div className="hide-on-print" style={{ padding: isMobile ? '0.75rem 1rem' : '1rem 2rem', borderTop: '1px solid var(--border-color)', display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', background: 'rgba(0,0,0,.2)', flexShrink: 0, flexWrap: 'wrap' }}>
           {mode === 'ai' && step === 'preview' ? (
             <>
               <button className="btn-secondary" onClick={() => { setMode('manual'); setStep('chat'); }}>← Seguir editando</button>

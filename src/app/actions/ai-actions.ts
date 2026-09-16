@@ -1,6 +1,9 @@
 'use server';
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { getPepeSystemKnowledge } from '@/lib/pepe/systemKnowledge';
+import { supabaseAdmin } from '@/lib/supabase-admin';
+import { processTelegramAgentMessage, ClientProjectContext, TelegramChatMessageItem } from '@/lib/telegram-ai';
 
 export interface ChatMessage {
   role: 'user' | 'model';
@@ -22,21 +25,26 @@ export interface ProposalData {
 // SYSTEM PROMPTS
 // ─────────────────────────────────────────────
 
-const CHAT_SYSTEM_PROMPT = `Eres el asistente técnico de P&P CONSTRUYE. 
+const CHAT_SYSTEM_PROMPT = `Eres el asistente inteligente y técnico de P&P CONSTRUYE. 
 Tu nombre es "Pepe".
 
-Tu estilo de respuesta debe ser:
-- PROFESIONAL Y SOBRIO: Evita el uso excesivo de emojis (máximo 1 por mensaje o ninguno).
-- SIN ADORNOS INNECESARIOS: No uses tablas de Markdown (evita las barras "|" y rayitas "---"). 
-- LISTAS LIMPIAS: Para materiales o pasos técnicos, usa listas simples con guiones (-) o números. 
-- DIRECTO AL GRANO: Si el usuario pide materiales, dálos en una lista de texto plano que sea fácil de copiar y pegar.
-- VOCABULARIO TÉCNICO: Usa términos de construcción venezolana.
+TU ROL Y CAPACIDADES:
+- Eres el asistente principal integrado en el sistema web y móvil de P&P CONSTRUYE.
+- Tienes memoria y reconocimiento global de toda la empresa en tiempo real: clientes, obras en progreso (activas), propuestas por aprobar, cuentas por cobrar, cuentas por pagar a proveedores/obreros y catálogo de materiales.
+- Cuando el usuario te pregunte por cualquier cliente, proyecto, saldo financiero o partidas, responde con precisión usando la información cargada en tu memoria.
+- Sabes reconocer los alias y propiedades de cada cliente (por ejemplo, "Suli", "Sulim", "Zully" o "TH-25" corresponden a la clienta ZULLY MARRERO).
+
+ESTILO DE RESPUESTA:
+- PROFESIONAL, SOBRIO Y PRECISO: Usa tono formal, claro y cordial. Evita el uso excesivo de emojis (máximo 1 o ninguno).
+- SIN ADORNOS INNECESARIOS: No uses tablas de Markdown (evita las barras "|" y rayitas "---").
+- LISTAS LIMPIAS: Para listas de obras, materiales o desgloses financieros, usa listas simples con viñetas (-) o números.
+- DIRECTO AL GRANO: Proporciona la información exacta que el usuario solicita sin rodeos ni rodeos innecesarios.
+- VOCABULARIO TÉCNICO VENEZOLANO: Emplea terminología de construcción y finanzas habitual en Venezuela.
 
 COMPORTAMIENTO:
-- Siempre confirma lo que entendiste antes de calcular.
-- Si el usuario dice "ponle X" o "quítale Y", ajusta los cálculos inmediatamente.
-- Si el usuario dice "genera la propuesta" o "está listo", responde solo con: [LISTO_PARA_GENERAR]
-- Máximo 3 párrafos.`;
+- Si el usuario te pide proyectos activos de un cliente (ej. "los proyectos activos de Suli"), lista de inmediato sus obras en ejecución con número de propuesta, título y cifras relevantes.
+- Si el usuario pide cálculos o balances, indícalos con exactitud basándote en los datos del sistema.
+- Si el usuario dice "genera la propuesta" o "está listo", responde solo con: [LISTO_PARA_GENERAR]`;
 
 const PROPOSAL_SYSTEM_PROMPT = `Eres el redactor de propuestas técnicas de P&P CONSTRUYE.
 Basándote en la conversación proporcionada, redacta una propuesta profesional EXACTAMENTE en este formato (SIN incluir guiones "---" al principio ni al final):
@@ -144,6 +152,8 @@ export async function sendChatMessage(messages: ChatMessage[]): Promise<{
   success: boolean;
   reply?: string;
   readyToGenerate?: boolean;
+  actionTaken?: string;
+  recordId?: string;
   error?: string;
 }> {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -151,42 +161,63 @@ export async function sendChatMessage(messages: ChatMessage[]): Promise<{
     return { success: false, error: 'API Key de Gemini no configurada. Agrega GEMINI_API_KEY en el archivo .env.local (obtén una gratis en aistudio.google.com)' };
   }
 
-  // Build clean alternating chat history for Gemini API
-  const validHistory: { role: 'user' | 'model'; parts: { text: string }[] }[] = [
-    { role: 'user', parts: [{ text: CHAT_SYSTEM_PROMPT }] },
-    { role: 'model', parts: [{ text: '¡Entendido! Soy el asistente técnico de P&P CONSTRUYE. ¿En qué proyecto estamos trabajando?' }] }
-  ];
-
-  let lastRole: 'user' | 'model' = 'model';
-  for (const m of messages.slice(0, -1)) {
-    if (m.role !== lastRole) {
-      validHistory.push({
-        role: m.role,
-        parts: [{ text: m.text }]
-      });
-      lastRole = m.role;
-    }
+  if (!messages || messages.length === 0) {
+    return { success: false, error: 'No se recibieron mensajes para procesar.' };
   }
 
   const lastMessage = messages[messages.length - 1].text;
 
   try {
-    return await callGeminiWithFallback(apiKey, async (model) => {
-      const chat = model.startChat({ history: validHistory });
-      const result = await chat.sendMessage(lastMessage);
-      const replyText = result.response.text();
+    // 1. Cargar contexto de clientes y proyectos activos para resolución precisa de entidades
+    const { data: clientsRes } = await supabaseAdmin
+      .from('clients')
+      .select('id, name, projects(id, title, status)')
+      .order('name');
 
-      const readyToGenerate = replyText.includes('[LISTO_PARA_GENERAR]');
-      const cleanReply = replyText.replace('[LISTO_PARA_GENERAR]', '').trim();
+    const context: ClientProjectContext[] = (clientsRes || []).map((c: any) => ({
+      id: c.id,
+      name: c.name,
+      projects: (c.projects || [])
+        .filter((p: any) => p.status !== 'cancelled' && p.status !== 'completed')
+        .map((p: any) => ({ id: p.id, title: p.title, status: p.status }))
+    }));
 
-      return {
-        success: true,
-        reply: cleanReply || '¡Perfecto! La información está lista. Presiona "Generar Propuesta" para formalizarla.',
-        readyToGenerate,
-      };
-    });
+    // 2. Historial de conversación multi-turno para retención de contexto (monto, cliente, etc.)
+    const chatHistory: TelegramChatMessageItem[] = messages.slice(0, -1).map(m => ({
+      role: m.role === 'user' ? 'user' : 'assistant',
+      message_text: m.text,
+      created_at: new Date().toISOString()
+    }));
+
+    // 3. Procesar mediante el motor ejecutivo de Pepe
+    const agentRes = await processTelegramAgentMessage(
+      lastMessage,
+      context,
+      undefined, // imageBase64
+      0,         // chatId (0 para interfaz web/móvil)
+      'Usuario App P&P',
+      true,      // isAdmin: acceso completo a operaciones
+      chatHistory
+    );
+
+    const replyText = agentRes.replyText || '';
+    const readyToGenerate = replyText.includes('[LISTO_PARA_GENERAR]') ||
+      lastMessage.toLowerCase().includes('genera la propuesta') ||
+      lastMessage.toLowerCase().includes('generar propuesta') ||
+      lastMessage.toLowerCase().includes('está listo');
+
+    const cleanReply = replyText.replace('[LISTO_PARA_GENERAR]', '').trim();
+
+    return {
+      success: true,
+      reply: cleanReply || '¡Entendido! ¿En qué más puedo ayudarte?',
+      readyToGenerate,
+      actionTaken: agentRes.actionTaken,
+      recordId: agentRes.recordId
+    };
   } catch (error: any) {
-    return { success: false, error: `Error al contactar Gemini: ${error?.message || 'Servicio temporalmente no disponible'}` };
+    console.error('Error en sendChatMessage:', error);
+    return { success: false, error: `Error al procesar mensaje con Pepe: ${error?.message || 'Servicio temporalmente no disponible'}` };
   }
 }
 

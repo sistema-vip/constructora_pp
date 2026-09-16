@@ -10,6 +10,7 @@ export async function GET(
 ) {
   try {
     const { id } = await context.params;
+    const { searchParams } = new URL(request.url);
 
     if (!id) {
       return NextResponse.json({ error: 'ID de proyecto o propuesta requerido' }, { status: 400 });
@@ -50,13 +51,16 @@ export async function GET(
 
     const pdfBuffer = await generateProposalPdfBuffer(proposalData);
     const fileName = `Propuesta_${project.proposal_number || 'draft'}_${(client.name || 'cliente').replace(/[^a-zA-Z0-9]/g, '_')}.pdf`;
+    const isDownload = searchParams.get('download') === '1';
+    const disposition = isDownload ? 'attachment' : 'inline';
 
     return new Response(pdfBuffer as any, {
       status: 200,
       headers: {
         'Content-Type': 'application/pdf',
-        'Content-Disposition': `inline; filename="${fileName}"`,
-        'Content-Length': pdfBuffer.length.toString()
+        'Content-Disposition': `${disposition}; filename="${fileName}"`,
+        'Content-Length': pdfBuffer.length.toString(),
+        'Cache-Control': 'no-cache, no-store, must-revalidate'
       }
     });
   } catch (err: any) {
