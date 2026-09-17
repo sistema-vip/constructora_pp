@@ -1315,6 +1315,11 @@ export default function ClienteDashboard() {
   const printBalanceDue = printTotalContracted - printTotalPaid;
   const printEstimatedProfit = printTotalContracted - printTotalCostsValue - printTotalCommitted;
   const printNetProfit = printEstimatedProfit - printTotalAdvances;
+  const printPartnerShare = printEstimatedProfit / 2;
+  const printHenryAdvances = printAdvances.filter((a: any) => /henry/i.test(a.partner_name || '')).reduce((s: number, a: any) => s + Number(a.amount_usd || 0), 0);
+  const printLosbersAdvances = printAdvances.filter((a: any) => /losber/i.test(a.partner_name || '')).reduce((s: number, a: any) => s + Number(a.amount_usd || 0), 0);
+  const printHenrySaldo = printPartnerShare - printHenryAdvances;
+  const printLosbersSaldo = printPartnerShare - printLosbersAdvances;
 
   return (
     <>
@@ -3220,15 +3225,42 @@ export default function ClienteDashboard() {
                   <td style={{ padding: '0.5rem', border: '1px solid #ccc', textAlign: 'right', color: '#d32f2f' }}>${formatCurrency(printTotalCommitted)}</td>
                 </tr>
                 <tr>
-                  <td style={{ padding: '0.5rem', border: '1px solid #ccc', background: '#f8f9fa' }}><strong>Ganancia Estimada:</strong></td>
-                  <td style={{ padding: '0.5rem', border: '1px solid #ccc', textAlign: 'right', color: '#28a745' }}>${formatCurrency(printEstimatedProfit)}</td>
+                  <td style={{ padding: '0.5rem', border: '1px solid #ccc', background: '#f8f9fa' }}><strong>Ganancia Estimada de la Obra (Margen Bruto):</strong></td>
+                  <td style={{ padding: '0.5rem', border: '1px solid #ccc', textAlign: 'right', color: '#28a745', fontWeight: 600 }}>${formatCurrency(printEstimatedProfit)}</td>
+                </tr>
+                <tr style={{ background: '#f8fafc', fontSize: '11px' }}>
+                  <td style={{ padding: '0.35rem 0.5rem 0.35rem 1.5rem', border: '1px solid #e2e8f0', color: '#475569' }}>↳ Participación Base Estimada (50% cada socio):</td>
+                  <td style={{ padding: '0.35rem 0.5rem', border: '1px solid #e2e8f0', textAlign: 'right', color: '#475569', fontWeight: 600 }}>${formatCurrency(printPartnerShare)} c/u</td>
                 </tr>
                 <tr>
-                  <td style={{ padding: '0.5rem', border: '1px solid #ccc', background: '#f8f9fa' }}><strong>Total Retiro de Socios:</strong></td>
-                  <td style={{ padding: '0.5rem', border: '1px solid #ccc', textAlign: 'right', color: '#d32f2f' }}>${formatCurrency(printTotalAdvances)}</td>
+                  <td style={{ padding: '0.5rem', border: '1px solid #ccc', background: '#faf5ff' }}><strong>Total Retiro de Socios:</strong></td>
+                  <td style={{ padding: '0.5rem', border: '1px solid #ccc', textAlign: 'right', color: '#6b21a8', fontWeight: 600 }}>-${formatCurrency(printTotalAdvances)}</td>
+                </tr>
+                <tr style={{ background: '#faf5ff', fontSize: '11px' }}>
+                  <td style={{ padding: '0.35rem 0.5rem 0.35rem 1.5rem', border: '1px solid #f3e8ff', color: '#6b21a8' }}>↳ Retiros realizados por Henry Peraza:</td>
+                  <td style={{ padding: '0.35rem 0.5rem', border: '1px solid #f3e8ff', textAlign: 'right', color: '#6b21a8', fontWeight: 600 }}>-${formatCurrency(printHenryAdvances)}</td>
+                </tr>
+                <tr style={{ background: '#faf5ff', fontSize: '11px' }}>
+                  <td style={{ padding: '0.35rem 0.5rem 0.35rem 1.5rem', border: '1px solid #f3e8ff', color: '#6b21a8' }}>↳ Retiros realizados por Losbers Pérez:</td>
+                  <td style={{ padding: '0.35rem 0.5rem', border: '1px solid #f3e8ff', textAlign: 'right', color: '#6b21a8', fontWeight: 600 }}>-${formatCurrency(printLosbersAdvances)}</td>
+                </tr>
+                <tr style={{ background: '#f1f5f9', fontWeight: 'bold' }}>
+                  <td colSpan={2} style={{ padding: '0.5rem', border: '1px solid #cbd5e1', fontSize: '12px', color: '#1e293b' }}>SALDO DE UTILIDAD DISPONIBLE INDIVIDUAL (50% Margen - Retiros):</td>
+                </tr>
+                <tr style={{ background: printHenrySaldo >= 0 ? '#eff6ff' : '#fef2f2' }}>
+                  <td style={{ padding: '0.45rem 0.5rem 0.45rem 1.5rem', border: `1px solid ${printHenrySaldo >= 0 ? '#bfdbfe' : '#fecaca'}`, color: printHenrySaldo >= 0 ? '#1d4ed8' : '#dc2626', fontWeight: 600 }}>• Saldo Disponible Henry Peraza:</td>
+                  <td style={{ padding: '0.45rem 0.5rem', border: `1px solid ${printHenrySaldo >= 0 ? '#bfdbfe' : '#fecaca'}`, textAlign: 'right', color: printHenrySaldo >= 0 ? '#1d4ed8' : '#dc2626', fontWeight: 'bold' }}>
+                    {printHenrySaldo >= 0 ? '$' : '-$'}{formatCurrency(Math.abs(printHenrySaldo))}{printHenrySaldo < 0 ? ' (Excedido)' : ''}
+                  </td>
+                </tr>
+                <tr style={{ background: printLosbersSaldo >= 0 ? '#eff6ff' : '#fef2f2' }}>
+                  <td style={{ padding: '0.45rem 0.5rem 0.45rem 1.5rem', border: `1px solid ${printLosbersSaldo >= 0 ? '#bfdbfe' : '#fecaca'}`, color: printLosbersSaldo >= 0 ? '#1d4ed8' : '#dc2626', fontWeight: 600 }}>• Saldo Disponible Losbers Pérez:</td>
+                  <td style={{ padding: '0.45rem 0.5rem', border: `1px solid ${printLosbersSaldo >= 0 ? '#bfdbfe' : '#fecaca'}`, textAlign: 'right', color: printLosbersSaldo >= 0 ? '#1d4ed8' : '#dc2626', fontWeight: 'bold' }}>
+                    {printLosbersSaldo >= 0 ? '$' : '-$'}{formatCurrency(Math.abs(printLosbersSaldo))}{printLosbersSaldo < 0 ? ' (Excedido)' : ''}
+                  </td>
                 </tr>
                 <tr style={{ background: '#e8f5e9' }}>
-                  <td style={{ padding: '0.7rem', border: '2px solid #28a745', fontWeight: 'bold' }}><strong>GANANCIA NETA POR RETIRAR:</strong></td>
+                  <td style={{ padding: '0.7rem', border: '2px solid #28a745', fontWeight: 'bold' }}><strong>UTILIDAD NETA TOTAL REMANENTE EN CAJA / OBRA:</strong></td>
                   <td style={{ padding: '0.7rem', border: '2px solid #28a745', textAlign: 'right', fontWeight: 'bold', color: '#1b5e20', fontSize: '15px' }}>${formatCurrency(printNetProfit)}</td>
                 </tr>
               </tbody>

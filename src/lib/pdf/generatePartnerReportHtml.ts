@@ -47,6 +47,11 @@ export function generatePartnerReportHtml(data: PartnerReportData): string {
   } = data;
 
   const todayStr = new Date().toLocaleDateString('es-VE');
+  const partnerShare = (printEstimatedProfit || 0) / 2;
+  const hAdv = henryAdvances || 0;
+  const lAdv = losbersAdvances || 0;
+  const henrySaldo = partnerShare - hAdv;
+  const losbersSaldo = partnerShare - lAdv;
 
   return `<!DOCTYPE html>
 <html lang="es">
@@ -195,15 +200,38 @@ export function generatePartnerReportHtml(data: PartnerReportData): string {
           <td style="padding: 0.5rem; border: 1px solid #ccc; text-align: right; color: #d32f2f; font-weight: 600;">$${formatCurrency(printTotalCommitted)}</td>
         </tr>
         <tr>
-          <td style="padding: 0.5rem; border: 1px solid #ccc; background: #f8f9fa;"><strong>Ganancia Estimada:</strong></td>
+          <td style="padding: 0.5rem; border: 1px solid #ccc; background: #f8f9fa;"><strong>Ganancia Estimada de la Obra (Margen Bruto):</strong></td>
           <td style="padding: 0.5rem; border: 1px solid #ccc; text-align: right; color: #28a745; font-weight: 600;">$${formatCurrency(printEstimatedProfit)}</td>
         </tr>
+        <tr style="background: #f8fafc; font-size: 11px;">
+          <td style="padding: 0.35rem 0.5rem 0.35rem 1.5rem; border: 1px solid #e2e8f0; color: #475569;">↳ Participación Base Estimada (50% cada socio):</td>
+          <td style="padding: 0.35rem 0.5rem; border: 1px solid #e2e8f0; text-align: right; color: #475569; font-weight: 600;">$${formatCurrency(partnerShare)} c/u</td>
+        </tr>
         <tr>
-          <td style="padding: 0.5rem; border: 1px solid #ccc; background: #f8f9fa;"><strong>Total Retiro de Socios:</strong></td>
-          <td style="padding: 0.5rem; border: 1px solid #ccc; text-align: right; color: #d32f2f; font-weight: 600;">$${formatCurrency(printTotalAdvances)}</td>
+          <td style="padding: 0.5rem; border: 1px solid #ccc; background: #faf5ff;"><strong>Total Retiro de Socios:</strong></td>
+          <td style="padding: 0.5rem; border: 1px solid #ccc; text-align: right; color: #6b21a8; font-weight: 600;">-$${formatCurrency(printTotalAdvances)}</td>
+        </tr>
+        <tr style="background: #faf5ff; font-size: 11px;">
+          <td style="padding: 0.35rem 0.5rem 0.35rem 1.5rem; border: 1px solid #f3e8ff; color: #6b21a8;">↳ Retiros realizados por Henry Peraza:</td>
+          <td style="padding: 0.35rem 0.5rem; border: 1px solid #f3e8ff; text-align: right; color: #6b21a8; font-weight: 600;">-$${formatCurrency(hAdv)}</td>
+        </tr>
+        <tr style="background: #faf5ff; font-size: 11px;">
+          <td style="padding: 0.35rem 0.5rem 0.35rem 1.5rem; border: 1px solid #f3e8ff; color: #6b21a8;">↳ Retiros realizados por Losbers Pérez:</td>
+          <td style="padding: 0.35rem 0.5rem; border: 1px solid #f3e8ff; text-align: right; color: #6b21a8; font-weight: 600;">-$${formatCurrency(lAdv)}</td>
+        </tr>
+        <tr style="background: #f1f5f9; font-weight: bold;">
+          <td colspan="2" style="padding: 0.5rem; border: 1px solid #cbd5e1; font-size: 12px; color: #1e293b;">SALDO DE UTILIDAD DISPONIBLE INDIVIDUAL (50% Margen - Retiros):</td>
+        </tr>
+        <tr style="background: ${henrySaldo >= 0 ? '#eff6ff' : '#fef2f2'};">
+          <td style="padding: 0.45rem 0.5rem 0.45rem 1.5rem; border: 1px solid ${henrySaldo >= 0 ? '#bfdbfe' : '#fecaca'}; color: ${henrySaldo >= 0 ? '#1d4ed8' : '#dc2626'}; font-weight: 600;">• Saldo Disponible Henry Peraza:</td>
+          <td style="padding: 0.45rem 0.5rem; border: 1px solid ${henrySaldo >= 0 ? '#bfdbfe' : '#fecaca'}; text-align: right; color: ${henrySaldo >= 0 ? '#1d4ed8' : '#dc2626'}; font-weight: bold;">${henrySaldo >= 0 ? '$' : '-$'}${formatCurrency(Math.abs(henrySaldo))}${henrySaldo < 0 ? ' (Excedido)' : ''}</td>
+        </tr>
+        <tr style="background: ${losbersSaldo >= 0 ? '#eff6ff' : '#fef2f2'};">
+          <td style="padding: 0.45rem 0.5rem 0.45rem 1.5rem; border: 1px solid ${losbersSaldo >= 0 ? '#bfdbfe' : '#fecaca'}; color: ${losbersSaldo >= 0 ? '#1d4ed8' : '#dc2626'}; font-weight: 600;">• Saldo Disponible Losbers Pérez:</td>
+          <td style="padding: 0.45rem 0.5rem; border: 1px solid ${losbersSaldo >= 0 ? '#bfdbfe' : '#fecaca'}; text-align: right; color: ${losbersSaldo >= 0 ? '#1d4ed8' : '#dc2626'}; font-weight: bold;">${losbersSaldo >= 0 ? '$' : '-$'}${formatCurrency(Math.abs(losbersSaldo))}${losbersSaldo < 0 ? ' (Excedido)' : ''}</td>
         </tr>
         <tr style="background: #e8f5e9;">
-          <td style="padding: 0.7rem; border: 2px solid #28a745; font-weight: bold;"><strong>GANANCIA NETA POR RETIRAR:</strong></td>
+          <td style="padding: 0.7rem; border: 2px solid #28a745; font-weight: bold;"><strong>UTILIDAD NETA TOTAL REMANENTE EN CAJA / OBRA:</strong></td>
           <td style="padding: 0.7rem; border: 2px solid #28a745; text-align: right; font-weight: bold; color: #1b5e20; font-size: 15px;">$${formatCurrency(printNetProfit)}</td>
         </tr>
       </tbody>

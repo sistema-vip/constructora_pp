@@ -120,7 +120,7 @@ export function generatePartnerReportPdfKit(data: PartnerReportData): Promise<Bu
       doc.y = clientBoxY + 48;
 
       // 3. FINANCIAL KPI SUMMARY
-      ensureSpace(120);
+      ensureSpace(210);
       doc
         .fontSize(9.5)
         .font('Helvetica-Bold')
@@ -136,21 +136,38 @@ export function generatePartnerReportPdfKit(data: PartnerReportData): Promise<Bu
 
       doc.y += 6;
 
-      const drawKpiRow = (label: string, value: string, bg: string, fontBold = false, textColor = darkColor, borderCol = lightBorder) => {
+      const drawKpiRow = (
+        label: string,
+        value: string,
+        bg: string,
+        fontBold = false,
+        textColor = darkColor,
+        borderCol = lightBorder,
+        isIndent = false,
+        height = 16
+      ) => {
         const y = doc.y;
-        doc.rect(doc.page.margins.left, y, pageWidth, 16).fillAndStroke(bg, borderCol);
+        doc.rect(doc.page.margins.left, y, pageWidth, height).fillAndStroke(bg, borderCol);
         doc
-          .fontSize(7.8)
+          .fontSize(isIndent ? 7.2 : 7.8)
           .font(fontBold ? 'Helvetica-Bold' : 'Helvetica')
           .fillColor(textColor)
-          .text(label, doc.page.margins.left + 8, y + 4, { width: pageWidth * 0.60 });
-        doc
-          .fontSize(8.5)
-          .font('Helvetica-Bold')
-          .fillColor(textColor)
-          .text(value, doc.page.width - doc.page.margins.right - (pageWidth * 0.38) - 8, y + 4, { width: pageWidth * 0.38, align: 'right' });
-        doc.y = y + 16;
+          .text(label, doc.page.margins.left + (isIndent ? 18 : 8), y + (height === 14 ? 3 : 4), { width: pageWidth * (isIndent ? 0.58 : 0.60) });
+        if (value) {
+          doc
+            .fontSize(isIndent ? 7.8 : 8.5)
+            .font('Helvetica-Bold')
+            .fillColor(textColor)
+            .text(value, doc.page.width - doc.page.margins.right - (pageWidth * 0.38) - 8, y + (height === 14 ? 3 : 4), { width: pageWidth * 0.38, align: 'right' });
+        }
+        doc.y = y + height;
       };
+
+      const partnerShare = data.printEstimatedProfit / 2;
+      const hAdv = data.henryAdvances ?? 0;
+      const lAdv = data.losbersAdvances ?? 0;
+      const henrySaldo = partnerShare - hAdv;
+      const losbersSaldo = partnerShare - lAdv;
 
       drawKpiRow('1. Total Contratado (Presupuestos Base + Adicionales):', `$${formatCurrency(data.printTotalContracted)}`, '#FFFFFF');
       drawKpiRow('2. Total Cobrado / Abonado por el Cliente:', `$${formatCurrency(data.printTotalPaid)}`, '#F0FDF4', false, successColor);
@@ -167,17 +184,84 @@ export function generatePartnerReportPdfKit(data: PartnerReportData): Promise<Bu
         isProfitPos ? successColor : alertRed,
         isProfitPos ? '#10B981' : '#EF4444'
       );
+      drawKpiRow(
+        '   ↳ Participación Base Estimada (50% por Socio):',
+        `$${formatCurrency(partnerShare)} c/u`,
+        '#F8FAFC',
+        false,
+        '#334155',
+        lightBorder,
+        true,
+        14
+      );
 
-      drawKpiRow('7. Total Adelantos / Retiros Realizados por Socios:', `-$${formatCurrency(data.printTotalAdvances)}`, '#FAF5FF', false, '#6B21A8');
+      drawKpiRow(
+        '7. RETIROS / ADELANTOS REALIZADOS POR SOCIOS:',
+        `-$${formatCurrency(data.printTotalAdvances)}`,
+        '#FAF5FF',
+        true,
+        '#6B21A8',
+        '#C084FC'
+      );
+      drawKpiRow(
+        '   ↳ Retirado por Henry Peraza:',
+        `-$${formatCurrency(hAdv)}`,
+        '#FAF5FF',
+        false,
+        '#6B21A8',
+        lightBorder,
+        true,
+        14
+      );
+      drawKpiRow(
+        '   ↳ Retirado por Losbers Pérez:',
+        `-$${formatCurrency(lAdv)}`,
+        '#FAF5FF',
+        false,
+        '#6B21A8',
+        lightBorder,
+        true,
+        14
+      );
 
       const isNetPos = data.printNetProfit >= 0;
       drawKpiRow(
-        '8. UTILIDAD NETA DISPONIBLE POR REPARTIR:',
+        '8. SALDO DE UTILIDAD DISPONIBLE INDIVIDUAL (50% Margen - Retiros):',
+        '',
+        '#F8FAFC',
+        true,
+        darkColor,
+        lightBorder
+      );
+      drawKpiRow(
+        '   • Saldo Disponible Henry Peraza:',
+        `${henrySaldo >= 0 ? '$' : '-$'}${formatCurrency(Math.abs(henrySaldo))}${henrySaldo < 0 ? ' (Excedido)' : ''}`,
+        henrySaldo >= 0 ? '#EFF6FF' : '#FEF2F2',
+        true,
+        henrySaldo >= 0 ? '#1D4ED8' : alertRed,
+        lightBorder,
+        true,
+        15
+      );
+      drawKpiRow(
+        '   • Saldo Disponible Losbers Pérez:',
+        `${losbersSaldo >= 0 ? '$' : '-$'}${formatCurrency(Math.abs(losbersSaldo))}${losbersSaldo < 0 ? ' (Excedido)' : ''}`,
+        losbersSaldo >= 0 ? '#EFF6FF' : '#FEF2F2',
+        true,
+        losbersSaldo >= 0 ? '#1D4ED8' : alertRed,
+        lightBorder,
+        true,
+        15
+      );
+      drawKpiRow(
+        'UTILIDAD NETA TOTAL REMANENTE EN CAJA / OBRA:',
         `$${formatCurrency(data.printNetProfit)}`,
         isNetPos ? '#EFF6FF' : '#FEF2F2',
         true,
         isNetPos ? '#1D4ED8' : alertRed,
-        isNetPos ? '#3B82F6' : '#EF4444'
+        isNetPos ? '#3B82F6' : '#EF4444',
+        false,
+        16
       );
 
       doc.moveDown(0.8);
@@ -543,6 +627,28 @@ export function generatePartnerReportPdfKit(data: PartnerReportData): Promise<Bu
 
           doc.y = rowY + rowHeight;
         });
+
+        // Totales de retiros por socio
+        const drawAdvSummaryRow = (label: string, val: string, isTotal = false) => {
+          ensureSpace(16);
+          const sY = doc.y;
+          doc.rect(doc.page.margins.left, sY, pageWidth, 15).fillAndStroke(isTotal ? '#FAF5FF' : '#F8FAFC', isTotal ? '#C084FC' : '#E2E8F0');
+          doc
+            .fontSize(7.2)
+            .font(isTotal ? 'Helvetica-Bold' : 'Helvetica')
+            .fillColor(isTotal ? '#6D28D9' : darkColor)
+            .text(label, doc.page.margins.left + 8, sY + 4, { width: pageWidth - 140, align: 'right' });
+          doc
+            .fontSize(7.5)
+            .font('Helvetica-Bold')
+            .fillColor(isTotal ? '#6D28D9' : darkColor)
+            .text(val, doc.page.width - doc.page.margins.right - 120, sY + 4, { width: 112, align: 'right' });
+          doc.y = sY + 15;
+        };
+
+        drawAdvSummaryRow('Total Retiros Henry Peraza:', `$${formatCurrency(hAdv)}`);
+        drawAdvSummaryRow('Total Retiros Losbers Pérez:', `$${formatCurrency(lAdv)}`);
+        drawAdvSummaryRow('TOTAL RETIRADO POR SOCIOS:', `$${formatCurrency(data.printTotalAdvances)}`, true);
       }
 
       // FOOTER ON ALL PAGES

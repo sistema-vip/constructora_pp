@@ -137,8 +137,8 @@ export async function GET(
     const printEstimatedProfit = printTotalContracted - printTotalCostsValue - printTotalCommitted;
     const printNetProfit = printEstimatedProfit - printTotalAdvances;
 
-    const henryAdvances = printAdvances.filter((a: any) => a.partner_name === 'Henry Peraza').reduce((s: number, a: any) => s + Number(a.amount_usd), 0);
-    const losbersAdvances = printAdvances.filter((a: any) => a.partner_name === 'Losbers Perez').reduce((s: number, a: any) => s + Number(a.amount_usd), 0);
+    const henryAdvances = printAdvances.filter((a: any) => /henry/i.test(a.partner_name || '')).reduce((s: number, a: any) => s + Number(a.amount_usd || 0), 0);
+    const losbersAdvances = printAdvances.filter((a: any) => /losber/i.test(a.partner_name || '')).reduce((s: number, a: any) => s + Number(a.amount_usd || 0), 0);
 
     const reportData: PartnerReportData = {
       client,
