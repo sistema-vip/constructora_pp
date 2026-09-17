@@ -38,6 +38,17 @@ export function generatePartnerReportPdfKit(data: PartnerReportData): Promise<Bu
         }
       };
 
+      const measureRowHeight = (cells: { text: string; width: number; fontSize: number; font?: string }[]) => {
+        let maxH = 0;
+        cells.forEach(c => {
+          if (c.font) doc.font(c.font);
+          doc.fontSize(c.fontSize);
+          const h = doc.heightOfString(c.text || '', { width: c.width - 8 });
+          if (h > maxH) maxH = h;
+        });
+        return Math.max(15, maxH + 8);
+      };
+
       // 1. HEADER (Logo + Title & Date)
       const logoPath = path.join(process.cwd(), 'public', 'logo_3d.png');
       const startY = doc.y;
@@ -216,13 +227,26 @@ export function generatePartnerReportPdfKit(data: PartnerReportData): Promise<Bu
       drawTableHeader(projCols);
 
       data.printProjects.forEach(p => {
-        ensureSpace(18);
-        const rowY = doc.y;
         const pExtras = p.project_extras?.reduce((acc: number, e: any) => acc + Number(e.amount_usd), 0) || 0;
         const pTotal = Number(p.budget_usd) + pExtras;
         const isCompleted = p.status === 'completed';
 
-        doc.rect(doc.page.margins.left, rowY, pageWidth, 16).fillAndStroke('#FFFFFF', '#E2E8F0');
+        const titleText = `${p.proposal_number ? '#' + p.proposal_number + ' ' : ''}${p.title}`;
+        const statusText = isCompleted ? 'Completado' : 'En Ejecución';
+        const budgetText = `$${formatCurrency(p.budget_usd)}`;
+        const totalText = `$${formatCurrency(pTotal)}`;
+
+        const rowHeight = measureRowHeight([
+          { text: titleText, width: projCols[0].width, fontSize: 7.5, font: 'Helvetica-Bold' },
+          { text: statusText, width: projCols[1].width, fontSize: 7, font: 'Helvetica' },
+          { text: budgetText, width: projCols[2].width, fontSize: 7.5, font: 'Helvetica' },
+          { text: totalText, width: projCols[3].width, fontSize: 7.5, font: 'Helvetica-Bold' }
+        ]);
+
+        ensureSpace(rowHeight);
+        const rowY = doc.y;
+
+        doc.rect(doc.page.margins.left, rowY, pageWidth, rowHeight).fillAndStroke('#FFFFFF', '#E2E8F0');
 
         let curX = doc.page.margins.left;
 
@@ -230,30 +254,30 @@ export function generatePartnerReportPdfKit(data: PartnerReportData): Promise<Bu
           .fontSize(7.5)
           .font('Helvetica-Bold')
           .fillColor(darkColor)
-          .text(`${p.proposal_number ? '#' + p.proposal_number + ' ' : ''}${p.title}`, curX + 4, rowY + 4, { width: projCols[0].width - 8, ellipsis: true });
+          .text(titleText, curX + 4, rowY + 4, { width: projCols[0].width - 8 });
         curX += projCols[0].width;
 
         doc
           .fontSize(7)
           .font('Helvetica')
           .fillColor(isCompleted ? successColor : '#0284C7')
-          .text(isCompleted ? 'Completado' : 'En Ejecución', curX + 4, rowY + 4, { width: projCols[1].width - 8, align: 'center' });
+          .text(statusText, curX + 4, rowY + 4, { width: projCols[1].width - 8, align: 'center' });
         curX += projCols[1].width;
 
         doc
           .fontSize(7.5)
           .font('Helvetica')
           .fillColor(darkColor)
-          .text(`$${formatCurrency(p.budget_usd)}`, curX + 4, rowY + 4, { width: projCols[2].width - 8, align: 'right' });
+          .text(budgetText, curX + 4, rowY + 4, { width: projCols[2].width - 8, align: 'right' });
         curX += projCols[2].width;
 
         doc
           .fontSize(7.5)
           .font('Helvetica-Bold')
           .fillColor(darkColor)
-          .text(`$${formatCurrency(pTotal)}`, curX + 4, rowY + 4, { width: projCols[3].width - 8, align: 'right' });
+          .text(totalText, curX + 4, rowY + 4, { width: projCols[3].width - 8, align: 'right' });
 
-        doc.y = rowY + 16;
+        doc.y = rowY + rowHeight;
       });
       doc.moveDown(0.8);
 
@@ -261,9 +285,9 @@ export function generatePartnerReportPdfKit(data: PartnerReportData): Promise<Bu
       if (data.printPayments.length > 0) {
         drawSectionHeader(`2. HISTORIAL DE PAGOS Y ABONOS DEL CLIENTE (${data.printPayments.length})`);
         const payCols = [
-          { title: 'FECHA', width: pageWidth * 0.15 },
-          { title: 'PROYECTO', width: pageWidth * 0.35 },
-          { title: 'DESCRIPCIÓN / REFERENCIA', width: pageWidth * 0.32 },
+          { title: 'FECHA', width: pageWidth * 0.12 },
+          { title: 'PROYECTO', width: pageWidth * 0.30 },
+          { title: 'DESCRIPCIÓN / REFERENCIA', width: pageWidth * 0.40 },
           { title: 'MONTO (USD)', width: pageWidth * 0.18, align: 'right' as const },
         ];
         drawTableHeader(payCols);
@@ -276,9 +300,21 @@ export function generatePartnerReportPdfKit(data: PartnerReportData): Promise<Bu
         });
 
         sortedPayments.forEach(pmt => {
-          ensureSpace(16);
+          const dateText = pmt.date || pmt.payment_date || pmt.created_at?.split('T')[0] || '';
+          const projectText = `${pmt.proposal_number ? '#' + pmt.proposal_number + ' ' : ''}${pmt.project_title || 'General'}`;
+          const descText = `${pmt.description || 'Abono'} ${pmt.reference ? `(Ref: ${pmt.reference})` : ''}`;
+          const amountText = `+$${formatCurrency(pmt.amount_usd)}`;
+
+          const rowHeight = measureRowHeight([
+            { text: dateText, width: payCols[0].width, fontSize: 7, font: 'Helvetica' },
+            { text: projectText, width: payCols[1].width, fontSize: 7, font: 'Helvetica-Bold' },
+            { text: descText, width: payCols[2].width, fontSize: 7, font: 'Helvetica' },
+            { text: amountText, width: payCols[3].width, fontSize: 7.5, font: 'Helvetica-Bold' }
+          ]);
+
+          ensureSpace(rowHeight);
           const rowY = doc.y;
-          doc.rect(doc.page.margins.left, rowY, pageWidth, 15).fillAndStroke('#FFFFFF', '#E2E8F0');
+          doc.rect(doc.page.margins.left, rowY, pageWidth, rowHeight).fillAndStroke('#FFFFFF', '#E2E8F0');
 
           let curX = doc.page.margins.left;
 
@@ -286,30 +322,30 @@ export function generatePartnerReportPdfKit(data: PartnerReportData): Promise<Bu
             .fontSize(7)
             .font('Helvetica')
             .fillColor(grayColor)
-            .text(pmt.date || pmt.payment_date || pmt.created_at?.split('T')[0] || '', curX + 4, rowY + 4, { width: payCols[0].width - 8 });
+            .text(dateText, curX + 4, rowY + 4, { width: payCols[0].width - 8 });
           curX += payCols[0].width;
 
           doc
             .fontSize(7)
             .font('Helvetica-Bold')
             .fillColor(darkColor)
-            .text(`${pmt.proposal_number ? '#' + pmt.proposal_number + ' ' : ''}${pmt.project_title || 'General'}`, curX + 4, rowY + 4, { width: payCols[1].width - 8, ellipsis: true });
+            .text(projectText, curX + 4, rowY + 4, { width: payCols[1].width - 8 });
           curX += payCols[1].width;
 
           doc
             .fontSize(7)
             .font('Helvetica')
             .fillColor(grayColor)
-            .text(`${pmt.description || 'Abono'} ${pmt.reference ? `(Ref: ${pmt.reference})` : ''}`, curX + 4, rowY + 4, { width: payCols[2].width - 8, ellipsis: true });
+            .text(descText, curX + 4, rowY + 4, { width: payCols[2].width - 8 });
           curX += payCols[2].width;
 
           doc
             .fontSize(7.5)
             .font('Helvetica-Bold')
             .fillColor(successColor)
-            .text(`+$${formatCurrency(pmt.amount_usd)}`, curX + 4, rowY + 4, { width: payCols[3].width - 8, align: 'right' });
+            .text(amountText, curX + 4, rowY + 4, { width: payCols[3].width - 8, align: 'right' });
 
-          doc.y = rowY + 15;
+          doc.y = rowY + rowHeight;
         });
         doc.moveDown(0.8);
       }
@@ -318,9 +354,9 @@ export function generatePartnerReportPdfKit(data: PartnerReportData): Promise<Bu
       if (data.printCosts.length > 0) {
         drawSectionHeader(`3. GASTOS Y COMPRAS EJECUTADAS (${data.printCosts.length})`);
         const costCols = [
-          { title: 'FECHA', width: pageWidth * 0.14 },
-          { title: 'PROVEEDOR / CONCEPTO', width: pageWidth * 0.44 },
-          { title: 'PROYECTO', width: pageWidth * 0.24 },
+          { title: 'FECHA', width: pageWidth * 0.11 },
+          { title: 'PROVEEDOR / CONCEPTO', width: pageWidth * 0.39 },
+          { title: 'PROYECTO', width: pageWidth * 0.32 },
           { title: 'MONTO (USD)', width: pageWidth * 0.18, align: 'right' as const },
         ];
         drawTableHeader(costCols);
@@ -333,11 +369,24 @@ export function generatePartnerReportPdfKit(data: PartnerReportData): Promise<Bu
         });
 
         sortedCosts.slice(0, 50).forEach(c => {
-          ensureSpace(16);
-          const rowY = doc.y;
           const totalCost = Number(c.quantity || 1) * Number(c.unit_price_usd || c.amount_usd || 0);
+          const dateText = c.date || c.created_at?.split('T')[0] || '';
+          const prov = c.provider || c.supplier;
+          const descText = `${prov ? prov + ': ' : ''}${c.description || ''}`;
+          const projText = `${c.proposal_number ? '#' + c.proposal_number + ' ' : ''}${c.project_title || 'General'}`;
+          const amountText = `-$${formatCurrency(totalCost)}`;
 
-          doc.rect(doc.page.margins.left, rowY, pageWidth, 15).fillAndStroke('#FFFFFF', '#E2E8F0');
+          const rowHeight = measureRowHeight([
+            { text: dateText, width: costCols[0].width, fontSize: 7, font: 'Helvetica' },
+            { text: descText, width: costCols[1].width, fontSize: 7, font: 'Helvetica-Bold' },
+            { text: projText, width: costCols[2].width, fontSize: 7, font: 'Helvetica' },
+            { text: amountText, width: costCols[3].width, fontSize: 7.5, font: 'Helvetica-Bold' }
+          ]);
+
+          ensureSpace(rowHeight);
+          const rowY = doc.y;
+
+          doc.rect(doc.page.margins.left, rowY, pageWidth, rowHeight).fillAndStroke('#FFFFFF', '#E2E8F0');
 
           let curX = doc.page.margins.left;
 
@@ -345,31 +394,30 @@ export function generatePartnerReportPdfKit(data: PartnerReportData): Promise<Bu
             .fontSize(7)
             .font('Helvetica')
             .fillColor(grayColor)
-            .text(c.date || c.created_at?.split('T')[0] || '', curX + 4, rowY + 4, { width: costCols[0].width - 8 });
+            .text(dateText, curX + 4, rowY + 4, { width: costCols[0].width - 8 });
           curX += costCols[0].width;
 
-          const prov = c.provider || c.supplier;
           doc
             .fontSize(7)
             .font('Helvetica-Bold')
             .fillColor(darkColor)
-            .text(`${prov ? prov + ': ' : ''}${c.description || ''}`, curX + 4, rowY + 4, { width: costCols[1].width - 8, ellipsis: true });
+            .text(descText, curX + 4, rowY + 4, { width: costCols[1].width - 8 });
           curX += costCols[1].width;
 
           doc
             .fontSize(7)
             .font('Helvetica')
             .fillColor(grayColor)
-            .text(`${c.proposal_number ? '#' + c.proposal_number + ' ' : ''}${c.project_title || 'General'}`, curX + 4, rowY + 4, { width: costCols[2].width - 8, ellipsis: true });
+            .text(projText, curX + 4, rowY + 4, { width: costCols[2].width - 8 });
           curX += costCols[2].width;
 
           doc
             .fontSize(7.5)
             .font('Helvetica-Bold')
             .fillColor('#B91C1C')
-            .text(`-$${formatCurrency(totalCost)}`, curX + 4, rowY + 4, { width: costCols[3].width - 8, align: 'right' });
+            .text(amountText, curX + 4, rowY + 4, { width: costCols[3].width - 8, align: 'right' });
 
-          doc.y = rowY + 15;
+          doc.y = rowY + rowHeight;
         });
         doc.moveDown(0.8);
       }
@@ -386,9 +434,21 @@ export function generatePartnerReportPdfKit(data: PartnerReportData): Promise<Bu
         drawTableHeader(comCols);
 
         data.printCommitments.forEach(com => {
-          ensureSpace(16);
+          const provText = com.provider || 'Proveedor';
+          const descText = com.description || '';
+          const totalText = `$${formatCurrency(com.total_amount || 0)}`;
+          const balText = `$${formatCurrency(com.balance || 0)}`;
+
+          const rowHeight = measureRowHeight([
+            { text: provText, width: comCols[0].width, fontSize: 7, font: 'Helvetica-Bold' },
+            { text: descText, width: comCols[1].width, fontSize: 7, font: 'Helvetica' },
+            { text: totalText, width: comCols[2].width, fontSize: 7, font: 'Helvetica' },
+            { text: balText, width: comCols[3].width, fontSize: 7.5, font: 'Helvetica-Bold' }
+          ]);
+
+          ensureSpace(rowHeight);
           const rowY = doc.y;
-          doc.rect(doc.page.margins.left, rowY, pageWidth, 15).fillAndStroke('#FFFFFF', '#E2E8F0');
+          doc.rect(doc.page.margins.left, rowY, pageWidth, rowHeight).fillAndStroke('#FFFFFF', '#E2E8F0');
 
           let curX = doc.page.margins.left;
 
@@ -396,30 +456,30 @@ export function generatePartnerReportPdfKit(data: PartnerReportData): Promise<Bu
             .fontSize(7)
             .font('Helvetica-Bold')
             .fillColor(darkColor)
-            .text(com.provider || 'Proveedor', curX + 4, rowY + 4, { width: comCols[0].width - 8, ellipsis: true });
+            .text(provText, curX + 4, rowY + 4, { width: comCols[0].width - 8 });
           curX += comCols[0].width;
 
           doc
             .fontSize(7)
             .font('Helvetica')
             .fillColor(grayColor)
-            .text(com.description || '', curX + 4, rowY + 4, { width: comCols[1].width - 8, ellipsis: true });
+            .text(descText, curX + 4, rowY + 4, { width: comCols[1].width - 8 });
           curX += comCols[1].width;
 
           doc
             .fontSize(7)
             .font('Helvetica')
             .fillColor(grayColor)
-            .text(`$${formatCurrency(com.total_amount || 0)}`, curX + 4, rowY + 4, { width: comCols[2].width - 8, align: 'right' });
+            .text(totalText, curX + 4, rowY + 4, { width: comCols[2].width - 8, align: 'right' });
           curX += comCols[2].width;
 
           doc
             .fontSize(7.5)
             .font('Helvetica-Bold')
             .fillColor('#C2410C')
-            .text(`$${formatCurrency(com.balance || 0)}`, curX + 4, rowY + 4, { width: comCols[3].width - 8, align: 'right' });
+            .text(balText, curX + 4, rowY + 4, { width: comCols[3].width - 8, align: 'right' });
 
-          doc.y = rowY + 15;
+          doc.y = rowY + rowHeight;
         });
         doc.moveDown(0.8);
       }
@@ -436,9 +496,21 @@ export function generatePartnerReportPdfKit(data: PartnerReportData): Promise<Bu
         drawTableHeader(advCols);
 
         data.printAdvances.forEach(adv => {
-          ensureSpace(16);
+          const dateText = adv.date || adv.created_at?.split('T')[0] || '';
+          const partnerText = adv.partner_name || 'Socio';
+          const notesText = adv.notes || 'Retiro a cuenta de utilidad';
+          const amountText = `$${formatCurrency(adv.amount_usd)}`;
+
+          const rowHeight = measureRowHeight([
+            { text: dateText, width: advCols[0].width, fontSize: 7, font: 'Helvetica' },
+            { text: partnerText, width: advCols[1].width, fontSize: 7.5, font: 'Helvetica-Bold' },
+            { text: notesText, width: advCols[2].width, fontSize: 7, font: 'Helvetica' },
+            { text: amountText, width: advCols[3].width, fontSize: 7.5, font: 'Helvetica-Bold' }
+          ]);
+
+          ensureSpace(rowHeight);
           const rowY = doc.y;
-          doc.rect(doc.page.margins.left, rowY, pageWidth, 15).fillAndStroke('#FFFFFF', '#E2E8F0');
+          doc.rect(doc.page.margins.left, rowY, pageWidth, rowHeight).fillAndStroke('#FFFFFF', '#E2E8F0');
 
           let curX = doc.page.margins.left;
 
@@ -446,30 +518,30 @@ export function generatePartnerReportPdfKit(data: PartnerReportData): Promise<Bu
             .fontSize(7)
             .font('Helvetica')
             .fillColor(grayColor)
-            .text(adv.date || adv.created_at?.split('T')[0] || '', curX + 4, rowY + 4, { width: advCols[0].width - 8 });
+            .text(dateText, curX + 4, rowY + 4, { width: advCols[0].width - 8 });
           curX += advCols[0].width;
 
           doc
             .fontSize(7.5)
             .font('Helvetica-Bold')
             .fillColor('#6D28D9')
-            .text(adv.partner_name || 'Socio', curX + 4, rowY + 4, { width: advCols[1].width - 8 });
+            .text(partnerText, curX + 4, rowY + 4, { width: advCols[1].width - 8 });
           curX += advCols[1].width;
 
           doc
             .fontSize(7)
             .font('Helvetica')
             .fillColor(grayColor)
-            .text(adv.notes || 'Retiro a cuenta de utilidad', curX + 4, rowY + 4, { width: advCols[2].width - 8, ellipsis: true });
+            .text(notesText, curX + 4, rowY + 4, { width: advCols[2].width - 8 });
           curX += advCols[2].width;
 
           doc
             .fontSize(7.5)
             .font('Helvetica-Bold')
             .fillColor('#6D28D9')
-            .text(`$${formatCurrency(adv.amount_usd)}`, curX + 4, rowY + 4, { width: advCols[3].width - 8, align: 'right' });
+            .text(amountText, curX + 4, rowY + 4, { width: advCols[3].width - 8, align: 'right' });
 
-          doc.y = rowY + 15;
+          doc.y = rowY + rowHeight;
         });
       }
 
