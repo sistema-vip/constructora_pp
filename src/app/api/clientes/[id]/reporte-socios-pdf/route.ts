@@ -13,6 +13,7 @@ export async function GET(
     const { id: clientId } = await context.params;
     const { searchParams } = new URL(request.url);
     const projectId = searchParams.get('project_id');
+    const projectsFilter = searchParams.get('projects'); // Lista de IDs separados por coma
     const format = searchParams.get('format'); // 'pdf' | 'html'
 
     if (!clientId) {
@@ -49,10 +50,17 @@ export async function GET(
       (p.project_extras && p.project_extras.length > 0)
     );
 
-    // Filtrar por proyecto si se especificó
-    const printProjects = projectId
-      ? allProjects.filter(p => p.id === projectId)
-      : (activeProjects.length > 0 ? activeProjects : allProjects);
+    // Filtrar según project_id o lista de proyectos seleccionados por el usuario
+    let printProjects = activeProjects.length > 0 ? activeProjects : allProjects;
+
+    if (projectId) {
+      printProjects = allProjects.filter(p => p.id === projectId);
+    } else if (projectsFilter) {
+      const allowedIds = new Set(projectsFilter.split(',').map(s => s.trim()).filter(Boolean));
+      if (allowedIds.size > 0) {
+        printProjects = allProjects.filter(p => allowedIds.has(p.id));
+      }
+    }
 
     const printPayments = printProjects
       .flatMap(p => (p.project_payments || []).map((x: any) => ({ ...x, project_title: p.title, proposal_number: p.proposal_number })))
@@ -136,6 +144,7 @@ export async function GET(
     const printBalanceDue = printTotalContracted - printTotalPaid;
     const printEstimatedProfit = printTotalContracted - printTotalCostsValue - printTotalCommitted;
     const printNetProfit = printEstimatedProfit - printTotalAdvances;
+    const printCashLiquidity = printTotalPaid - printTotalCostsValue - printTotalAdvances;
 
     const henryAdvances = printAdvances.filter((a: any) => /henry/i.test(a.partner_name || '')).reduce((s: number, a: any) => s + Number(a.amount_usd || 0), 0);
     const losbersAdvances = printAdvances.filter((a: any) => /losber/i.test(a.partner_name || '')).reduce((s: number, a: any) => s + Number(a.amount_usd || 0), 0);
@@ -158,6 +167,7 @@ export async function GET(
       printBalanceDue,
       printEstimatedProfit,
       printNetProfit,
+      printCashLiquidity,
       henryAdvances,
       losbersAdvances
     };

@@ -51,6 +51,7 @@ import { formatCurrency, handleMoneyInput, parseCurrency, formatOnBlur } from '@
 import NewProposalModal from '@/components/NewProposalModal';
 import TelegramPendingPanel from '@/components/TelegramPendingPanel';
 import ReportShareModal from '@/components/ReportShareModal';
+import PrintProjectSelectionModal from '@/components/PrintProjectSelectionModal';
 import { useUser } from '@/lib/UserContext';
 import { useAdminAction } from '@/lib/useAdminAction';
 import { parseProjectRelation, executeProjectUnification } from '@/lib/projectRelationsHelper';
@@ -371,13 +372,23 @@ export default function ClienteDashboard() {
 
   const openPrintSelection = (mode: 'client-statement' | 'partner-report') => {
     setPrintMode(mode);
+    const inProgress = projects.filter(p => p.status === 'in_progress');
     const active = projects.filter(p => 
       p.status === 'in_progress' || 
       p.status === 'completed' || 
       (p.project_payments && p.project_payments.length > 0) ||
       (p.project_extras && p.project_extras.length > 0)
     );
-    setSelectedProjectIds(new Set(active.map(p => p.id)));
+    
+    // Por defecto: si hay obras en ejecución, seleccionamos únicamente las que están en ejecución para excluir concluidos automáticamente.
+    // El usuario siempre puede pulsar '📁 Incluir Concluidos' o marcar/desmarcar con un clic.
+    if (inProgress.length > 0) {
+      setSelectedProjectIds(new Set(inProgress.map(p => p.id)));
+    } else if (active.length > 0) {
+      setSelectedProjectIds(new Set(active.map(p => p.id)));
+    } else {
+      setSelectedProjectIds(new Set(projects.map(p => p.id)));
+    }
     setShowPrintModal(true);
   };
 
@@ -1320,6 +1331,7 @@ export default function ClienteDashboard() {
   const printLosbersAdvances = printAdvances.filter((a: any) => /losber/i.test(a.partner_name || '')).reduce((s: number, a: any) => s + Number(a.amount_usd || 0), 0);
   const printHenrySaldo = printPartnerShare - printHenryAdvances;
   const printLosbersSaldo = printPartnerShare - printLosbersAdvances;
+  const printCashLiquidity = printTotalPaid - printTotalCostsValue - printTotalAdvances;
 
   return (
     <>
@@ -1352,30 +1364,20 @@ export default function ClienteDashboard() {
           <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
             <button
               className="btn-secondary"
-              onClick={handleOpenClientStatementModal}
+              onClick={() => openPrintSelection('client-statement')}
               style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.65rem 1.1rem', fontSize: '0.85rem' }}
-              title="Visualizar, descargar o compartir estado de cuenta"
+              title="Visualizar, descargar o compartir estado de cuenta con selección de proyectos"
             >
               <FileText size={16} /> Estado de Cuenta
             </button>
             <button
               className="btn-secondary"
-              onClick={handleOpenPartnerReportModal}
+              onClick={() => openPrintSelection('partner-report')}
               style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.65rem 1.1rem', background: 'rgba(139, 92, 246, 0.1)', borderColor: 'rgba(139, 92, 246, 0.3)', color: '#c4b5fd', fontSize: '0.85rem', fontWeight: 600 }}
-              title="Visualizar, descargar o compartir reporte confidencial de socios"
+              title="Visualizar, descargar o compartir reporte confidencial de socios con selección de proyectos"
             >
               <BarChart3 size={16} /> Reporte Socios
             </button>
-            {activeProjects.length > 1 && (
-              <button
-                className="btn-secondary"
-                onClick={() => openPrintSelection('client-statement')}
-                style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.65rem 0.9rem', fontSize: '0.8rem', color: 'var(--text-muted)' }}
-                title="Seleccionar qué proyectos incluir en el reporte o imprimir"
-              >
-                <Printer size={15} /> Filtrar Proyectos
-              </button>
-            )}
             {projects.length >= 2 && !isViewer && (
               <button
                 className="btn-secondary"
@@ -1759,7 +1761,20 @@ export default function ClienteDashboard() {
                               <button className="btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', marginRight: '0.5rem' }} onClick={() => initiateEdit(project)} title="Editar propuesta">
                                 <Edit3 size={14} />
                               </button>
-                              <button className="btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', marginRight: '0.5rem' }} onClick={() => router.push(`/proyectos?print=${project.id}`)} title="Imprimir reporte">
+                              <button
+                                className="btn-secondary"
+                                style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', marginRight: '0.5rem' }}
+                                onClick={() => {
+                                  if (project.status === 'in_progress' || project.status === 'completed') {
+                                    setPrintMode('client-statement');
+                                    setSelectedProjectIds(new Set([project.id]));
+                                    setShowPrintModal(true);
+                                  } else {
+                                    router.push(`/proyectos?print=${project.id}`);
+                                  }
+                                }}
+                                title="Imprimir estado de cuenta o propuesta"
+                              >
                                 <Printer size={14} />
                               </button>
                               {!isObserver && project.status === 'in_progress' && (
@@ -2632,244 +2647,23 @@ export default function ClienteDashboard() {
         </div>
       )}
 
-      {/* Modal de selección de proyectos para imprimir */}
-      {showPrintModal && typeof document !== 'undefined' && createPortal(
-        <div className="modal-overlay" style={{ zIndex: 3000 }} onClick={() => setShowPrintModal(false)}>
-          <div className="card modal-content animate-fade" style={{ maxWidth: '600px', width: '95%', maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.2rem' }}>
-              <h2 style={{ margin: 0, color: 'white', display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1.1rem' }}>
-                <Printer size={18} /> {printMode === 'client-statement' ? 'Imprimir Estado de Cuenta' : 'Imprimir Reporte de Socios'}
-              </h2>
-              <button onClick={() => setShowPrintModal(false)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '0.25rem' }}>
-                <X size={22} />
-              </button>
-            </div>
-
-            {/* Selector de Tipo de Documento */}
-            <div style={{ marginBottom: '1.2rem', background: 'rgba(255,255,255,0.03)', padding: '0.35rem', borderRadius: '10px', display: 'flex', gap: '0.35rem', border: '1px solid rgba(255,255,255,0.08)' }}>
-              <button
-                type="button"
-                onClick={() => setPrintMode('client-statement')}
-                style={{
-                  flex: 1,
-                  padding: '0.6rem 0.8rem',
-                  borderRadius: '8px',
-                  border: 'none',
-                  cursor: 'pointer',
-                  fontSize: '0.82rem',
-                  fontWeight: 600,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: '0.4rem',
-                  backgroundColor: printMode === 'client-statement' ? 'var(--primary-color)' : 'transparent',
-                  color: printMode === 'client-statement' ? 'white' : 'var(--text-muted)',
-                  transition: 'all 0.2s ease'
-                }}
-              >
-                <FileText size={15} /> Estado de Cuenta (Cliente)
-              </button>
-              <button
-                type="button"
-                onClick={() => setPrintMode('partner-report')}
-                style={{
-                  flex: 1,
-                  padding: '0.6rem 0.8rem',
-                  borderRadius: '8px',
-                  border: 'none',
-                  cursor: 'pointer',
-                  fontSize: '0.82rem',
-                  fontWeight: 600,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: '0.4rem',
-                  backgroundColor: printMode === 'partner-report' ? '#8b5cf6' : 'transparent',
-                  color: printMode === 'partner-report' ? 'white' : 'var(--text-muted)',
-                  transition: 'all 0.2s ease'
-                }}
-              >
-                <BarChart3 size={15} /> Reporte de Socios (Interno)
-              </button>
-            </div>
-
-            <p style={{ color: 'var(--text-muted)', fontSize: '0.83rem', marginBottom: '1.2rem', marginTop: 0 }}>
-              {printMode === 'client-statement' 
-                ? 'Documento formal para el cliente: muestra presupuestos base, adicionales y abonos recibidos (sin costos internos ni utilidades).' 
-                : 'Reporte confidencial de socios: incluye gastos detallados, cuentas por pagar a proveedores, margen de ganancia y retiros.'}
-            </p>
-
-            {/* Proyectos activos/completados */}
-            {activeProjects.length > 0 && (
-              <div style={{ marginBottom: '1.2rem' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.6rem' }}>
-                  <span style={{ fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)', fontWeight: 700 }}>
-                    Proyectos ({activeProjects.length})
-                  </span>
-                  <button
-                    className="btn-secondary"
-                    style={{ padding: '0.2rem 0.6rem', fontSize: '0.73rem' }}
-                    onClick={() => {
-                      const allIds = activeProjects.map((p: any) => p.id);
-                      const allChecked = allIds.every((id: string) => selectedProjectIds.has(id));
-                      setSelectedProjectIds(() => {
-                        const next = new Set(selectedProjectIds);
-                        if (allChecked) { allIds.forEach((id: string) => next.delete(id)); }
-                        else { allIds.forEach((id: string) => next.add(id)); }
-                        return next;
-                      });
-                    }}
-                  >
-                    {activeProjects.every((p: any) => selectedProjectIds.has(p.id)) ? 'Deseleccionar todos' : 'Seleccionar todos'}
-                  </button>
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-                  {activeProjects.map((p: any) => {
-                    const isChecked = selectedProjectIds.has(p.id);
-                    const pExtras = p.project_extras?.reduce((s: number, e: any) => s + Number(e.amount_usd), 0) || 0;
-                    const pTotal = Number(p.budget_usd) + pExtras;
-                    const statusLabel = p.status === 'in_progress' ? 'En Curso' : p.status === 'completed' ? 'Completado' : 'Cancelado';
-                    const statusClass = p.status === 'completed' ? 'badge-success' : p.status === 'cancelled' ? 'badge-danger' : 'badge-warning';
-                    return (
-                      <label
-                        key={p.id}
-                        style={{
-                          display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.65rem 0.9rem',
-                          borderRadius: '8px', cursor: 'pointer', transition: 'all 0.15s ease',
-                          border: `1px solid ${isChecked ? 'rgba(56,189,248,0.4)' : 'rgba(255,255,255,0.07)'}`,
-                          background: isChecked ? 'rgba(56,189,248,0.06)' : 'rgba(255,255,255,0.02)',
-                        }}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={isChecked}
-                          onChange={() => {
-                            setSelectedProjectIds(() => {
-                              const next = new Set(selectedProjectIds);
-                              if (next.has(p.id)) next.delete(p.id); else next.add(p.id);
-                              return next;
-                            });
-                          }}
-                          style={{ width: '15px', height: '15px', accentColor: 'var(--accent-blue)', flexShrink: 0 }}
-                        />
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontWeight: 600, color: 'white', fontSize: '0.87rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                            {p.proposal_number ? `#${p.proposal_number} – ` : ''}{p.title}
-                          </div>
-                          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                            {new Date(p.created_at).toLocaleDateString('es-VE')} · {p.project_payments?.length || 0} pagos · {p.project_costs?.length || 0} gastos
-                          </div>
-                        </div>
-                        <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                          <div style={{ fontWeight: 700, color: 'white', fontSize: '0.87rem' }}>${formatCurrency(pTotal)}</div>
-                          <span className={`badge ${statusClass}`} style={{ fontSize: '0.67rem' }}>{statusLabel}</span>
-                        </div>
-                      </label>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {/* Propuestas pendientes (informativo) */}
-            {pendingProposals.length > 0 && (
-              <div style={{ marginBottom: '1.2rem', padding: '0.8rem 1rem', borderRadius: '8px', border: '1px dashed rgba(245,158,11,0.3)', background: 'rgba(245,158,11,0.03)' }}>
-                <span style={{ fontSize: '0.73rem', color: 'var(--primary-color)', fontWeight: 700, display: 'block', marginBottom: '0.4rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                  Propuestas Pendientes — solo informativo, sin datos financieros
-                </span>
-                {pendingProposals.map((p: any) => (
-                  <div key={p.id} style={{ fontSize: '0.8rem', color: 'var(--text-muted)', padding: '0.15rem 0' }}>
-                    {p.proposal_number ? `#${p.proposal_number} – ` : ''}{p.title} · ${formatCurrency(p.budget_usd)}
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* Vista previa de totales */}
-            {(() => {
-              const previewProjects = activeProjects.filter((p: any) => selectedProjectIds.has(p.id));
-              const previewExtras = previewProjects.flatMap((p: any) => p.project_extras || []);
-              const previewContracted = previewProjects.reduce((s: number, p: any) => s + Number(p.budget_usd), 0) + previewExtras.reduce((s: number, e: any) => s + Number(e.amount_usd), 0);
-              const previewPaid = previewProjects.flatMap((p: any) => p.project_payments || []).reduce((s: number, pmt: any) => s + Number(pmt.amount_usd), 0);
-              return (
-                <div style={{ padding: '0.75rem 1rem', borderRadius: '8px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)', marginBottom: '1.2rem', fontSize: '0.83rem' }}>
-                  <div style={{ color: 'var(--text-muted)', marginBottom: '0.4rem', fontWeight: 700, fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                    Vista previa — {previewProjects.length} proyecto{previewProjects.length !== 1 ? 's' : ''} seleccionado{previewProjects.length !== 1 ? 's' : ''}
-                  </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.3rem' }}>
-                    <span style={{ color: 'var(--text-muted)' }}>Total Contratado:</span>
-                    <span style={{ color: 'white', fontWeight: 600, textAlign: 'right' }}>${formatCurrency(previewContracted)}</span>
-                    <span style={{ color: 'var(--text-muted)' }}>Total Abonado:</span>
-                    <span style={{ color: 'var(--success)', fontWeight: 600, textAlign: 'right' }}>${formatCurrency(previewPaid)}</span>
-                  </div>
-                </div>
-              );
-            })()}
-
-            {/* Botones */}
-            <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
-              <button className="btn-secondary" style={{ flex: 1 }} onClick={() => setShowPrintModal(false)}>Cancelar</button>
-              
-              <button
-                type="button"
-                className="btn-primary"
-                style={{
-                  flex: 2,
-                  justifyContent: 'center',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.5rem',
-                  opacity: selectedProjectIds.size === 0 ? 0.5 : 1,
-                  cursor: selectedProjectIds.size === 0 ? 'not-allowed' : 'pointer',
-                  background: 'linear-gradient(135deg, #25D366 0%, #128C7E 100%)',
-                  border: 'none',
-                  color: '#fff',
-                  boxShadow: '0 4px 12px rgba(37, 211, 102, 0.25)',
-                  fontWeight: 700
-                }}
-                disabled={selectedProjectIds.size === 0}
-                onClick={() => {
-                  const firstId = Array.from(selectedProjectIds)[0];
-                  const pIdsParam = Array.from(selectedProjectIds).join(',');
-                  const safeClientName = (client?.name || 'cliente').replace(/[^a-zA-Z0-9]/g, '_');
-                  
-                  if (printMode === 'client-statement') {
-                    setShareModalConfig({
-                      isOpen: true,
-                      title: `Estado de Cuenta - ${client?.name || 'Cliente'}`,
-                      subtitle: `${selectedProjectIds.size} proyecto${selectedProjectIds.size !== 1 ? 's' : ''} incluido${selectedProjectIds.size !== 1 ? 's' : ''}`,
-                      fileName: `Estado_de_Cuenta_${safeClientName}.pdf`,
-                      pdfUrl: `/api/clientes/${clientId}/estado-cuenta-pdf?projects=${pIdsParam}`
-                    });
-                  } else {
-                    setShareModalConfig({
-                      isOpen: true,
-                      title: `Reporte de Socios - ${client?.name || 'Cliente'}`,
-                      subtitle: `Uso interno exclusivo • ${selectedProjectIds.size} proyecto${selectedProjectIds.size !== 1 ? 's' : ''}`,
-                      fileName: `Reporte_Socios_${safeClientName}.pdf`,
-                      pdfUrl: `/api/clientes/${clientId}/reporte-socios-pdf${firstId && selectedProjectIds.size === 1 ? `?project_id=${firstId}` : ''}`
-                    });
-                  }
-                  setShowPrintModal(false);
-                }}
-              >
-                <Share2 size={16} /> Descargar / Compartir PDF
-              </button>
-
-              <button
-                type="button"
-                className="btn-secondary"
-                style={{ flex: 1.2, justifyContent: 'center', display: 'flex', alignItems: 'center', gap: '0.5rem', opacity: selectedProjectIds.size === 0 ? 0.5 : 1, cursor: selectedProjectIds.size === 0 ? 'not-allowed' : 'pointer' }}
-                disabled={selectedProjectIds.size === 0}
-                onClick={() => { setShowPrintModal(false); setTimeout(() => window.print(), 100); }}
-              >
-                <Printer size={15} /> Imprimir
-              </button>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
+      {/* Subventana Universal de Selección de Proyectos Aprobados para Imprimir */}
+      <PrintProjectSelectionModal
+        isOpen={showPrintModal}
+        onClose={() => setShowPrintModal(false)}
+        clientId={clientId}
+        clientName={client?.name}
+        clientPhone={client?.phone || undefined}
+        clientEmail={client?.email || undefined}
+        projects={projects}
+        initialMode={printMode}
+        onShareModalTrigger={(cfg) => setShareModalConfig(cfg)}
+        onDirectPrint={(mode, selectedIds) => {
+          setPrintMode(mode);
+          setSelectedProjectIds(selectedIds);
+          setTimeout(() => window.print(), 100);
+        }}
+      />
 
       {/* Modal de Compartir y Descargar Reportes */}
       {shareModalConfig && (
@@ -3260,9 +3054,30 @@ export default function ClienteDashboard() {
                   </td>
                 </tr>
                 <tr style={{ background: '#e8f5e9' }}>
-                  <td style={{ padding: '0.7rem', border: '2px solid #28a745', fontWeight: 'bold' }}><strong>UTILIDAD NETA TOTAL REMANENTE EN CAJA / OBRA:</strong></td>
+                  <td style={{ padding: '0.7rem', border: '2px solid #28a745', fontWeight: 'bold' }}><strong>UTILIDAD ESTIMADA REMANENTE DE LA OBRA (Margen - Retiros):</strong></td>
                   <td style={{ padding: '0.7rem', border: '2px solid #28a745', textAlign: 'right', fontWeight: 'bold', color: '#1b5e20', fontSize: '15px' }}>${formatCurrency(printNetProfit)}</td>
                 </tr>
+                <tr style={{ background: printCashLiquidity >= 0 ? '#ecfdf5' : '#fef2f2', border: `2px solid ${printCashLiquidity >= 0 ? '#10b981' : '#ef4444'}` }}>
+                  <td style={{ padding: '0.75rem', fontWeight: 'bold', color: printCashLiquidity >= 0 ? '#065f46' : '#991b1b' }}>
+                    <strong>LIQUIDEZ REAL ACTUAL QUE QUEDA EN CAJA:</strong>
+                    <div style={{ fontSize: '11px', fontWeight: 'normal', color: '#475569', marginTop: '2px' }}>
+                      Cobrado (${formatCurrency(printTotalPaid)}) - Gastos (${formatCurrency(printTotalCostsValue)}) - Retiros (${formatCurrency(printTotalAdvances)})
+                    </div>
+                  </td>
+                  <td style={{ padding: '0.75rem', textAlign: 'right', fontWeight: 'bold', color: printCashLiquidity >= 0 ? '#047857' : '#b91c1c', fontSize: '16px' }}>
+                    {printCashLiquidity >= 0 ? '$' : '-$'}{formatCurrency(Math.abs(printCashLiquidity))}{printCashLiquidity < 0 ? ' (Déficit)' : ''}
+                  </td>
+                </tr>
+                {printTotalCommitted > 0 && (
+                  <tr style={{ background: '#f8fafc', fontSize: '11px' }}>
+                    <td style={{ padding: '0.35rem 0.5rem 0.35rem 1.5rem', border: '1px solid #e2e8f0', color: '#475569' }}>
+                      ↳ Liquidez Neta Disponible tras Cuentas por Pagar (CxP):
+                    </td>
+                    <td style={{ padding: '0.35rem 0.5rem', border: '1px solid #e2e8f0', textAlign: 'right', fontWeight: 600, color: (printCashLiquidity - printTotalCommitted) >= 0 ? '#0f766e' : '#b91c1c' }}>
+                      {(printCashLiquidity - printTotalCommitted) >= 0 ? '$' : '-$'}{formatCurrency(Math.abs(printCashLiquidity - printTotalCommitted))}
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
 

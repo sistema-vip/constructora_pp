@@ -38,6 +38,7 @@ import { useUser } from '@/lib/UserContext';
 import TelegramPendingPanel from '@/components/TelegramPendingPanel';
 import ProjectTracking from '@/components/ProjectTracking';
 import ReportShareModal from '@/components/ReportShareModal';
+import PrintProjectSelectionModal from '@/components/PrintProjectSelectionModal';
 import Image from 'next/image';
 import { autoPopulateTrackingTasks } from '@/lib/projectTaskHelper';
 import { parseProjectRelation, ProjectRelationInfo } from '@/lib/projectRelationsHelper';
@@ -169,6 +170,10 @@ export default function ProjectDashboard() {
     clientPhone?: string;
     clientEmail?: string;
   } | null>(null);
+
+  // Subventana de selección de proyectos para reportes y estado de cuenta
+  const [showPrintSelectionModal, setShowPrintSelectionModal] = useState(false);
+  const [printSelectionMode, setPrintSelectionMode] = useState<'client-statement' | 'partner-report'>('client-statement');
 
   // Permisos
   const { role } = useUser();
@@ -1111,21 +1116,8 @@ export default function ProjectDashboard() {
           <button
             className="btn-primary"
             onClick={() => {
-              const targetClientId = project.client_id || project.clients?.id;
-              if (targetClientId) {
-                const safeClientName = (project.clients?.name || 'cliente').replace(/[^a-zA-Z0-9]/g, '_');
-                setShareModalConfig({
-                  isOpen: true,
-                  title: `Estado de Cuenta - ${project.title}`,
-                  subtitle: `Cliente: ${project.clients?.name || 'N/A'} • Obra #${project.proposal_number || ''}`,
-                  fileName: `Estado_de_Cuenta_${project.proposal_number || ''}_${safeClientName}.pdf`,
-                  pdfUrl: `/api/clientes/${targetClientId}/estado-cuenta-pdf?project_id=${project.id}`,
-                  clientPhone: project.clients?.phone || undefined,
-                  clientEmail: project.clients?.email || undefined
-                });
-              } else {
-                handlePrintClientStatement();
-              }
+              setPrintSelectionMode('client-statement');
+              setShowPrintSelectionModal(true);
             }}
             title="Descargar o Compartir Estado de Cuenta para el Cliente"
             style={{ padding: '0.65rem 1.2rem', display: 'flex', gap: '0.4rem', alignItems: 'center', fontSize: '0.85rem', fontWeight: 600, boxShadow: '0 4px 12px rgba(245,158,11,0.2)' }}
@@ -1135,21 +1127,8 @@ export default function ProjectDashboard() {
           <button
             className="btn-secondary"
             onClick={() => {
-              const targetClientId = project.client_id || project.clients?.id;
-              if (targetClientId) {
-                const safeClientName = (project.clients?.name || 'cliente').replace(/[^a-zA-Z0-9]/g, '_');
-                setShareModalConfig({
-                  isOpen: true,
-                  title: `Reporte de Socios - ${project.title}`,
-                  subtitle: `Uso interno de socios • Obra #${project.proposal_number || ''}`,
-                  fileName: `Reporte_Socios_${project.proposal_number || ''}_${safeClientName}.pdf`,
-                  pdfUrl: `/api/clientes/${targetClientId}/reporte-socios-pdf?project_id=${project.id}`,
-                  clientPhone: project.clients?.phone || undefined,
-                  clientEmail: project.clients?.email || undefined
-                });
-              } else {
-                handlePrintReport();
-              }
+              setPrintSelectionMode('partner-report');
+              setShowPrintSelectionModal(true);
             }}
             title="Descargar o Compartir Reporte Financiero de Socios"
             style={{ padding: '0.65rem 1.1rem', display: 'flex', gap: '0.4rem', alignItems: 'center', background: 'rgba(139, 92, 246, 0.1)', borderColor: 'rgba(139, 92, 246, 0.3)', color: '#c4b5fd', fontSize: '0.85rem', fontWeight: 600 }}
@@ -3421,6 +3400,28 @@ export default function ProjectDashboard() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Subventana Universal de Selección de Proyectos Aprobados para Imprimir */}
+      {showPrintSelectionModal && project && (
+        <PrintProjectSelectionModal
+          isOpen={showPrintSelectionModal}
+          onClose={() => setShowPrintSelectionModal(false)}
+          clientId={project.client_id || project.clients?.id || ''}
+          clientName={project.clients?.name}
+          clientPhone={project.clients?.phone || undefined}
+          clientEmail={project.clients?.email || undefined}
+          initialMode={printSelectionMode}
+          initialSelectedProjectId={project.id}
+          onShareModalTrigger={(cfg) => setShareModalConfig(cfg)}
+          onDirectPrint={(mode) => {
+            if (mode === 'client-statement') {
+              handlePrintClientStatement();
+            } else {
+              handlePrintReport();
+            }
+          }}
+        />
       )}
 
       {/* Modal Universal para Compartir y Descargar Reportes en PDF */}

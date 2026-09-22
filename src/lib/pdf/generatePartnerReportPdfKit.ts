@@ -120,7 +120,7 @@ export function generatePartnerReportPdfKit(data: PartnerReportData): Promise<Bu
       doc.y = clientBoxY + 48;
 
       // 3. FINANCIAL KPI SUMMARY
-      ensureSpace(210);
+      ensureSpace(250);
       doc
         .fontSize(9.5)
         .font('Helvetica-Bold')
@@ -254,7 +254,7 @@ export function generatePartnerReportPdfKit(data: PartnerReportData): Promise<Bu
         15
       );
       drawKpiRow(
-        'UTILIDAD NETA TOTAL REMANENTE EN CAJA / OBRA:',
+        'UTILIDAD ESTIMADA REMANENTE DE LA OBRA (Margen - Retiros):',
         `$${formatCurrency(data.printNetProfit)}`,
         isNetPos ? '#EFF6FF' : '#FEF2F2',
         true,
@@ -263,6 +263,37 @@ export function generatePartnerReportPdfKit(data: PartnerReportData): Promise<Bu
         false,
         16
       );
+
+      const cashLiquidity = data.printCashLiquidity !== undefined
+        ? data.printCashLiquidity
+        : (data.printTotalPaid - data.printTotalCostsValue - data.printTotalAdvances);
+      const isCashPos = cashLiquidity >= 0;
+
+      drawKpiRow(
+        'LIQUIDEZ REAL ACTUAL QUE QUEDA EN CAJA (Cobrado - Gastos - Retiros):',
+        `${isCashPos ? '$' : '-$'}${formatCurrency(Math.abs(cashLiquidity))}${isCashPos ? '' : ' (Déficit)'}`,
+        isCashPos ? '#ECFDF5' : '#FEF2F2',
+        true,
+        isCashPos ? successColor : alertRed,
+        isCashPos ? '#10B981' : '#EF4444',
+        false,
+        18
+      );
+
+      if (data.printTotalCommitted > 0) {
+        const availableLiquidity = cashLiquidity - data.printTotalCommitted;
+        const isAvailPos = availableLiquidity >= 0;
+        drawKpiRow(
+          '   ↳ Liquidez Neta Disponible tras Cuentas por Pagar (CxP):',
+          `${isAvailPos ? '$' : '-$'}${formatCurrency(Math.abs(availableLiquidity))}`,
+          '#F8FAFC',
+          false,
+          isAvailPos ? '#0F766E' : '#B91C1C',
+          lightBorder,
+          true,
+          14
+        );
+      }
 
       doc.moveDown(0.8);
 

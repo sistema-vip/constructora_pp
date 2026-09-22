@@ -49,6 +49,17 @@ export function generateClientStatementPdfKit(data: ClientStatementData): Promis
         }
       };
 
+      const measureRowHeight = (cells: { text: string; width: number; fontSize: number; font?: string }[]) => {
+        let maxH = 0;
+        cells.forEach(c => {
+          if (c.font) doc.font(c.font);
+          doc.fontSize(c.fontSize);
+          const h = doc.heightOfString(c.text || '', { width: Math.max(10, c.width - 8) });
+          if (h > maxH) maxH = h;
+        });
+        return Math.max(16, maxH + 8);
+      };
+
       // 1. HEADER (Logo + Title & Date)
       const logoPath = path.join(process.cwd(), 'public', 'logo_3d.png');
       const startY = doc.y;
@@ -229,13 +240,28 @@ export function generateClientStatementPdfKit(data: ClientStatementData): Promis
       drawTableHeader(projCols);
 
       data.printProjects.forEach(p => {
-        ensureSpace(18);
-        const rowY = doc.y;
         const pExtras = p.project_extras?.reduce((acc: number, e: any) => acc + Number(e.amount_usd), 0) || 0;
         const pTotal = Number(p.budget_usd) + pExtras;
         const isCompleted = p.status === 'completed';
 
-        doc.rect(doc.page.margins.left, rowY, pageWidth, 16).fillAndStroke('#FFFFFF', '#E2E8F0');
+        const titleText = `${p.proposal_number ? '#' + p.proposal_number + ' - ' : ''}${p.title}`;
+        const statusText = isCompleted ? 'Completado' : 'En Ejecución';
+        const dateText = p.start_date || p.created_at?.split('T')[0] || '-';
+        const baseText = `$${formatCurrency(p.budget_usd)}`;
+        const totalText = `$${formatCurrency(pTotal)}`;
+
+        const rowHeight = measureRowHeight([
+          { text: titleText, width: projCols[0].width, fontSize: 7.5, font: 'Helvetica-Bold' },
+          { text: statusText, width: projCols[1].width, fontSize: 7, font: 'Helvetica' },
+          { text: dateText, width: projCols[2].width, fontSize: 7, font: 'Helvetica' },
+          { text: baseText, width: projCols[3].width, fontSize: 7.5, font: 'Helvetica' },
+          { text: totalText, width: projCols[4].width, fontSize: 7.5, font: 'Helvetica-Bold' }
+        ]);
+
+        ensureSpace(rowHeight + 2);
+        const rowY = doc.y;
+
+        doc.rect(doc.page.margins.left, rowY, pageWidth, rowHeight).fillAndStroke('#FFFFFF', '#E2E8F0');
 
         let curX = doc.page.margins.left;
 
@@ -243,37 +269,37 @@ export function generateClientStatementPdfKit(data: ClientStatementData): Promis
           .fontSize(7.5)
           .font('Helvetica-Bold')
           .fillColor(darkColor)
-          .text(`${p.proposal_number ? '#' + p.proposal_number + ' - ' : ''}${p.title}`, curX + 4, rowY + 4, { width: projCols[0].width - 8, ellipsis: true });
+          .text(titleText, curX + 4, rowY + 4, { width: projCols[0].width - 8 });
         curX += projCols[0].width;
 
         doc
           .fontSize(7)
           .font('Helvetica')
           .fillColor(isCompleted ? successColor : '#0284C7')
-          .text(isCompleted ? 'Completado' : 'En Ejecución', curX + 4, rowY + 4, { width: projCols[1].width - 8, align: 'center' });
+          .text(statusText, curX + 4, rowY + 4, { width: projCols[1].width - 8, align: 'center' });
         curX += projCols[1].width;
 
         doc
           .fontSize(7)
           .font('Helvetica')
           .fillColor(grayColor)
-          .text(p.start_date || p.created_at?.split('T')[0] || '-', curX + 4, rowY + 4, { width: projCols[2].width - 8, align: 'center' });
+          .text(dateText, curX + 4, rowY + 4, { width: projCols[2].width - 8, align: 'center' });
         curX += projCols[2].width;
 
         doc
           .fontSize(7.5)
           .font('Helvetica')
           .fillColor(darkColor)
-          .text(`$${formatCurrency(p.budget_usd)}`, curX + 4, rowY + 4, { width: projCols[3].width - 8, align: 'right' });
+          .text(baseText, curX + 4, rowY + 4, { width: projCols[3].width - 8, align: 'right' });
         curX += projCols[3].width;
 
         doc
           .fontSize(7.5)
           .font('Helvetica-Bold')
           .fillColor(darkColor)
-          .text(`$${formatCurrency(pTotal)}`, curX + 4, rowY + 4, { width: projCols[4].width - 8, align: 'right' });
+          .text(totalText, curX + 4, rowY + 4, { width: projCols[4].width - 8, align: 'right' });
 
-        doc.y = rowY + 16;
+        doc.y = rowY + rowHeight;
       });
       doc.moveDown(0.8);
 
@@ -288,9 +314,19 @@ export function generateClientStatementPdfKit(data: ClientStatementData): Promis
         drawTableHeader(extraCols);
 
         data.printExtras.forEach(e => {
-          ensureSpace(16);
+          const descText = e.description || 'Trabajo adicional';
+          const projText = `${e.proposal_number ? '#' + e.proposal_number + ' - ' : ''}${e.project_title || 'General'}`;
+          const amountText = `+$${formatCurrency(e.amount_usd)}`;
+
+          const rowHeight = measureRowHeight([
+            { text: descText, width: extraCols[0].width, fontSize: 7, font: 'Helvetica-Bold' },
+            { text: projText, width: extraCols[1].width, fontSize: 7, font: 'Helvetica' },
+            { text: amountText, width: extraCols[2].width, fontSize: 7.5, font: 'Helvetica-Bold' }
+          ]);
+
+          ensureSpace(rowHeight + 2);
           const rowY = doc.y;
-          doc.rect(doc.page.margins.left, rowY, pageWidth, 15).fillAndStroke('#FFFFFF', '#E2E8F0');
+          doc.rect(doc.page.margins.left, rowY, pageWidth, rowHeight).fillAndStroke('#FFFFFF', '#E2E8F0');
 
           let curX = doc.page.margins.left;
 
@@ -298,23 +334,23 @@ export function generateClientStatementPdfKit(data: ClientStatementData): Promis
             .fontSize(7)
             .font('Helvetica-Bold')
             .fillColor(darkColor)
-            .text(e.description || 'Trabajo adicional', curX + 4, rowY + 4, { width: extraCols[0].width - 8, ellipsis: true });
+            .text(descText, curX + 4, rowY + 4, { width: extraCols[0].width - 8 });
           curX += extraCols[0].width;
 
           doc
             .fontSize(7)
             .font('Helvetica')
             .fillColor(grayColor)
-            .text(`${e.proposal_number ? '#' + e.proposal_number + ' - ' : ''}${e.project_title || 'General'}`, curX + 4, rowY + 4, { width: extraCols[1].width - 8, ellipsis: true });
+            .text(projText, curX + 4, rowY + 4, { width: extraCols[1].width - 8 });
           curX += extraCols[1].width;
 
           doc
             .fontSize(7.5)
             .font('Helvetica-Bold')
             .fillColor('#0369A1')
-            .text(`+$${formatCurrency(e.amount_usd)}`, curX + 4, rowY + 4, { width: extraCols[2].width - 8, align: 'right' });
+            .text(amountText, curX + 4, rowY + 4, { width: extraCols[2].width - 8, align: 'right' });
 
-          doc.y = rowY + 15;
+          doc.y = rowY + rowHeight;
         });
         doc.moveDown(0.8);
       }
@@ -345,9 +381,21 @@ export function generateClientStatementPdfKit(data: ClientStatementData): Promis
         });
 
         sortedPayments.forEach(pmt => {
-          ensureSpace(16);
+          const dateText = pmt.date || pmt.payment_date || pmt.created_at?.split('T')[0] || '';
+          const projText = `${pmt.proposal_number ? '#' + pmt.proposal_number + ' - ' : ''}${pmt.project_title || 'General'}`;
+          const descText = `${pmt.description || 'Abono recibido'} ${pmt.reference ? `(Ref: ${pmt.reference})` : ''}`;
+          const amountText = `+$${formatCurrency(pmt.amount_usd)}`;
+
+          const rowHeight = measureRowHeight([
+            { text: dateText, width: payCols[0].width, fontSize: 7, font: 'Helvetica' },
+            { text: projText, width: payCols[1].width, fontSize: 7, font: 'Helvetica-Bold' },
+            { text: descText, width: payCols[2].width, fontSize: 7, font: 'Helvetica' },
+            { text: amountText, width: payCols[3].width, fontSize: 7.5, font: 'Helvetica-Bold' }
+          ]);
+
+          ensureSpace(rowHeight + 2);
           const rowY = doc.y;
-          doc.rect(doc.page.margins.left, rowY, pageWidth, 15).fillAndStroke('#FFFFFF', '#E2E8F0');
+          doc.rect(doc.page.margins.left, rowY, pageWidth, rowHeight).fillAndStroke('#FFFFFF', '#E2E8F0');
 
           let curX = doc.page.margins.left;
 
@@ -355,30 +403,30 @@ export function generateClientStatementPdfKit(data: ClientStatementData): Promis
             .fontSize(7)
             .font('Helvetica')
             .fillColor(grayColor)
-            .text(pmt.date || pmt.payment_date || pmt.created_at?.split('T')[0] || '', curX + 4, rowY + 4, { width: payCols[0].width - 8 });
+            .text(dateText, curX + 4, rowY + 4, { width: payCols[0].width - 8 });
           curX += payCols[0].width;
 
           doc
             .fontSize(7)
             .font('Helvetica-Bold')
             .fillColor(darkColor)
-            .text(`${pmt.proposal_number ? '#' + pmt.proposal_number + ' - ' : ''}${pmt.project_title || 'General'}`, curX + 4, rowY + 4, { width: payCols[1].width - 8, ellipsis: true });
+            .text(projText, curX + 4, rowY + 4, { width: payCols[1].width - 8 });
           curX += payCols[1].width;
 
           doc
             .fontSize(7)
             .font('Helvetica')
             .fillColor(grayColor)
-            .text(`${pmt.description || 'Abono recibido'} ${pmt.reference ? `(Ref: ${pmt.reference})` : ''}`, curX + 4, rowY + 4, { width: payCols[2].width - 8, ellipsis: true });
+            .text(descText, curX + 4, rowY + 4, { width: payCols[2].width - 8 });
           curX += payCols[2].width;
 
           doc
             .fontSize(7.5)
             .font('Helvetica-Bold')
             .fillColor(successColor)
-            .text(`+$${formatCurrency(pmt.amount_usd)}`, curX + 4, rowY + 4, { width: payCols[3].width - 8, align: 'right' });
+            .text(amountText, curX + 4, rowY + 4, { width: payCols[3].width - 8, align: 'right' });
 
-          doc.y = rowY + 15;
+          doc.y = rowY + rowHeight;
         });
       }
       doc.moveDown(0.9);

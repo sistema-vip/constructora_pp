@@ -19,6 +19,7 @@ export interface PartnerReportData {
   printBalanceDue: number;
   printEstimatedProfit: number;
   printNetProfit: number;
+  printCashLiquidity?: number;
   henryAdvances: number;
   losbersAdvances: number;
 }
@@ -42,6 +43,7 @@ export function generatePartnerReportHtml(data: PartnerReportData): string {
     printBalanceDue,
     printEstimatedProfit,
     printNetProfit,
+    printCashLiquidity,
     henryAdvances,
     losbersAdvances
   } = data;
@@ -52,6 +54,12 @@ export function generatePartnerReportHtml(data: PartnerReportData): string {
   const lAdv = losbersAdvances || 0;
   const henrySaldo = partnerShare - hAdv;
   const losbersSaldo = partnerShare - lAdv;
+  const cashLiquidity = printCashLiquidity !== undefined 
+    ? printCashLiquidity 
+    : ((printTotalPaid || 0) - (printTotalCostsValue || 0) - (printTotalAdvances || 0));
+  const isCashPos = cashLiquidity >= 0;
+  const availableLiquidity = cashLiquidity - (printTotalCommitted || 0);
+  const isAvailPos = availableLiquidity >= 0;
 
   return `<!DOCTYPE html>
 <html lang="es">
@@ -231,9 +239,30 @@ export function generatePartnerReportHtml(data: PartnerReportData): string {
           <td style="padding: 0.45rem 0.5rem; border: 1px solid ${losbersSaldo >= 0 ? '#bfdbfe' : '#fecaca'}; text-align: right; color: ${losbersSaldo >= 0 ? '#1d4ed8' : '#dc2626'}; font-weight: bold;">${losbersSaldo >= 0 ? '$' : '-$'}${formatCurrency(Math.abs(losbersSaldo))}${losbersSaldo < 0 ? ' (Excedido)' : ''}</td>
         </tr>
         <tr style="background: #e8f5e9;">
-          <td style="padding: 0.7rem; border: 2px solid #28a745; font-weight: bold;"><strong>UTILIDAD NETA TOTAL REMANENTE EN CAJA / OBRA:</strong></td>
+          <td style="padding: 0.7rem; border: 2px solid #28a745; font-weight: bold;"><strong>UTILIDAD ESTIMADA REMANENTE DE LA OBRA (Margen - Retiros):</strong></td>
           <td style="padding: 0.7rem; border: 2px solid #28a745; text-align: right; font-weight: bold; color: #1b5e20; font-size: 15px;">$${formatCurrency(printNetProfit)}</td>
         </tr>
+        <tr style="background: ${isCashPos ? '#ecfdf5' : '#fef2f2'}; border: 2px solid ${isCashPos ? '#10b981' : '#ef4444'};">
+          <td style="padding: 0.75rem; font-weight: bold; color: ${isCashPos ? '#065f46' : '#991b1b'};">
+            <strong>LIQUIDEZ REAL ACTUAL QUE QUEDA EN CAJA:</strong>
+            <div style="font-size: 11px; font-weight: normal; color: #475569; margin-top: 2px;">
+              Cobrado ($${formatCurrency(printTotalPaid || 0)}) - Gastos ($${formatCurrency(printTotalCostsValue || 0)}) - Retiros ($${formatCurrency(printTotalAdvances || 0)})
+            </div>
+          </td>
+          <td style="padding: 0.75rem; text-align: right; font-weight: bold; color: ${isCashPos ? '#047857' : '#b91c1c'}; font-size: 16px;">
+            ${isCashPos ? '$' : '-$'}${formatCurrency(Math.abs(cashLiquidity))}${isCashPos ? '' : ' (Déficit)'}
+          </td>
+        </tr>
+        ${(printTotalCommitted || 0) > 0 ? `
+        <tr style="background: #f8fafc; font-size: 11px;">
+          <td style="padding: 0.35rem 0.5rem 0.35rem 1.5rem; border: 1px solid #e2e8f0; color: #475569;">
+            ↳ Liquidez Neta Disponible tras Cuentas por Pagar (CxP):
+          </td>
+          <td style="padding: 0.35rem 0.5rem; border: 1px solid #e2e8f0; text-align: right; font-weight: 600; color: ${isAvailPos ? '#0f766e' : '#b91c1c'};">
+            ${isAvailPos ? '$' : '-$'}${formatCurrency(Math.abs(availableLiquidity))}
+          </td>
+        </tr>
+        ` : ''}
       </tbody>
     </table>
 
