@@ -16,9 +16,10 @@ import { supabase } from '@/lib/supabase';
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const [modalOpen, setModalOpen] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
   const pathname = usePathname();
   const router = useRouter();
-  const { role, user, loading: userLoading } = useUser();
+  const { role, user, loading: userLoading, logout } = useUser();
 
   useEffect(() => {
     if (!userLoading && !user && pathname !== '/login') {
@@ -29,12 +30,23 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   }, [user, userLoading, pathname, router]);
 
   async function handleLogout() {
+    if (isLoggingOut) return;
+    setIsLoggingOut(true);
     try {
-      await supabase.auth.signOut();
+      await logout();
     } catch (err) {
       console.error('Error signing out:', err);
+      try {
+        await supabase.auth.signOut();
+      } catch {}
+      if (typeof window !== 'undefined') {
+        localStorage.clear();
+        sessionStorage.clear();
+        window.location.href = '/login';
+      } else {
+        router.push('/login');
+      }
     }
-    router.push('/login');
   }
 
   function handleNewProposal() {
@@ -110,8 +122,28 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
              </div>
           </div>
 
-          <button className="nav-link" onClick={handleLogout} style={{ width: '100%', border: 'none', background: 'none', cursor: 'pointer' }}>
-            <LogOut size={20} /> Cerrar Sesión
+          <button
+            type="button"
+            className="nav-link nav-link-logout"
+            onClick={handleLogout}
+            disabled={isLoggingOut}
+            style={{
+              width: '100%',
+              border: '1px solid rgba(239, 68, 68, 0.25)',
+              background: 'rgba(239, 68, 68, 0.08)',
+              color: '#f87171',
+              cursor: isLoggingOut ? 'not-allowed' : 'pointer',
+              fontWeight: 600,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.75rem',
+              padding: '0.8rem 1rem',
+              borderRadius: '10px',
+            }}
+            title="Cerrar sesión de forma segura y borrar credenciales"
+          >
+            <LogOut size={20} />
+            <span>{isLoggingOut ? 'Cerrando sesión...' : 'Cerrar Sesión'}</span>
           </button>
         </div>
       </aside>
@@ -148,20 +180,129 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                 <span>Pepe IA</span>
               </button>
               <button
+                type="button"
                 onClick={handleLogout}
-                style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.8rem' }}
-                title="Cerrar Sesión"
+                disabled={isLoggingOut}
+                style={{
+                  background: 'rgba(239, 68, 68, 0.15)',
+                  border: '1px solid rgba(239, 68, 68, 0.35)',
+                  borderRadius: '20px',
+                  padding: '0.3rem 0.65rem',
+                  color: '#f87171',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.35rem',
+                  fontSize: '0.78rem',
+                  fontWeight: 600,
+                  cursor: isLoggingOut ? 'not-allowed' : 'pointer',
+                }}
+                title="Cerrar Sesión Segura"
               >
-                <LogOut size={16} />
+                <LogOut size={14} />
+                <span>{isLoggingOut ? '...' : 'Salir'}</span>
               </button>
             </div>
           </div>
         )}
 
+        {/* DESKTOP HEADER — Visible at all times on desktop PC */}
         {pathname !== '/login' && (
-          <header className="hide-on-print" style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', marginBottom: '1.5rem', gap: '1rem' }}>
+          <header
+            className="hide-on-print desktop-header"
+            style={{
+              display: 'flex',
+              justifyContent: 'flex-end',
+              alignItems: 'center',
+              marginBottom: '1.5rem',
+              gap: '1rem',
+              flexWrap: 'wrap',
+            }}
+          >
             <div style={{ maxWidth: '240px' }}>
               <PWAInstallPrompt variant="button" />
+            </div>
+
+            {/* Panel de Usuario y Botón Directo de Cerrar Sesión en PC */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.6rem',
+                  padding: '0.4rem 0.85rem',
+                  background: 'var(--surface-color)',
+                  border: '1px solid var(--border-color)',
+                  borderRadius: '12px',
+                }}
+              >
+                <div
+                  style={{
+                    width: 30,
+                    height: 30,
+                    borderRadius: '50%',
+                    background: 'var(--primary-color)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontWeight: 700,
+                    color: '#000',
+                    fontSize: '0.8rem',
+                  }}
+                >
+                  {user?.user_metadata?.name?.charAt(0) || user?.email?.charAt(0).toUpperCase() || 'U'}
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.25 }}>
+                  <span
+                    style={{
+                      fontSize: '0.82rem',
+                      fontWeight: 600,
+                      color: 'white',
+                      maxWidth: '160px',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                    title={user?.email || ''}
+                  >
+                    {user?.user_metadata?.name || user?.email?.split('@')[0] || 'Usuario'}
+                  </span>
+                  <span
+                    style={{
+                      fontSize: '0.68rem',
+                      color: role === 'admin' ? 'var(--primary-color)' : 'var(--text-muted)',
+                      textTransform: 'uppercase',
+                      fontWeight: 700,
+                    }}
+                  >
+                    {role === 'admin' ? 'Administrador' : role === 'client' ? 'Cliente' : role === 'sales' ? 'Ventas' : 'Observador'}
+                  </span>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleLogout}
+                disabled={isLoggingOut}
+                className="btn-logout"
+                title="Cerrar sesión de forma segura y borrar credenciales"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.5rem',
+                  background: 'rgba(239, 68, 68, 0.12)',
+                  border: '1px solid rgba(239, 68, 68, 0.3)',
+                  color: '#f87171',
+                  borderRadius: '10px',
+                  padding: '0.55rem 1rem',
+                  fontSize: '0.85rem',
+                  fontWeight: 600,
+                  cursor: isLoggingOut ? 'not-allowed' : 'pointer',
+                  transition: 'var(--transition)',
+                }}
+              >
+                <LogOut size={16} />
+                <span>{isLoggingOut ? 'Cerrando sesión...' : 'Cerrar Sesión'}</span>
+              </button>
             </div>
           </header>
         )}

@@ -75,6 +75,23 @@ body {
   position: fixed;
   height: 100vh;
   z-index: 100;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+}
+
+.sidebar::-webkit-scrollbar {
+  width: 4px;
+}
+
+.sidebar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+}
+
+.sidebar::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .main-content {
@@ -256,6 +273,32 @@ h2 { font-size: 1.5rem; font-weight: 700; color: var(--primary-color); }
    Desktop layout is completely unchanged
    ============================================= */
 
+/* Desktop Header & Logout Styles */
+.desktop-header {
+  display: flex;
+}
+
+.btn-logout {
+  transition: var(--transition);
+}
+
+.btn-logout:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.22) !important;
+  border-color: #ef4444 !important;
+  color: #fca5a5 !important;
+  transform: translateY(-1px);
+}
+
+.nav-link-logout {
+  transition: var(--transition);
+}
+
+.nav-link-logout:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.16) !important;
+  border-color: rgba(239, 68, 68, 0.4) !important;
+  color: #fca5a5 !important;
+}
+
 /* Mobile Header */
 .mobile-header {
   display: none;
@@ -267,7 +310,11 @@ h2 { font-size: 1.5rem; font-weight: 700; color: var(--primary-color); }
 }
 
 @media (max-width: 767px) {
-  /* Hide desktop sidebar on mobile */
+  /* Hide desktop header & sidebar on mobile */
+  .desktop-header {
+    display: none !important;
+  }
+
   .sidebar {
     display: none !important;
   }

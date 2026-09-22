@@ -8,9 +8,15 @@ interface UserContextType {
   user: User | null;
   role: 'admin' | 'viewer' | 'sales' | 'client' | null;
   loading: boolean;
+  logout: () => Promise<void>;
 }
 
-const UserContext = createContext<UserContextType>({ user: null, role: null, loading: true });
+const UserContext = createContext<UserContextType>({
+  user: null,
+  role: null,
+  loading: true,
+  logout: async () => {},
+});
 
 export function UserProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -84,8 +90,28 @@ export function UserProvider({ children }: { children: ReactNode }) {
 
 
 
+  async function logout() {
+    try {
+      await supabase.auth.signOut();
+    } catch (err) {
+      console.error('Error al cerrar sesión en Supabase:', err);
+    } finally {
+      try {
+        if (typeof window !== 'undefined') {
+          localStorage.clear();
+          sessionStorage.clear();
+        }
+      } catch (storageErr) {
+        console.warn('Error al limpiar almacenamiento:', storageErr);
+      }
+      if (typeof window !== 'undefined') {
+        window.location.href = '/login';
+      }
+    }
+  }
+
   return (
-    <UserContext.Provider value={{ user, role, loading }}>
+    <UserContext.Provider value={{ user, role, loading, logout }}>
       {children}
     </UserContext.Provider>
   );
