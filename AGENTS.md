@@ -8,9 +8,15 @@
    - **WhatsApp (Baileys)**: Activo localmente en `src/lib/whatsapp/whatsappService.js` con sesión vinculada en `baileys_auth_info/`. Capaz de enviar mensajes directos y PDFs a números como `04125007089` instantáneamente.
    - **Impresión / Reportes**: Disparo directo con `window.print()` sin modales bloqueantes, utilizando `#printable-tracking-report-root` y `@media print`.
    - **Seguimiento & Anteproyectos**: Módulos completos con tabla `project_tasks`, barra segmentada de 3 estados y auto-importación de partidas.
+   - **Obras y Expedientes de Clientes (`administracion_y_obras/`)**:
+     * `TH-69 (WILSON)`: Recibos, presupuestos y control de Wilson.
+     * `TH-26 (ZULLY)`: Reportes de socios, balances y expedientes de Zully Marrero.
+     * `LOCAL_EL_HATILLO`: Expedientes y cómputos de obra.
+     * Calculadoras maestras en Excel y tabuladores de precios.
+     * Puedes consultar y actualizar estos expedientes con total libertad cuando Henry te lo solicite.
 6. **PREFIJOS DE CONTEXTO**: El usuario usará palabras clave al inicio para definir el entorno de trabajo:
    - **"En el Sistema:"** o **"En la App:"** -> Modificar código en `src/`, Base de Datos y pruebas locales.
-   - **"En Drive:"** o **"Archivos locales:"** -> Operar sobre archivos en el disco duro o carpetas de Drive locales.
+   - **"En Obras / Administración:"** o **"Archivos locales:"** -> Operar sobre `administracion_y_obras/` (Wilson, Zully, planillas).
    - **"En WhatsApp / Telegram:"** -> Accionar los servicios de mensajería locales.
    - **"Solo consulta / Investiga:"** -> Proveer respuestas o buscar info sin tocar código.
 7. **DELEGACIÓN POR DEFECTO (CERO ESPERA)**: Tú (el agente principal) actúas como el Director/Coordinador. Para **CUALQUIER** tarea operativa que te pida el usuario (ej. "registra un gasto", "crea un archivo", "modifica la base de datos", "registra un pago"):

@@ -4,6 +4,7 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import { getPepeSystemKnowledge } from '@/lib/pepe/systemKnowledge';
 import { supabaseAdmin } from '@/lib/supabase-admin';
 import { processTelegramAgentMessage, ClientProjectContext, TelegramChatMessageItem } from '@/lib/telegram-ai';
+import { WEB_PEPE_SESSION_CHAT_ID } from '@/lib/pepe/pepeMemory';
 
 export interface ChatMessage {
   role: 'user' | 'model';
@@ -98,15 +99,26 @@ TAMBIÉN incluye al inicio un bloque JSON (antes del texto de la propuesta):
 </JSON_DATA>`;
 
 const FALLBACK_MODELS = [
-  'gemini-3.1-pro-preview',
-  'gemini-3.7-flash',
   'gemini-3.6-flash',
+  'gemini-flash-latest',
   'gemini-3.5-flash',
-  'gemini-flash-latest'
+  'gemini-3.7-flash'
 ];
 
 async function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, desc: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`Timeout de ${ms}ms superado en modelo ${desc}`));
+    }, ms);
+    promise.then(
+      (res) => { clearTimeout(timer); resolve(res); },
+      (err) => { clearTimeout(timer); reject(err); }
+    );
+  });
 }
 
 async function callGeminiWithFallback<T>(
@@ -119,8 +131,14 @@ async function callGeminiWithFallback<T>(
   for (const modelName of FALLBACK_MODELS) {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        const model = genAI.getGenerativeModel({ model: modelName });
-        return await fn(model, modelName);
+        const model = genAI.getGenerativeModel({
+          model: modelName,
+          generationConfig: {
+            temperature: 0.2,
+            maxOutputTokens: 1500
+          }
+        });
+        return await withTimeout(fn(model, modelName), 12000, modelName);
       } catch (error: any) {
         lastError = error;
         const msg = error?.message || String(error);
@@ -129,7 +147,8 @@ async function callGeminiWithFallback<T>(
           msg.includes('429') ||
           msg.includes('UNAVAILABLE') ||
           msg.includes('high demand') ||
-          msg.includes('RESOURCE_EXHAUSTED');
+          msg.includes('RESOURCE_EXHAUSTED') ||
+          msg.includes('Timeout');
 
         console.warn(`[Gemini Fallback] Error en modelo ${modelName} (intento ${attempt + 1}):`, msg);
 
@@ -194,7 +213,7 @@ export async function sendChatMessage(messages: ChatMessage[]): Promise<{
       lastMessage,
       context,
       undefined, // imageBase64
-      0,         // chatId (0 para interfaz web/móvil)
+      WEB_PEPE_SESSION_CHAT_ID, // chatId (Web/Móvil con memoria persistente)
       'Usuario App P&P',
       true,      // isAdmin: acceso completo a operaciones
       chatHistory

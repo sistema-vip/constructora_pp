@@ -3,7 +3,12 @@ import { supabaseAdmin } from '@/lib/supabase-admin';
 // In-memory cache to avoid repeated DB roundtrips on rapid chat messages
 let cachedKnowledge: string | null = null;
 let lastCacheTime = 0;
-const CACHE_TTL_MS = 20_000; // 20 segundos de caché en memoria
+const CACHE_TTL_MS = 120_000; // 2 minutos de caché en memoria
+
+export function invalidatePepeSystemKnowledge(): void {
+  cachedKnowledge = null;
+  lastCacheTime = 0;
+}
 
 export async function getPepeSystemKnowledge(forceRefresh: boolean = false): Promise<string> {
   const now = Date.now();

@@ -19,20 +19,37 @@ import {
   deleteLearnedSkill
 } from './agent-learning';
 import { getPepeSystemKnowledge } from './pepe/systemKnowledge';
+import {
+  WEB_PEPE_SESSION_CHAT_ID,
+  getPepeSessionMemory,
+  savePepeSessionMemory,
+  PepeMemoryMessage
+} from './pepe/pepeMemory';
 
 const apiKey = process.env.GEMINI_API_KEY || '';
 const genAI = apiKey ? new GoogleGenerativeAI(apiKey) : null;
 
 export const ACTIVE_GEMINI_MODELS = [
-  'gemini-3.1-pro-preview',
-  'gemini-3.7-flash',
   'gemini-3.6-flash',
+  'gemini-flash-latest',
   'gemini-3.5-flash',
-  'gemini-flash-latest'
+  'gemini-3.7-flash'
 ];
 
 async function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, desc: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`Timeout de ${ms}ms superado en modelo ${desc}`));
+    }, ms);
+    promise.then(
+      (res) => { clearTimeout(timer); resolve(res); },
+      (err) => { clearTimeout(timer); reject(err); }
+    );
+  });
 }
 
 /**
@@ -50,8 +67,14 @@ export async function callGeminiResilient<T>(
   for (const modelName of models) {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        const model = genAI.getGenerativeModel({ model: modelName });
-        return await fn(model, modelName);
+        const model = genAI.getGenerativeModel({
+          model: modelName,
+          generationConfig: {
+            temperature: 0.2,
+            maxOutputTokens: 1200
+          }
+        });
+        return await withTimeout(fn(model, modelName), 12000, modelName);
       } catch (err: any) {
         lastError = err;
         const msg = err?.message || String(err);
@@ -61,12 +84,13 @@ export async function callGeminiResilient<T>(
           msg.includes('UNAVAILABLE') ||
           msg.includes('high demand') ||
           msg.includes('RESOURCE_EXHAUSTED') ||
-          msg.includes('overloaded');
+          msg.includes('overloaded') ||
+          msg.includes('Timeout');
 
         console.warn(`[Gemini Resilient] Error en ${modelName} (intento ${attempt + 1}):`, msg);
 
         if (isTransient && attempt === 0) {
-          await sleep(600);
+          await sleep(500);
           continue;
         }
         break;
@@ -108,17 +132,36 @@ export async function saveTelegramChatMessage(
   actionTaken?: string,
   recordId?: string
 ): Promise<void> {
-  if (!telegramChatId || !messageText) return;
+  const chatId = telegramChatId || WEB_PEPE_SESSION_CHAT_ID;
+  if (!messageText) return;
+
   try {
-    await supabaseAdmin.from('telegram_chat_history').insert({
-      telegram_chat_id: telegramChatId,
+    const { error } = await supabaseAdmin.from('telegram_chat_history').insert({
+      telegram_chat_id: chatId,
       role,
       message_text: messageText,
       action_taken: actionTaken || null,
       record_id: recordId || null
     });
+    if (!error) return;
+  } catch {
+    // Si la tabla no existe en BD, persistimos en telegram_sessions
+  }
+
+  try {
+    const mem = await getPepeSessionMemory(chatId);
+    const newMsg: PepeMemoryMessage = {
+      role: role === 'user' ? 'user' : 'model',
+      text: messageText,
+      timestamp: new Date().toISOString(),
+      actionTaken
+    };
+    await savePepeSessionMemory(chatId, {
+      recentMessages: [...mem.recentMessages, newMsg],
+      lastActionTaken: actionTaken || mem.lastActionTaken
+    });
   } catch (err: any) {
-    console.error('Error saving telegram chat message to history:', err);
+    console.warn('[saveTelegramChatMessage] Error persistiendo en memoria:', err?.message || err);
   }
 }
 
@@ -126,21 +169,37 @@ export async function getTelegramChatHistory(
   telegramChatId: number,
   limit: number = 8
 ): Promise<TelegramChatMessageItem[]> {
-  if (!telegramChatId) return [];
+  const chatId = telegramChatId || WEB_PEPE_SESSION_CHAT_ID;
   try {
     const { data, error } = await supabaseAdmin
       .from('telegram_chat_history')
       .select('role, message_text, action_taken, record_id, created_at')
-      .eq('telegram_chat_id', telegramChatId)
+      .eq('telegram_chat_id', chatId)
       .order('created_at', { ascending: false })
       .limit(limit);
 
-    if (error || !data) return [];
-    return data.reverse();
-  } catch (err: any) {
-    console.error('Error fetching telegram chat history:', err);
-    return [];
+    if (!error && data && data.length > 0) {
+      return data.reverse();
+    }
+  } catch {
+    // Si la tabla no existe, leer de pepeMemory
   }
+
+  try {
+    const mem = await getPepeSessionMemory(chatId);
+    if (mem.recentMessages && mem.recentMessages.length > 0) {
+      return mem.recentMessages.slice(-limit).map(m => ({
+        role: m.role === 'user' ? 'user' : 'assistant',
+        message_text: m.text,
+        action_taken: m.actionTaken,
+        created_at: m.timestamp || new Date().toISOString()
+      }));
+    }
+  } catch (err: any) {
+    console.warn('[getTelegramChatHistory] Error leyendo memoria de sesión:', err?.message || err);
+  }
+
+  return [];
 }
 
 export interface PendingDraftData {
@@ -268,11 +327,8 @@ ${formattedHistory}
 ── AUDITORÍA HISTÓRICA DEL SISTEMA (REGISTROS VIEJOS YA GUARDADOS EN BD - SOLO CONSULTAS INFORMATIVAS) ──
 ${formattedActivity}
 
-── CONTEXTO DE CLIENTES Y OBRAS EN EL SISTEMA (usa los IDs exactos para projectId y client_id) ──
-${clienteName}
-
-Full context:
-${JSON.stringify(context, null, 2)}
+── ÍNDICE DE CLIENTES Y OBRAS ACTIVAS (usa los IDs exactos para projectId y client_id) ──
+${context.map(c => `• ${c.name} [ID: ${c.id}] -> Obras: ${c.projects.length > 0 ? c.projects.map(p => `"${p.title}" [ID: ${p.id}]`).join(', ') : 'Sin obras activas'}`).join('\n')}
 
 ══════════════════════════════════════════════════════════════════════════════
 REGLAS CRÍTICAS DE PRELACIÓN: FACTURA PENDIENTE EN CHAT vs REGISTROS VIEJOS

@@ -442,6 +442,13 @@ export default function ProjectDashboard() {
   const estimatedProfit = totalBudget - totalCosts - totalPayablesPending;
   const netProfit = estimatedProfit - totalAdvances;
 
+  // Cálculos de Liquidez en Caja y Ejecutivos
+  const cashLiquidity = totalPaid - totalCosts - totalAdvances;
+  const netCashAfterPayables = cashLiquidity - totalPayablesPending;
+  const collectedPct = totalBudget > 0 ? Math.min(100, Math.round((totalPaid / totalBudget) * 100)) : 0;
+  const henryAdvances = advances.filter(a => /henry/i.test(a.partner_name || '')).reduce((sum, a) => sum + (Number(a.amount_usd) || 0), 0);
+  const losbersAdvances = advances.filter(a => /losber/i.test(a.partner_name || '')).reduce((sum, a) => sum + (Number(a.amount_usd) || 0), 0);
+
   // Partner advances calculation
   const partnerAdvances: { [key: string]: number } = {};
   advances.forEach(a => {
@@ -1095,112 +1102,121 @@ export default function ProjectDashboard() {
         </div>
         </div>
         
-        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
-          <button
-            className="btn-secondary"
-            onClick={() => {
-              const safeClientName = (project.clients?.name || 'cliente').replace(/[^a-zA-Z0-9]/g, '_');
-              setShareModalConfig({
-                isOpen: true,
-                title: `Propuesta #${project.proposal_number || ''} - ${project.title}`,
-                subtitle: `Cliente: ${project.clients?.name || 'N/A'} • Presupuesto: $${formatCurrency(project.budget_usd)}`,
-                fileName: `Propuesta_${project.proposal_number || 'draft'}_${safeClientName}.pdf`,
-                pdfUrl: `/api/proyectos/${project.id}/pdf`
-              });
-            }}
-            title="Descargar o Compartir Propuesta en PDF"
-            style={{ padding: '0.65rem 1.1rem', display: 'flex', gap: '0.4rem', alignItems: 'center', background: 'var(--surface-color)', border: '1px solid var(--border-color)', fontSize: '0.85rem' }}
-          >
-            <Share2 size={16} /> Propuesta PDF
-          </button>
-          <button
-            className="btn-primary"
-            onClick={() => {
-              setPrintSelectionMode('client-statement');
-              setShowPrintSelectionModal(true);
-            }}
-            title="Descargar o Compartir Estado de Cuenta para el Cliente"
-            style={{ padding: '0.65rem 1.2rem', display: 'flex', gap: '0.4rem', alignItems: 'center', fontSize: '0.85rem', fontWeight: 600, boxShadow: '0 4px 12px rgba(245,158,11,0.2)' }}
-          >
-            <Share2 size={16} /> Estado de Cuenta
-          </button>
-          <button
-            className="btn-secondary"
-            onClick={() => {
-              setPrintSelectionMode('partner-report');
-              setShowPrintSelectionModal(true);
-            }}
-            title="Descargar o Compartir Reporte Financiero de Socios"
-            style={{ padding: '0.65rem 1.1rem', display: 'flex', gap: '0.4rem', alignItems: 'center', background: 'rgba(139, 92, 246, 0.1)', borderColor: 'rgba(139, 92, 246, 0.3)', color: '#c4b5fd', fontSize: '0.85rem', fontWeight: 600 }}
-          >
-            <BarChart3 size={16} /> Reporte Socios
-          </button>
-          {project.status === 'in_progress' && (
-            <>
-              <button
-                className="btn-primary"
-                onClick={() => setShowCloseConfirm(true)}
-                title="Cerrar proyecto"
-                style={{ padding: '0.75rem 1.5rem', display: 'flex', gap: '0.5rem', alignItems: 'center', background: 'var(--success)', borderColor: 'var(--success)' }}
-              >
-                <CheckCircle size={18} /> Cerrar Proyecto
-              </button>
-              {!isViewer && (
-                <button
-                  className="btn-secondary"
-                  onClick={() => {
-                    setAdminActionType('revert');
-                    setShowAdminAuth(true);
-                    setAdminPassword('');
-                    setAuthError('');
-                  }}
-                  title="Retornar a Propuesta (requiere clave admin)"
-                  style={{ padding: '0.75rem 1.5rem', display: 'flex', gap: '0.5rem', alignItems: 'center', color: '#ffcc00', borderColor: '#ffcc00' }}
-                >
-                  <RotateCcw size={18} /> Retornar a Propuesta
-                </button>
-              )}
-            </>
-          )}
-          {project.status === 'proposal' && !isViewer && (
-            <>
-              <button
-                className="btn-primary"
-                onClick={() => {
-                  setAdminActionType('approve_proposal');
-                  setShowAdminAuth(true);
-                  setAdminPassword('');
-                  setAuthError('');
-                }}
-                title="Aprobar Propuesta (requiere clave admin)"
-                style={{ padding: '0.75rem 1.5rem', display: 'flex', gap: '0.5rem', alignItems: 'center', background: 'var(--success)', borderColor: 'var(--success)' }}
-              >
-                <Check size={18} /> Aprobar Propuesta
-              </button>
-              <button
-                className="btn-secondary"
-                onClick={() => {
-                  setAdminActionType('reject_proposal');
-                  setShowAdminAuth(true);
-                  setAdminPassword('');
-                  setAuthError('');
-                }}
-                title="Rechazar Propuesta (requiere clave admin)"
-                style={{ padding: '0.75rem 1.5rem', display: 'flex', gap: '0.5rem', alignItems: 'center', color: '#ffcc00', borderColor: '#ffcc00' }}
-              >
-                <Ban size={18} /> Rechazar Propuesta
-              </button>
-            </>
-          )}
-          {project.status === 'completed' && !project.archived_at && (
+        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
+          {/* Grupo de Reportes y Documentos */}
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
             <button
               className="btn-secondary"
-              onClick={() => setShowArchiveConfirm(true)}
-              title="Archivar proyecto"
-              style={{ padding: '0.75rem 1.5rem', display: 'flex', gap: '0.5rem', alignItems: 'center' }}
+              onClick={() => {
+                const safeClientName = (project.clients?.name || 'cliente').replace(/[^a-zA-Z0-9]/g, '_');
+                setShareModalConfig({
+                  isOpen: true,
+                  title: `Propuesta #${project.proposal_number || ''} - ${project.title}`,
+                  subtitle: `Cliente: ${project.clients?.name || 'N/A'} • Presupuesto: $${formatCurrency(project.budget_usd)}`,
+                  fileName: `Propuesta_${project.proposal_number || 'draft'}_${safeClientName}.pdf`,
+                  pdfUrl: `/api/proyectos/${project.id}/pdf`
+                });
+              }}
+              title="Descargar o Compartir Propuesta en PDF"
+              style={{ padding: '0.65rem 1.1rem', display: 'flex', gap: '0.4rem', alignItems: 'center', background: 'var(--surface-color)', border: '1px solid var(--border-color)', fontSize: '0.85rem' }}
             >
-              <Archive size={18} /> Archivar
+              <Share2 size={16} /> Propuesta PDF
             </button>
+            <button
+              className="btn-primary"
+              onClick={() => {
+                setPrintSelectionMode('client-statement');
+                setShowPrintSelectionModal(true);
+              }}
+              title="Descargar o Compartir Estado de Cuenta para el Cliente"
+              style={{ padding: '0.65rem 1.2rem', display: 'flex', gap: '0.4rem', alignItems: 'center', fontSize: '0.85rem', fontWeight: 600, boxShadow: '0 4px 12px rgba(245,158,11,0.2)' }}
+            >
+              <Share2 size={16} /> Estado de Cuenta
+            </button>
+            <button
+              className="btn-secondary"
+              onClick={() => {
+                setPrintSelectionMode('partner-report');
+                setShowPrintSelectionModal(true);
+              }}
+              title="Descargar o Compartir Reporte Financiero de Socios"
+              style={{ padding: '0.65rem 1.1rem', display: 'flex', gap: '0.4rem', alignItems: 'center', background: 'rgba(139, 92, 246, 0.1)', borderColor: 'rgba(139, 92, 246, 0.3)', color: '#c4b5fd', fontSize: '0.85rem', fontWeight: 600 }}
+            >
+              <BarChart3 size={16} /> Reporte Socios
+            </button>
+          </div>
+
+          {/* Grupo de Acciones del Proyecto */}
+          {(project.status === 'in_progress' || project.status === 'proposal' || (project.status === 'completed' && !project.archived_at)) && (
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+              {project.status === 'in_progress' && (
+                <>
+                  <button
+                    className="btn-primary"
+                    onClick={() => setShowCloseConfirm(true)}
+                    title="Cerrar proyecto"
+                    style={{ padding: '0.65rem 1.2rem', display: 'flex', gap: '0.5rem', alignItems: 'center', background: 'var(--success)', borderColor: 'var(--success)', fontSize: '0.85rem' }}
+                  >
+                    <CheckCircle size={17} /> Cerrar Proyecto
+                  </button>
+                  {!isViewer && (
+                    <button
+                      className="btn-secondary"
+                      onClick={() => {
+                        setAdminActionType('revert');
+                        setShowAdminAuth(true);
+                        setAdminPassword('');
+                        setAuthError('');
+                      }}
+                      title="Retornar a Propuesta (requiere clave admin)"
+                      style={{ padding: '0.65rem 1.1rem', display: 'flex', gap: '0.5rem', alignItems: 'center', color: '#ffcc00', borderColor: '#ffcc00', fontSize: '0.85rem' }}
+                    >
+                      <RotateCcw size={17} /> Retornar a Propuesta
+                    </button>
+                  )}
+                </>
+              )}
+              {project.status === 'proposal' && !isViewer && (
+                <>
+                  <button
+                    className="btn-primary"
+                    onClick={() => {
+                      setAdminActionType('approve_proposal');
+                      setShowAdminAuth(true);
+                      setAdminPassword('');
+                      setAuthError('');
+                    }}
+                    title="Aprobar Propuesta (requiere clave admin)"
+                    style={{ padding: '0.65rem 1.2rem', display: 'flex', gap: '0.5rem', alignItems: 'center', background: 'var(--success)', borderColor: 'var(--success)', fontSize: '0.85rem' }}
+                  >
+                    <Check size={17} /> Aprobar Propuesta
+                  </button>
+                  <button
+                    className="btn-secondary"
+                    onClick={() => {
+                      setAdminActionType('reject_proposal');
+                      setShowAdminAuth(true);
+                      setAdminPassword('');
+                      setAuthError('');
+                    }}
+                    title="Rechazar Propuesta (requiere clave admin)"
+                    style={{ padding: '0.65rem 1.1rem', display: 'flex', gap: '0.5rem', alignItems: 'center', color: '#ffcc00', borderColor: '#ffcc00', fontSize: '0.85rem' }}
+                  >
+                    <Ban size={17} /> Rechazar Propuesta
+                  </button>
+                </>
+              )}
+              {project.status === 'completed' && !project.archived_at && (
+                <button
+                  className="btn-secondary"
+                  onClick={() => setShowArchiveConfirm(true)}
+                  title="Archivar proyecto"
+                  style={{ padding: '0.65rem 1.1rem', display: 'flex', gap: '0.5rem', alignItems: 'center', fontSize: '0.85rem' }}
+                >
+                  <Archive size={17} /> Archivar
+                </button>
+              )}
+            </div>
           )}
         </div>
       </div>
@@ -1281,93 +1297,144 @@ export default function ProjectDashboard() {
         </div>
       )}
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '1.25rem' }}>
-        {/* 1. MONTO DEL PROYECTO */}
-        <div className="card" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.4rem', background: 'linear-gradient(145deg, rgba(255,255,255,0.03) 0%, rgba(0,0,0,0) 100%)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-muted)', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            <DollarSign size={14} /> <span>Monto del Proyecto</span>
+      {/* SECCIÓN DE MÉTRICAS EJECUTIVAS Y CONTROL (2 FILAS) */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+        {/* Fila 1 (Hero - 4 tarjetas destacadas) */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '1.25rem' }}>
+          {/* 1. MONTO DEL PROYECTO */}
+          <div className="card" style={{ padding: '1.35rem', display: 'flex', flexDirection: 'column', gap: '0.4rem', background: 'linear-gradient(145deg, rgba(255,255,255,0.03) 0%, rgba(0,0,0,0) 100%)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-muted)', fontSize: '0.82rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              <DollarSign size={15} /> <span>Monto del Proyecto</span>
+            </div>
+            <div style={{ fontSize: '2rem', fontWeight: 800, color: 'white', letterSpacing: '-0.02em' }}>
+              ${totalBudget.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Contrato + Adicionales</div>
           </div>
-          <div style={{ fontSize: '1.8rem', fontWeight: 800, color: 'white' }}>
-            ${totalBudget.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+
+          {/* 2. TOTAL COBRADO (con badge de porcentaje cobrado) */}
+          <div className="card" style={{ padding: '1.35rem', display: 'flex', flexDirection: 'column', gap: '0.4rem', background: 'linear-gradient(145deg, rgba(16,185,129,0.06) 0%, rgba(0,0,0,0) 100%)', borderColor: 'rgba(16,185,129,0.25)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--success)', fontSize: '0.82rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                <TrendingUp size={15} /> <span>Total Cobrado</span>
+              </div>
+              <span className="badge" style={{ background: 'rgba(16, 185, 129, 0.15)', color: '#34d399', fontSize: '0.72rem', fontWeight: 700, padding: '0.15rem 0.5rem', borderRadius: '4px', border: '1px solid rgba(16, 185, 129, 0.3)' }}>
+                {collectedPct}% cobrado
+              </span>
+            </div>
+            <div style={{ fontSize: '2rem', fontWeight: 800, color: 'var(--success)', letterSpacing: '-0.02em' }}>
+              ${totalPaid.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Pagos recibidos</div>
           </div>
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Contrato + Adicionales</div>
+
+          {/* 3. SALDO PENDIENTE */}
+          <div className="card" style={{ padding: '1.35rem', display: 'flex', flexDirection: 'column', gap: '0.4rem', background: 'linear-gradient(145deg, rgba(245,158,11,0.08) 0%, rgba(0,0,0,0) 100%)', borderColor: 'rgba(245,158,11,0.35)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--primary-color)', fontSize: '0.82rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              <Wallet size={15} /> <span style={{ fontWeight: 700 }}>Saldo Pendiente</span>
+            </div>
+            <div style={{ fontSize: '2rem', fontWeight: 800, color: 'var(--primary-color)', letterSpacing: '-0.02em' }}>
+              ${balanceDue.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Por cobrar al cliente</div>
+          </div>
+
+          {/* 4. 💰 SALDO EN CAJA LÍQUIDO (Hero destacada) */}
+          <div 
+            className="card" 
+            style={{ 
+              padding: '1.35rem', 
+              display: 'flex', 
+              flexDirection: 'column', 
+              gap: '0.4rem', 
+              background: cashLiquidity >= 0 
+                ? 'linear-gradient(145deg, rgba(16,185,129,0.12) 0%, rgba(6,78,59,0.08) 100%)' 
+                : 'linear-gradient(145deg, rgba(239,68,68,0.12) 0%, rgba(127,29,29,0.08) 100%)', 
+              borderColor: cashLiquidity >= 0 ? 'rgba(16, 185, 129, 0.45)' : 'rgba(239, 68, 68, 0.45)',
+              borderWidth: '2px',
+              position: 'relative',
+              boxShadow: cashLiquidity >= 0 ? '0 4px 20px rgba(16, 185, 129, 0.12)' : '0 4px 20px rgba(239, 68, 68, 0.12)'
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: cashLiquidity >= 0 ? '#34d399' : '#f87171', fontSize: '0.82rem', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 700 }}>
+                <span>💰</span> <span>Saldo en Caja Líquido</span>
+              </div>
+              <span 
+                className="badge" 
+                style={{ 
+                  background: netCashAfterPayables >= 0 ? 'rgba(16, 185, 129, 0.2)' : 'rgba(239, 68, 68, 0.2)', 
+                  color: netCashAfterPayables >= 0 ? '#6ee7b7' : '#fca5a5', 
+                  border: `1px solid ${netCashAfterPayables >= 0 ? 'rgba(16, 185, 129, 0.35)' : 'rgba(239, 68, 68, 0.35)'}`,
+                  fontSize: '0.72rem', 
+                  fontWeight: 700, 
+                  padding: '0.15rem 0.5rem',
+                  borderRadius: '4px',
+                  whiteSpace: 'nowrap'
+                }}
+                title="Flujo neto proyectado una vez canceladas las cuentas por pagar pendientes"
+              >
+                Tras CxP: ${netCashAfterPayables.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
+            </div>
+            <div style={{ fontSize: '2rem', fontWeight: 800, color: cashLiquidity >= 0 ? '#10b981' : '#ef4444', letterSpacing: '-0.02em' }}>
+              ${cashLiquidity.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+              Total Cobrado − Gastos − Retiros
+            </div>
+          </div>
         </div>
 
-        {/* 2. TOTAL COBRADO */}
-        <div className="card" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.4rem', background: 'linear-gradient(145deg, rgba(16,185,129,0.05) 0%, rgba(0,0,0,0) 100%)', borderColor: 'rgba(16,185,129,0.25)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--success)', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            <TrendingUp size={14} /> <span>Total Cobrado</span>
+        {/* Fila 2 (Control Operativo y Rentabilidad - 4 tarjetas compactas) */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem' }}>
+          {/* 1. COSTOS TOTALES */}
+          <div className="card" style={{ padding: '1.15rem', display: 'flex', flexDirection: 'column', gap: '0.35rem', background: 'linear-gradient(145deg, rgba(239,68,68,0.06) 0%, rgba(0,0,0,0) 100%)', borderColor: 'rgba(239,68,68,0.3)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--danger)', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              <TrendingDown size={14} /> <span>Costos Totales</span>
+            </div>
+            <div style={{ fontSize: '1.6rem', fontWeight: 800, color: 'var(--danger)' }}>
+              ${totalCosts.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </div>
+            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Gastos de Obra registrados</div>
           </div>
-          <div style={{ fontSize: '1.8rem', fontWeight: 800, color: 'var(--success)' }}>
-            ${totalPaid.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-          </div>
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Pagos recibidos</div>
-        </div>
 
-        {/* 3. SALDO PENDIENTE */}
-        <div className="card" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.4rem', background: 'linear-gradient(145deg, rgba(245,158,11,0.08) 0%, rgba(0,0,0,0) 100%)', borderColor: 'rgba(245,158,11,0.35)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--primary-color)', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            <Wallet size={14} /> <span style={{ fontWeight: 700 }}>Saldo Pendiente</span>
+          {/* 2. CUENTAS POR PAGAR */}
+          <div className="card" style={{ padding: '1.15rem', display: 'flex', flexDirection: 'column', gap: '0.35rem', background: 'linear-gradient(145deg, rgba(245,158,11,0.06) 0%, rgba(0,0,0,0) 100%)', borderColor: 'rgba(245,158,11,0.35)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--primary-color)', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              <AlertCircle size={14} /> <span>Cuentas por Pagar</span>
+            </div>
+            <div style={{ fontSize: '1.6rem', fontWeight: 800, color: 'white' }}>
+              ${totalPayablesPending.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </div>
+            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>CxP pendientes a proveedores</div>
           </div>
-          <div style={{ fontSize: '1.8rem', fontWeight: 800, color: 'var(--primary-color)' }}>
-            ${balanceDue.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-          </div>
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Por cobrar al cliente</div>
-        </div>
 
-        {/* 4. COSTOS TOTALES */}
-        <div className="card" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.4rem', background: 'linear-gradient(145deg, rgba(239,68,68,0.08) 0%, rgba(0,0,0,0) 100%)', borderColor: 'rgba(239,68,68,0.35)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--danger)', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            <TrendingDown size={14} /> <span>Costos Totales</span>
+          {/* 3. GANANCIA FINAL DE OBRA */}
+          <div className="card" style={{ padding: '1.15rem', display: 'flex', flexDirection: 'column', gap: '0.35rem', background: 'linear-gradient(145deg, rgba(16,185,129,0.06) 0%, rgba(0,0,0,0) 100%)', borderColor: 'rgba(16,185,129,0.35)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--success)', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              <TrendingUp size={14} /> <span style={{ fontWeight: 700 }}>Ganancia Final de Obra</span>
+            </div>
+            <div style={{ fontSize: '1.6rem', fontWeight: 800, color: 'white' }}>
+              ${estimatedProfit.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </div>
+            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Monto − Gastos − Cuentas por Pagar</div>
           </div>
-          <div style={{ fontSize: '1.8rem', fontWeight: 800, color: 'var(--danger)' }}>
-            ${totalCosts.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-          </div>
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Gastos registrados</div>
-        </div>
 
-        {/* 5. CUENTAS POR PAGAR */}
-        <div className="card" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.4rem', background: 'linear-gradient(145deg, rgba(245,158,11,0.08) 0%, rgba(0,0,0,0) 100%)', borderColor: 'rgba(245,158,11,0.45)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--primary-color)', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            <AlertCircle size={14} /> <span>Cuentas por Pagar</span>
+          {/* 4. RETIRO DE SOCIOS (con detalle Henry / Losbers) */}
+          <div className="card" style={{ padding: '1.15rem', display: 'flex', flexDirection: 'column', gap: '0.35rem', background: 'linear-gradient(145deg, rgba(139,92,246,0.06) 0%, rgba(0,0,0,0) 100%)', borderColor: 'rgba(139,92,246,0.35)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#a78bfa', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              <Users size={14} /> <span style={{ fontWeight: 700 }}>Retiro de Socios</span>
+            </div>
+            <div style={{ fontSize: '1.6rem', fontWeight: 800, color: 'white' }}>
+              ${totalAdvances.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </div>
+            <div style={{ fontSize: '0.72rem', color: '#c4b5fd', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }} title={`Henry: $${henryAdvances.toLocaleString('es-VE', { minimumFractionDigits: 2 })} | Losbers: $${losbersAdvances.toLocaleString('es-VE', { minimumFractionDigits: 2 })}`}>
+              <span>H: ${henryAdvances.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              <span>•</span>
+              <span>L: ${losbersAdvances.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+            </div>
           </div>
-          <div style={{ fontSize: '1.8rem', fontWeight: 800, color: 'white' }}>
-            ${totalPayablesPending.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-          </div>
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Deudas pendientes</div>
-        </div>
-
-        {/* 6. GANANCIA FINAL */}
-        <div className="card" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.4rem', background: 'linear-gradient(145deg, rgba(16,185,129,0.08) 0%, rgba(0,0,0,0) 100%)', borderColor: 'rgba(16,185,129,0.4)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--success)', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            <TrendingUp size={14} /> <span style={{ fontWeight: 700 }}>Ganancia Final</span>
-          </div>
-          <div style={{ fontSize: '1.8rem', fontWeight: 800, color: 'white' }}>
-            ${estimatedProfit.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-          </div>
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Monto − Gastos − Cuentas por Pagar</div>
-        </div>
-
-        {/* 7. RETIRO DE SOCIOS */}
-        <div className="card" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.4rem', background: 'linear-gradient(145deg, rgba(139,92,246,0.08) 0%, rgba(0,0,0,0) 100%)', borderColor: 'rgba(139,92,246,0.4)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#8b5cf6', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            <Users size={14} /> <span style={{ fontWeight: 700 }}>Retiro de Socios</span>
-          </div>
-          <div style={{ fontSize: '1.8rem', fontWeight: 800, color: 'white' }}>
-            ${totalAdvances.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-          </div>
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Adelantos entregados</div>
-        </div>
-
-        {/* 8. GANANCIA DISPONIBLE */}
-        <div className="card" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.4rem', background: 'linear-gradient(145deg, rgba(139,92,246,0.12) 0%, rgba(0,0,0,0) 100%)', borderColor: 'rgba(139,92,246,0.6)', borderWidth: '2px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#a78bfa', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            <TrendingUp size={14} /> <span style={{ fontWeight: 700 }}>Ganancia Disponible</span>
-          </div>
-          <div style={{ fontSize: '1.8rem', fontWeight: 800, color: 'white' }}>
-            ${netProfit.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-          </div>
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Ganancia Final − Retiros</div>
         </div>
       </div>
 

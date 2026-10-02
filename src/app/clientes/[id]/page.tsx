@@ -1251,6 +1251,13 @@ export default function ClienteDashboard() {
   const estimatedProfit = totalContracted - totalCostsValue - totalCommitted;
   const netProfit = estimatedProfit - totalAdvances;
   const estimatedMargin = totalContracted > 0 ? (estimatedProfit / totalContracted) * 100 : 0;
+
+  // Métricas ejecutivas y liquidez de caja
+  const cashLiquidity = totalPaid - totalCostsValue - totalAdvances;
+  const netCashAfterPayables = cashLiquidity - totalCommitted;
+  const collectedPct = totalContracted > 0 ? Math.min(100, Math.round((totalPaid / totalContracted) * 100)) : 0;
+  const henryAdvances = allAdvances.filter((a: any) => /henry/i.test(a.partner_name || '')).reduce((s: number, a: any) => s + Number(a.amount_usd || 0), 0);
+  const losbersAdvances = allAdvances.filter((a: any) => /losber/i.test(a.partner_name || '')).reduce((s: number, a: any) => s + Number(a.amount_usd || 0), 0);
   
   const totalPagado = projects.reduce((sum, p) => sum + (p.project_payments?.reduce((s: any, pm: any) => s + (Number(pm.amount_usd) || 0), 0) || 0), 0);
 
@@ -1448,77 +1455,145 @@ export default function ClienteDashboard() {
         />
       )}
 
-      {/* Estado de Cuenta Global y Rentabilidad del Cliente */}
+      {/* Estado de Cuenta Global y Rentabilidad del Cliente (2 FILAS) */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-        
-        {/* Fila 1: Indicadores Principales (Contratos y Pagos) */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1.25rem' }}>
-          <div className="card" style={{ padding: '1.5rem', background: 'linear-gradient(145deg, rgba(255,255,255,0.03) 0%, rgba(0,0,0,0) 100%)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-muted)', marginBottom: '0.75rem', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              <TrendingUp size={16} /> Total Contratado
+        {/* Fila 1: Hero - 4 tarjetas principales */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '1.25rem' }}>
+          {/* 1. TOTAL CONTRATADO */}
+          <div className="card" style={{ padding: '1.35rem', display: 'flex', flexDirection: 'column', gap: '0.4rem', background: 'linear-gradient(145deg, rgba(255,255,255,0.03) 0%, rgba(0,0,0,0) 100%)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-muted)', fontSize: '0.82rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              <TrendingUp size={15} /> <span>Total Contratado</span>
             </div>
-            <div style={{ fontSize: '2.2rem', fontWeight: 800, color: 'white', letterSpacing: '-0.02em' }}>
+            <div style={{ fontSize: '2rem', fontWeight: 800, color: 'white', letterSpacing: '-0.02em' }}>
               ${formatCurrency(totalContracted)}
             </div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Proyectos + Adicionales</div>
           </div>
           
-          <div className="card" style={{ padding: '1.5rem', background: 'linear-gradient(145deg, rgba(16,185,129,0.08) 0%, rgba(0,0,0,0) 100%)', borderColor: 'rgba(16,185,129,0.2)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--success)', marginBottom: '0.75rem', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              <DollarSign size={16} /> Total Pagado
+          {/* 2. TOTAL PAGADO */}
+          <div className="card" style={{ padding: '1.35rem', display: 'flex', flexDirection: 'column', gap: '0.4rem', background: 'linear-gradient(145deg, rgba(16,185,129,0.06) 0%, rgba(0,0,0,0) 100%)', borderColor: 'rgba(16,185,129,0.25)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--success)', fontSize: '0.82rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                <DollarSign size={15} /> <span>Total Pagado</span>
+              </div>
+              <span className="badge" style={{ background: 'rgba(16, 185, 129, 0.15)', color: '#34d399', fontSize: '0.72rem', fontWeight: 700, padding: '0.15rem 0.5rem', borderRadius: '4px', border: '1px solid rgba(16, 185, 129, 0.3)' }}>
+                {collectedPct}% cobrado
+              </span>
             </div>
-            <div style={{ fontSize: '2.2rem', fontWeight: 800, color: 'var(--success)', letterSpacing: '-0.02em' }}>
+            <div style={{ fontSize: '2rem', fontWeight: 800, color: 'var(--success)', letterSpacing: '-0.02em' }}>
               ${formatCurrency(totalPaid)}
             </div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Pagos recibidos</div>
           </div>
 
-          <div className="card" style={{ padding: '1.5rem', background: 'linear-gradient(145deg, rgba(245,158,11,0.08) 0%, rgba(0,0,0,0) 100%)', borderColor: 'rgba(245,158,11,0.3)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--primary-color)', marginBottom: '0.75rem', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              <Clock size={16} /> <span style={{ fontWeight: 700 }}>Saldo Pendiente</span>
+          {/* 3. SALDO PENDIENTE */}
+          <div className="card" style={{ padding: '1.35rem', display: 'flex', flexDirection: 'column', gap: '0.4rem', background: 'linear-gradient(145deg, rgba(245,158,11,0.08) 0%, rgba(0,0,0,0) 100%)', borderColor: 'rgba(245,158,11,0.35)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--primary-color)', fontSize: '0.82rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              <Clock size={15} /> <span style={{ fontWeight: 700 }}>Saldo Pendiente</span>
             </div>
-            <div style={{ fontSize: '2.2rem', fontWeight: 800, color: 'var(--primary-color)', letterSpacing: '-0.02em' }}>
+            <div style={{ fontSize: '2rem', fontWeight: 800, color: 'var(--primary-color)', letterSpacing: '-0.02em' }}>
               ${formatCurrency(balanceDue)}
             </div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Por cobrar al cliente (CxC)</div>
+          </div>
+
+          {/* 4. 💰 SALDO EN CAJA LÍQUIDO (Hero destacada) */}
+          <div 
+            className="card" 
+            style={{ 
+              padding: '1.35rem', 
+              display: 'flex', 
+              flexDirection: 'column', 
+              gap: '0.4rem', 
+              background: cashLiquidity >= 0 
+                ? 'linear-gradient(145deg, rgba(16,185,129,0.12) 0%, rgba(6,78,59,0.08) 100%)' 
+                : 'linear-gradient(145deg, rgba(239,68,68,0.12) 0%, rgba(127,29,29,0.08) 100%)', 
+              borderColor: cashLiquidity >= 0 ? 'rgba(16, 185, 129, 0.45)' : 'rgba(239, 68, 68, 0.45)',
+              borderWidth: '2px',
+              position: 'relative',
+              boxShadow: cashLiquidity >= 0 ? '0 4px 20px rgba(16, 185, 129, 0.12)' : '0 4px 20px rgba(239, 68, 68, 0.12)'
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: cashLiquidity >= 0 ? '#34d399' : '#f87171', fontSize: '0.82rem', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 700 }}>
+                <span>💰</span> <span>Saldo en Caja Líquido</span>
+              </div>
+              <span 
+                className="badge" 
+                style={{ 
+                  background: netCashAfterPayables >= 0 ? 'rgba(16, 185, 129, 0.2)' : 'rgba(239, 68, 68, 0.2)', 
+                  color: netCashAfterPayables >= 0 ? '#6ee7b7' : '#fca5a5', 
+                  border: `1px solid ${netCashAfterPayables >= 0 ? 'rgba(16, 185, 129, 0.35)' : 'rgba(239, 68, 68, 0.35)'}`,
+                  fontSize: '0.72rem', 
+                  fontWeight: 700, 
+                  padding: '0.15rem 0.5rem',
+                  borderRadius: '4px',
+                  whiteSpace: 'nowrap'
+                }}
+                title="Flujo neto proyectado una vez canceladas las cuentas por pagar pendientes"
+              >
+                Tras CxP: ${formatCurrency(netCashAfterPayables)}
+              </span>
+            </div>
+            <div style={{ fontSize: '2rem', fontWeight: 800, color: cashLiquidity >= 0 ? '#10b981' : '#ef4444', letterSpacing: '-0.02em' }}>
+              ${formatCurrency(cashLiquidity)}
+            </div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+              Cobros − Gastos − Retiros
+            </div>
           </div>
         </div>
 
-        {/* Fila 2: Indicadores de Rentabilidad (Egresos y Ganancia) */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1.25rem' }}>
-          <div className="card" style={{ padding: '1.5rem', background: 'linear-gradient(145deg, rgba(239,68,68,0.08) 0%, rgba(0,0,0,0) 100%)', borderColor: 'rgba(239,68,68,0.3)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--danger)', marginBottom: '0.75rem', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              <TrendingDown size={16} /> Costos Totales
+        {/* Fila 2: Control & Rentabilidad - 4 tarjetas compactas */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem' }}>
+          {/* 1. COSTOS TOTALES */}
+          <div className="card" style={{ padding: '1.15rem', display: 'flex', flexDirection: 'column', gap: '0.35rem', background: 'linear-gradient(145deg, rgba(239,68,68,0.06) 0%, rgba(0,0,0,0) 100%)', borderColor: 'rgba(239,68,68,0.3)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--danger)', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              <TrendingDown size={14} /> <span>Costos Totales</span>
             </div>
-            <div style={{ fontSize: '2.2rem', fontWeight: 800, color: 'white', letterSpacing: '-0.02em' }}>
+            <div style={{ fontSize: '1.6rem', fontWeight: 800, color: 'var(--danger)' }}>
               ${formatCurrency(totalCostsValue)}
             </div>
+            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Gastos de Obra registrados</div>
           </div>
 
-          <div className="card" style={{ padding: '1.5rem', background: 'linear-gradient(145deg, rgba(245,158,11,0.08) 0%, rgba(0,0,0,0) 100%)', borderColor: 'rgba(245,158,11,0.4)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--primary-color)', marginBottom: '0.75rem', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              <AlertCircle size={16} /> <span style={{ fontWeight: 700 }}>Cuentas por Pagar</span>
+          {/* 2. CUENTAS POR PAGAR */}
+          <div className="card" style={{ padding: '1.15rem', display: 'flex', flexDirection: 'column', gap: '0.35rem', background: 'linear-gradient(145deg, rgba(245,158,11,0.06) 0%, rgba(0,0,0,0) 100%)', borderColor: 'rgba(245,158,11,0.35)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--primary-color)', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              <AlertCircle size={14} /> <span>Cuentas por Pagar</span>
             </div>
-            <div style={{ fontSize: '2.2rem', fontWeight: 800, color: 'white', letterSpacing: '-0.02em' }}>
+            <div style={{ fontSize: '1.6rem', fontWeight: 800, color: 'white' }}>
               ${formatCurrency(totalCommitted)}
             </div>
+            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>CxP pendientes a proveedores</div>
           </div>
 
-          <div className="card" style={{ padding: '1.5rem', background: 'linear-gradient(145deg, rgba(139,92,246,0.08) 0%, rgba(0,0,0,0) 100%)', borderColor: 'rgba(139,92,246,0.35)', position: 'relative', overflow: 'hidden' }}>
-            <div style={{ position: 'absolute', top: 0, right: 0, padding: '1rem', opacity: 0.1 }}>
-              <Users size={80} />
+          {/* 3. GANANCIA PROYECTADA DE OBRAS */}
+          <div className="card" style={{ padding: '1.15rem', display: 'flex', flexDirection: 'column', gap: '0.35rem', background: 'linear-gradient(145deg, rgba(16,185,129,0.06) 0%, rgba(0,0,0,0) 100%)', borderColor: 'rgba(16,185,129,0.35)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--success)', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              <TrendingUp size={14} /> <span style={{ fontWeight: 700 }}>Ganancia Proyectada</span>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#a78bfa', marginBottom: '0.75rem', position: 'relative', zIndex: 1, fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              <Users size={16} /> <span style={{ fontWeight: 700 }}>Ganancia Disponible</span>
-            </div>
-            <div style={{ fontSize: '2.2rem', fontWeight: 800, color: 'white', position: 'relative', zIndex: 1, letterSpacing: '-0.02em' }}>
+            <div style={{ fontSize: '1.6rem', fontWeight: 800, color: 'white' }}>
               ${formatCurrency(estimatedProfit)}
             </div>
-            <div style={{ position: 'relative', zIndex: 1, marginTop: '0.5rem' }}>
-               <span className="badge" style={{ background: 'rgba(139,92,246,0.15)', color: '#a78bfa', fontSize: '0.8rem', padding: '0.2rem 0.6rem' }}>
-                 Contrato − Gastos − Cuentas por Pagar
-               </span>
+            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Contrato − Gastos − Cuentas por Pagar</div>
+          </div>
+
+          {/* 4. RETIRO DE SOCIOS */}
+          <div className="card" style={{ padding: '1.15rem', display: 'flex', flexDirection: 'column', gap: '0.35rem', background: 'linear-gradient(145deg, rgba(139,92,246,0.06) 0%, rgba(0,0,0,0) 100%)', borderColor: 'rgba(139,92,246,0.35)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#a78bfa', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              <Users size={14} /> <span style={{ fontWeight: 700 }}>Retiro de Socios</span>
+            </div>
+            <div style={{ fontSize: '1.6rem', fontWeight: 800, color: 'white' }}>
+              ${formatCurrency(totalAdvances)}
+            </div>
+            <div style={{ fontSize: '0.72rem', color: '#c4b5fd', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }} title={`Henry: $${formatCurrency(henryAdvances)} | Losbers: $${formatCurrency(losbersAdvances)}`}>
+              <span>H: ${formatCurrency(henryAdvances)}</span>
+              <span>•</span>
+              <span>L: ${formatCurrency(losbersAdvances)}</span>
             </div>
           </div>
         </div>
-
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>

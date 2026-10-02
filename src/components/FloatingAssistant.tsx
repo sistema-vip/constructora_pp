@@ -81,12 +81,38 @@ export default function FloatingAssistant({ onProposalSaved }: { onProposalSaved
   }, [messages, loading]);
 
   useEffect(() => { 
-    if (open) fetchClients(); 
+    if (open) {
+      fetchClients(); 
+      loadSessionHistory();
+    }
   }, [open]);
 
   async function fetchClients() {
     const { data } = await supabase.from('clients').select('id, name, company_name').order('name');
     setClients(data || []);
+  }
+
+  async function loadSessionHistory() {
+    try {
+      const res = await fetch('/api/pepe/session');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.memory?.recentMessages && Array.isArray(data.memory.recentMessages) && data.memory.recentMessages.length > 0) {
+          setMessages(prev => {
+            // Solo restauramos si no hay conversación activa en la sesión actual de la pestaña
+            if (prev.length <= 1) {
+              return data.memory.recentMessages.map((m: any) => ({
+                role: m.role === 'user' ? 'user' : 'model',
+                text: m.text
+              }));
+            }
+            return prev;
+          });
+        }
+      }
+    } catch (e) {
+      // Ignorar errores de carga inicial de sesión
+    }
   }
 
   // Exposed globally so any component can open Pepe
@@ -122,25 +148,112 @@ export default function FloatingAssistant({ onProposalSaved }: { onProposalSaved
     setInput(''); 
     setLoading(true); 
     setError('');
-    
+
+    // Pre-insertar burbuja de respuesta del modelo para streaming
+    setMessages(p => [...p, { role: 'model', text: '' }]);
+
+    let streamingSucceeded = false;
+
     try {
-      const res = await sendChatMessage(next);
-      if (res.success && res.reply) {
-        setMessages(p => [...p, { role: 'model', text: res.reply! }]);
-        if (res.readyToGenerate) setReadyHint(true);
-        if (res.actionTaken && res.actionTaken !== 'chat' && typeof window !== 'undefined') {
+      // 1. Intentar Streaming vía /api/pepe/chat
+      const response = await fetch('/api/pepe/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: next })
+      });
+
+      if (!response.ok || !response.body) {
+        throw new Error(`HTTP error ${response.status}`);
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let streamedReply = '';
+      let donePayload: any = null;
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        const chunkText = decoder.decode(value, { stream: true });
+        const lines = chunkText.split('\n');
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (trimmed.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(trimmed.slice(6));
+              if (data.type === 'chunk' && data.text) {
+                streamedReply += data.text;
+                setMessages(prev => {
+                  const updated = [...prev];
+                  const lastIdx = updated.length - 1;
+                  if (lastIdx >= 0 && updated[lastIdx].role === 'model') {
+                    updated[lastIdx] = { role: 'model', text: streamedReply };
+                  }
+                  return updated;
+                });
+              } else if (data.type === 'done') {
+                donePayload = data;
+              } else if (data.type === 'error') {
+                throw new Error(data.error);
+              }
+            } catch {
+              // Fragmento JSON parcial en buffer de red
+            }
+          }
+        }
+      }
+
+      if (streamedReply.length > 0) {
+        streamingSucceeded = true;
+      }
+
+      if (donePayload) {
+        if (donePayload.readyToGenerate) setReadyHint(true);
+        if (donePayload.actionTaken && donePayload.actionTaken !== 'chat' && typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('pepe-data-mutated', {
-            detail: { action: res.actionTaken, recordId: res.recordId }
+            detail: { action: donePayload.actionTaken, recordId: donePayload.recordId }
           }));
         }
-      } else {
-        setError(res.error || 'Error al contactar al asistente.');
       }
-    } catch (e: any) { 
-      setError(e.message || 'Error de conexión'); 
-    } finally { 
-      setLoading(false); 
+    } catch (e: any) {
+      console.warn('[Pepe UI] Fallback a Server Action:', e?.message || e);
     }
+
+    // 2. Si el streaming no obtuvo respuesta, fallback a Server Action
+    if (!streamingSucceeded) {
+      try {
+        const res = await sendChatMessage(next);
+        if (res.success && res.reply) {
+          setMessages(prev => {
+            const updated = [...prev];
+            const lastIdx = updated.length - 1;
+            if (lastIdx >= 0 && updated[lastIdx].role === 'model') {
+              updated[lastIdx] = { role: 'model', text: res.reply! };
+            } else {
+              updated.push({ role: 'model', text: res.reply! });
+            }
+            return updated;
+          });
+          if (res.readyToGenerate) setReadyHint(true);
+          if (res.actionTaken && res.actionTaken !== 'chat' && typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('pepe-data-mutated', {
+              detail: { action: res.actionTaken, recordId: res.recordId }
+            }));
+          }
+        } else {
+          setError(res.error || 'Error al contactar al asistente.');
+          // Remover burbuja vacía
+          setMessages(prev => prev.filter((m, i) => !(i === prev.length - 1 && m.role === 'model' && !m.text)));
+        }
+      } catch (err: any) {
+        setError(err.message || 'Error de conexión');
+        setMessages(prev => prev.filter((m, i) => !(i === prev.length - 1 && m.role === 'model' && !m.text)));
+      }
+    }
+
+    setLoading(false);
   }
 
   async function handleGenerateProposal() {
@@ -199,7 +312,7 @@ export default function FloatingAssistant({ onProposalSaved }: { onProposalSaved
     }
   }
 
-  function resetChat() {
+  async function resetChat() {
     setMessages([mode === 'proposal' ? PROPOSAL_GREETING : SUPPORT_GREETING]);
     setInput(''); 
     setError(''); 
@@ -208,6 +321,9 @@ export default function FloatingAssistant({ onProposalSaved }: { onProposalSaved
     setEditableText(''); 
     setProposalStep('chat'); 
     setSaved(false);
+    try {
+      await fetch('/api/pepe/session', { method: 'DELETE' });
+    } catch {}
   }
 
   function switchMode(newMode: AssistantMode) {

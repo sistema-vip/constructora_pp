@@ -1,8 +1,16 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { supabaseAdmin } from './supabase-admin';
+import { getPersistentSkillsFallback, savePersistentSkillFallback } from './pepe/pepeMemory';
 
 const apiKey = process.env.GEMINI_API_KEY || '';
 const genAI = apiKey ? new GoogleGenerativeAI(apiKey) : null;
+
+export const LEARNING_FAST_MODELS = [
+  'gemini-3.6-flash',
+  'gemini-flash-latest',
+  'gemini-3.5-flash',
+  'gemini-3.7-flash'
+];
 
 export interface LearnedSkill {
   id: string;
@@ -21,6 +29,15 @@ export interface LearnedSkill {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function getLearnedSkillsContext(limit: number = 15): Promise<string> {
+  const categoryLabels: Record<string, string> = {
+    alias: 'Alias / Sobrenombre',
+    supplier: 'Proveedor',
+    rule: 'Regla Operativa',
+    pricing: 'Costo / Precio',
+    correction: 'Corrección previa',
+    general: 'Conocimiento'
+  };
+
   try {
     const { data, error } = await supabaseAdmin
       .from('agent_learned_skills')
@@ -29,27 +46,30 @@ export async function getLearnedSkillsContext(limit: number = 15): Promise<strin
       .order('created_at', { ascending: false })
       .limit(limit);
 
-    if (error || !data || data.length === 0) {
-      return 'No hay habilidades o reglas aprendidas registradas aún.';
+    if (!error && data && data.length > 0) {
+      return data.map((s: any) => {
+        const cat = categoryLabels[s.category] || s.category;
+        return `• [${cat}] ${s.skill_key}: ${s.description}`;
+      }).join('\n');
     }
-
-    const categoryLabels: Record<string, string> = {
-      alias: 'Alias / Sobrenombre',
-      supplier: 'Proveedor',
-      rule: 'Regla Operativa',
-      pricing: 'Costo / Precio',
-      correction: 'Corrección previa',
-      general: 'Conocimiento'
-    };
-
-    return data.map((s: any) => {
-      const cat = categoryLabels[s.category] || s.category;
-      return `• [${cat}] ${s.skill_key}: ${s.description}`;
-    }).join('\n');
-  } catch (err: any) {
-    console.error('Error cargando habilidades aprendidas:', err);
-    return 'No hay habilidades aprendidas disponibles.';
+  } catch {
+    // Si la tabla no existe en BD, pasamos al fallback persistente
   }
+
+  // Fallback persistente vía telegram_sessions
+  try {
+    const fallbackSkills = await getPersistentSkillsFallback();
+    if (fallbackSkills.length > 0) {
+      return fallbackSkills.slice(0, limit).map((s: any) => {
+        const cat = categoryLabels[s.category] || s.category;
+        return `• [${cat}] ${s.skill_key}: ${s.description}`;
+      }).join('\n');
+    }
+  } catch (err: any) {
+    console.warn('[AgentLearning] Error en fallback de habilidades:', err?.message || err);
+  }
+
+  return 'No hay habilidades o reglas aprendidas registradas aún.';
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -90,13 +110,7 @@ Responde ÚNICAMENTE con este JSON:
 }
 `;
 
-  const fallbackModels = [
-    'gemini-3.1-pro-preview',
-    'gemini-3.7-flash',
-    'gemini-3.6-flash',
-    'gemini-3.5-flash',
-    'gemini-flash-latest'
-  ];
+  const fallbackModels = LEARNING_FAST_MODELS;
   let parsed: any = null;
 
   for (const modelName of fallbackModels) {
@@ -130,29 +144,46 @@ Responde ÚNICAMENTE con este JSON:
     throw new Error('No se pudo sintetizar el aprendizaje con los modelos disponibles.');
   }
 
-  try {
+  const category = parsed.category || 'general';
+  const skill_key = parsed.skill_key || 'regla_general';
+  const description = parsed.description || instructionText;
 
-    // Guardar en la base de datos
+  try {
+    // 1. Intentar guardar en la tabla agent_learned_skills si existe
     const { data, error } = await supabaseAdmin
       .from('agent_learned_skills')
       .insert({
-        category: parsed.category || 'general',
-        skill_key: parsed.skill_key || 'regla_general',
-        description: parsed.description || instructionText,
+        category,
+        skill_key,
+        description,
         confidence: 1.0,
         source: 'user_instruction'
       })
       .select('id, category, skill_key, description')
       .single();
 
-    if (error) throw error;
+    if (!error && data) {
+      return {
+        success: true,
+        skillKey: data.skill_key,
+        category: data.category,
+        description: data.description,
+        message: `✅ *Habilidad Aprendida Exitosamente*\n📌 *Clave:* ${data.skill_key}\n🏷️ *Tipo:* ${data.category.toUpperCase()}\n📖 *Regla:* ${data.description}`
+      };
+    }
+  } catch {
+    // Fallback si la tabla no existe en el esquema
+  }
 
+  // 2. Fallback de guardado persistente en telegram_sessions
+  try {
+    const saved = await savePersistentSkillFallback({ category, skill_key, description });
     return {
       success: true,
-      skillKey: data.skill_key,
-      category: data.category,
-      description: data.description,
-      message: `✅ *Habilidad Aprendida Exitosamente*\n📌 *Clave:* ${data.skill_key}\n🏷️ *Tipo:* ${data.category.toUpperCase()}\n📖 *Regla:* ${data.description}`
+      skillKey: saved.skill_key,
+      category: saved.category,
+      description: saved.description,
+      message: `✅ *Habilidad Aprendida Exitosamente (Guardada en Memoria Persistente)*\n📌 *Clave:* ${saved.skill_key}\n🏷️ *Tipo:* ${saved.category.toUpperCase()}\n📖 *Regla:* ${saved.description}`
     };
   } catch (err: any) {
     console.error('Error al sintetizar habilidad:', err);
@@ -205,13 +236,7 @@ Si es solo una negación casual sin regla duradera (ej. "no gracias", "no entien
 { "is_learnable": false }
 `;
 
-  const fallbackModels = [
-    'gemini-3.1-pro-preview',
-    'gemini-3.7-flash',
-    'gemini-3.6-flash',
-    'gemini-3.5-flash',
-    'gemini-flash-latest'
-  ];
+  const fallbackModels = LEARNING_FAST_MODELS;
   let parsed: any = null;
 
   for (const modelName of fallbackModels) {
@@ -242,14 +267,23 @@ Si es solo una negación casual sin regla duradera (ej. "no gracias", "no entien
 
   try {
     if (parsed && parsed.is_learnable && parsed.skill_key && parsed.description) {
-      await supabaseAdmin.from('agent_learned_skills').insert({
-        category: parsed.category || 'correction',
-        skill_key: parsed.skill_key,
-        description: parsed.description,
-        confidence: 0.9,
-        source: 'correction'
-      });
-      return true;
+      try {
+        await supabaseAdmin.from('agent_learned_skills').insert({
+          category: parsed.category || 'correction',
+          skill_key: parsed.skill_key,
+          description: parsed.description,
+          confidence: 0.9,
+          source: 'correction'
+        });
+        return true;
+      } catch {
+        await savePersistentSkillFallback({
+          category: parsed.category || 'correction',
+          skill_key: parsed.skill_key,
+          description: parsed.description
+        });
+        return true;
+      }
     }
     return false;
   } catch (err) {
@@ -275,8 +309,17 @@ export async function listLearnedSkills(category?: string): Promise<LearnedSkill
     }
 
     const { data, error } = await query.limit(30);
-    if (error) throw error;
-    return data || [];
+    if (!error && data) return data;
+  } catch {
+    // fallback
+  }
+
+  try {
+    const fallback = await getPersistentSkillsFallback();
+    if (category) {
+      return fallback.filter(s => s.category === category) as any;
+    }
+    return fallback as any;
   } catch (err: any) {
     console.error('Error listando habilidades aprendidas:', err);
     return [];
