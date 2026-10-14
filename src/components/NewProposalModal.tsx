@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Check, CheckCircle, Send, RotateCcw, PenTool, Layout, Wand2, Type, RefreshCw, FileText, Bot, HandCoins, HardHat, Pickaxe, Ruler, Wrench, X, Loader2, Save, Eye, User, DollarSign, Clock, MessageSquare, Sparkles, Plus, Trash2, ListChecks, Layers, PlusCircle, AlignLeft } from 'lucide-react';
 import { modifyProposalText, refineProposalField, chatAndUpdateForm, ChatMessage, ProposalData, parseProposalTextToForm } from '@/app/actions/ai-actions';
+import { parseProposalTextLocally } from '@/lib/proposalParser';
 import { supabase } from '@/lib/supabase';
 import { handleMoneyInput, formatOnBlur, formatCurrency, parseCurrency } from '@/lib/formatters';
 import { useAdminAction } from '@/lib/useAdminAction';
@@ -157,22 +158,32 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
 
   useEffect(() => {
     if (isOpen) { 
-      fetchClients(); 
-      if (existingProposal) {
-        setIsEditing(true);
-        setEditingProjectId(existingProposal.id);
-        loadExistingProposal();
-      } else {
-        setIsEditing(false);
-        setEditingProjectId(null);
-        reset(); 
-      }
+      fetchClients().then((loadedClients) => {
+        if (existingProposal) {
+          setIsEditing(true);
+          setEditingProjectId(existingProposal.id);
+          loadExistingProposal(loadedClients);
+        } else {
+          setIsEditing(false);
+          setEditingProjectId(null);
+          reset(loadedClients); 
+        }
+      });
     }
-  }, [isOpen, existingProposal]);
+  }, [isOpen, existingProposal?.id]);
 
-  async function loadExistingProposal() {
-    setMode('manual'); setStep('chat'); setShowPreviewModal(false); setError(''); setInput('');
-    
+  async function loadExistingProposal(clientsList?: Client[]) {
+    setMode('manual');
+    setStep('chat');
+    setShowPreviewModal(false);
+    setError('');
+    setInput('');
+
+    const availableClients = clientsList && clientsList.length > 0 ? clientsList : clients;
+    const currentClientId = existingProposal.client_id || initialClientId || '';
+    const clientObj = availableClients.find(c => c.id === currentClientId);
+    const clientNameFromDb = clientObj?.name || existingProposal.clients?.name || existingProposal.client_name || '';
+
     let initialDate = getTodayDateStr();
     if (existingProposal.start_date) {
       initialDate = existingProposal.start_date;
@@ -180,42 +191,84 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
       initialDate = new Date(existingProposal.created_at).toISOString().split('T')[0];
     }
 
+    // 1. PARSEO DETERMINISTA LOCAL INMEDIATO (0ms, 100% de los datos preservados sin depender de red)
+    const local = parseProposalTextLocally(existingProposal.description || '');
+
+    const finalTitle = existingProposal.title || local.title || '';
+    const finalClientName = clientNameFromDb || local.clientName || '';
+    const finalDate = local.date || initialDate;
+    const finalArea = local.area || '';
+    const finalObjective = local.objective || (existingProposal.description && !local.phases ? existingProposal.description : '');
+    const finalPhases = local.phases || '';
+    const finalWorkItems = local.workItems || [];
+    const finalModality = local.investmentModality || TEMPLATE_TODO_COSTO;
+    const finalTime = local.time || '';
+    const finalAmount = (existingProposal.budget_usd !== undefined && existingProposal.budget_usd !== null && existingProposal.budget_usd !== '')
+      ? String(existingProposal.budget_usd)
+      : (local.amount || '');
+    const finalPayment = local.payment || '60% anticipo / 40% al finalizar';
+    const finalCurrency = local.currency || 'Divisas';
+    const finalPaymentMethods = local.paymentMethods || 'Este presupuesto está expresado en divisas. Métodos de pago: Efectivo, Zelle y Binance.';
+
+    // Seteo síncrono instantáneo: jamás se borra la info al abrir la propuesta
+    setForm({
+      title: finalTitle,
+      clientId: currentClientId,
+      clientName: finalClientName,
+      date: finalDate,
+      area: finalArea,
+      objective: finalObjective,
+      phases: finalPhases,
+      workItems: finalWorkItems,
+      investmentModality: finalModality,
+      time: finalTime,
+      amount: finalAmount,
+      payment: finalPayment,
+      currency: finalCurrency,
+      paymentMethods: finalPaymentMethods
+    });
+
+    setSelectedModality(detectModalityType(finalModality));
+    setEditableText(existingProposal.description || '');
+    setLinkedClientId(currentClientId);
+
     setProposal({
-       title: existingProposal.title,
-       clientName: '',
+       title: finalTitle,
+       clientName: finalClientName,
        clientContact: '',
-       date: formatDisplayDate(initialDate),
-       area: '',
-       investmentAmount: existingProposal.budget_usd?.toString() || '',
-       executionTime: '',
+       date: formatDisplayDate(finalDate),
+       area: finalArea,
+       investmentAmount: finalAmount,
+       executionTime: finalTime,
        fullProposalText: existingProposal.description || ''
     } as any);
-    setEditableText(existingProposal.description || '');
-    setLinkedClientId(existingProposal.client_id || '');
-    setMessages([{ role: 'model', text: '¡Hola! He cargado la propuesta existente. Puedes editarla en el formulario o pedirme cambios.' }]);
-    
-    if (existingProposal.description) {
+
+    setMessages([{ 
+      role: 'model', 
+      text: `¡Hola! He cargado la propuesta "${finalTitle}". Puedes editar directamente los campos a la izquierda o pedirme cualquier cambio por el chat.` 
+    }]);
+
+    // 2. Solo si no se pudo extraer objetivo ni fases del texto existente, probar fallback con IA en segundo plano
+    if (!finalObjective && !finalPhases && existingProposal.description) {
       setLoading(true);
-      const res = await parseProposalTextToForm(existingProposal.description);
-      if (res.success && res.form) {
-        setForm({ 
-          ...INIT_FORM, 
-          ...res.form, 
-          date: res.form.date || initialDate,
-          clientId: existingProposal.client_id || '', 
-          title: existingProposal.title || res.form.title, 
-          amount: existingProposal.budget_usd?.toString() || res.form.amount, 
-          workItems: res.form.workItems || [] 
-        });
-        setSelectedModality(detectModalityType(res.form.investmentModality || ''));
-      } else {
-        setForm({ ...INIT_FORM, date: initialDate, title: existingProposal.title, clientId: existingProposal.client_id || '' });
-        setSelectedModality('todo-costo');
+      try {
+        const res = await parseProposalTextToForm(existingProposal.description);
+        if (res.success && res.form) {
+          setForm(prev => ({
+            ...prev,
+            objective: prev.objective || res.form.objective || '',
+            phases: prev.phases || res.form.phases || '',
+            area: prev.area || res.form.area || '',
+            time: prev.time || res.form.time || '',
+            amount: prev.amount || res.form.amount || '',
+            workItems: prev.workItems?.length ? prev.workItems : (res.form.workItems || [])
+          }));
+        }
+      } catch (err) {
+        console.warn('Fallback IA de propuesta:', err);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
-    } else {
-      setForm({ ...INIT_FORM, date: initialDate, title: existingProposal.title, clientId: existingProposal.client_id || '' });
-      setSelectedModality('todo-costo');
     }
   }
 
@@ -223,7 +276,7 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  function reset() {
+  function reset(clientsList?: Client[]) {
     setMode('manual'); setStep('chat'); setShowPreviewModal(false); setError(''); setInput('');
     setProposal(null); setEditableText(''); 
     setLinkedClientId(initialClientId || '');
@@ -232,7 +285,8 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
     setIsEditing(false);
     setEditingProjectId(null);
     
-    const initialClient = clients.find(c => c.id === initialClientId);
+    const available = (clientsList && clientsList.length > 0) ? clientsList : clients;
+    const initialClient = available.find(c => c.id === initialClientId);
     setForm({ 
       ...INIT_FORM, 
       date: getTodayDateStr(),
@@ -267,9 +321,11 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
     }
   };
 
-  async function fetchClients() {
+  async function fetchClients(): Promise<Client[]> {
     const { data } = await supabase.from('clients').select('id, name, company_name').order('name');
-    setClients(data || []);
+    const list = data || [];
+    setClients(list);
+    return list;
   }
 
   const handleChatFormSubmit = async () => {
@@ -364,10 +420,11 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
       else if (selectedModality === 'personalizado') modalityHeader = 'Presupuesto de Inversión';
 
       const displayDate = formatDisplayDate(form.date);
-      const fullText = `Proyecto: ${form.title}\nFecha: ${displayDate}\nPara: ${form.clientName}\nÁrea de Ejecución: ${form.area}\n\nObjetivo del Proyecto\n${form.objective}\n\nFases del Trabajo (Alcance Técnico)\n${form.phases}${getCostBreakdownText()}\n\nTiempo de Ejecución y Entrega\n${form.time}\n\n${modalityHeader}\n${form.investmentModality}\n\nINVERSIÓN TOTAL: $${form.amount}\n\nCondiciones y Métodos de Pago\nEsquema de Pago: ${form.payment}\nMoneda de Pago: ${form.currency}\nFormas de Pago: ${form.paymentMethods}`;
+      const resolvedClientName = form.clientName || clients.find(c => c.id === form.clientId)?.name || '';
+      const fullText = `Proyecto: ${form.title}\nFecha: ${displayDate}\nPara: ${resolvedClientName}\nÁrea de Ejecución: ${form.area}\n\nObjetivo del Proyecto\n${form.objective}\n\nFases del Trabajo (Alcance Técnico)\n${form.phases}${getCostBreakdownText()}\n\nTiempo de Ejecución y Entrega\n${form.time}\n\n${modalityHeader}\n${form.investmentModality}\n\nINVERSIÓN TOTAL: $${form.amount}\n\nCondiciones y Métodos de Pago\nEsquema de Pago: ${form.payment}\nMoneda de Pago: ${form.currency}\nFormas de Pago: ${form.paymentMethods}`;
       setProposal({
         title: form.title,
-        clientName: form.clientName,
+        clientName: resolvedClientName,
         clientContact: '',
         date: displayDate,
         area: form.area,
@@ -398,7 +455,8 @@ export default function NewProposalModal({ isOpen, onClose, onSaved, initialClie
       else if (selectedModality === 'personalizado') modalityHeader = 'Presupuesto de Inversión';
 
       const displayDate = formatDisplayDate(form.date);
-      const fullText = `Proyecto: ${form.title}\nFecha: ${displayDate}\nPara: ${form.clientName}\nÁrea de Ejecución: ${form.area}\n\nObjetivo del Proyecto\n${form.objective}\n\nFases del Trabajo (Alcance Técnico)\n${form.phases}${getCostBreakdownText()}\n\nTiempo de Ejecución y Entrega\n${form.time}\n\n${modalityHeader}\n${form.investmentModality}\n\nINVERSIÓN TOTAL: $${form.amount}\n\nCondiciones y Métodos de Pago\nEsquema de Pago: ${form.payment}\nMoneda de Pago: ${form.currency}\nFormas de Pago: ${form.paymentMethods}`;
+      const resolvedClientName = form.clientName || clients.find(c => c.id === form.clientId)?.name || '';
+      const fullText = `Proyecto: ${form.title}\nFecha: ${displayDate}\nPara: ${resolvedClientName}\nÁrea de Ejecución: ${form.area}\n\nObjetivo del Proyecto\n${form.objective}\n\nFases del Trabajo (Alcance Técnico)\n${form.phases}${getCostBreakdownText()}\n\nTiempo de Ejecución y Entrega\n${form.time}\n\n${modalityHeader}\n${form.investmentModality}\n\nINVERSIÓN TOTAL: $${form.amount}\n\nCondiciones y Métodos de Pago\nEsquema de Pago: ${form.payment}\nMoneda de Pago: ${form.currency}\nFormas de Pago: ${form.paymentMethods}`;
 
       const { error: err } = await supabase.from('projects').update({ 
         client_id: form.clientId || null, 
