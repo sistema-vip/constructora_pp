@@ -30,11 +30,14 @@ const apiKey = process.env.GEMINI_API_KEY || '';
 const genAI = apiKey ? new GoogleGenerativeAI(apiKey) : null;
 
 export const ACTIVE_GEMINI_MODELS = [
-  'gemini-3.6-flash',
-  'gemini-flash-latest',
   'gemini-3.5-flash',
-  'gemini-3.7-flash'
+  'gemini-3.5-flash-lite',
+  'gemini-3.8-flash',
+  'gemini-3.7-flash',
+  'gemini-flash-latest'
 ];
+
+export const DEFAULT_PEPE_TIMEOUT_MS = 45000; // 45 segundos: margen amplio para razonamiento y respuestas complejas de Pepe
 
 async function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -58,7 +61,8 @@ function withTimeout<T>(promise: Promise<T>, ms: number, desc: string): Promise<
  */
 export async function callGeminiResilient<T>(
   fn: (model: any, modelName: string) => Promise<T>,
-  models: string[] = ACTIVE_GEMINI_MODELS
+  models: string[] = ACTIVE_GEMINI_MODELS,
+  timeoutMs: number = DEFAULT_PEPE_TIMEOUT_MS
 ): Promise<T> {
   if (!genAI) throw new Error('GEMINI_API_KEY no configurada');
 
@@ -74,22 +78,24 @@ export async function callGeminiResilient<T>(
             maxOutputTokens: 1200
           }
         });
-        return await withTimeout(fn(model, modelName), 12000, modelName);
+        return await withTimeout(fn(model, modelName), timeoutMs, modelName);
       } catch (err: any) {
         lastError = err;
         const msg = err?.message || String(err);
+        const isTimeout = msg.includes('Timeout');
         const isTransient =
           msg.includes('503') ||
           msg.includes('429') ||
           msg.includes('UNAVAILABLE') ||
           msg.includes('high demand') ||
           msg.includes('RESOURCE_EXHAUSTED') ||
-          msg.includes('overloaded') ||
-          msg.includes('Timeout');
+          msg.includes('overloaded');
 
         console.warn(`[Gemini Resilient] Error en ${modelName} (intento ${attempt + 1}):`, msg);
 
-        if (isTransient && attempt === 0) {
+        // Si fue timeout, no reintentamos el mismo modelo lento para no acumular otros 40s; saltamos al siguiente modelo fallback.
+        // Si fue 503/429/saturación transitoria, hacemos un breve backoff de 500ms y reintentamos 1 vez antes de cambiar de modelo.
+        if (isTransient && attempt === 0 && !isTimeout) {
           await sleep(500);
           continue;
         }
